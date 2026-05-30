@@ -1,5 +1,5 @@
 ARG BUILD_FROM
-FROM $BUILD_FROM
+FROM $BUILD_FROM AS base
 
 # Install Python dependencies
 RUN pip3 install --no-cache-dir requests aiohttp
