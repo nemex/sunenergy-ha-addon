@@ -1,0 +1,55 @@
+name: SunEnergy XT Controller
+version: "1.0.0"
+slug: sunenergy_controller
+description: >
+  Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
+  inverter throttling via OpenDTU. PI-controller based regulation
+  using Shelly Pro 3EM as grid meter.
+url: https://github.com/nemex/sunenergy-ha-addon
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: application
+boot: auto
+homeassistant_api: true
+hassio_api: true
+host_network: false
+ports:
+  8765/tcp: 8765
+ports_description:
+  8765/tcp: Web UI
+options:
+  shelly_ip: "192.168.178.90"
+  sunenergy_ip: "192.168.178.94"
+  hms_2000_entity: "number.hoymiles_hms_2000_4t_limit_nonpersistent_absolute"
+  hms_1600_entity: "number.hoymiles_hms_1600_4t_limit_nonpersistent_absolute"
+  grid_sensor: "sensor.shellypro3em_leistung"
+  soc_sensor: "sensor.sunenergyxt_500_pro_system_speicherlevel"
+  gs_entity: "number.sunenergyxt_500_pro_sollwert_leistung_netzanschluss"
+  mm_switch: "switch.sunenergyxt_500_pro_lokaler_nulleinspeisemodus"
+  sa_entity: "number.sunenergyxt_500_pro_system_ladegrenze"
+  soc_normal_max: 95
+  soc_min: 10
+  hms_throttle_soc: 90
+  calibration_days: 15
+  ki: 0.005
+  i_limit: 150
+schema:
+  shelly_ip: str
+  sunenergy_ip: str
+  hms_2000_entity: str
+  hms_1600_entity: str
+  grid_sensor: str
+  soc_sensor: str
+  gs_entity: str
+  mm_switch: str
+  sa_entity: str
+  soc_normal_max: int
+  soc_min: int
+  hms_throttle_soc: int
+  calibration_days: int
+  ki: float
+  i_limit: int
