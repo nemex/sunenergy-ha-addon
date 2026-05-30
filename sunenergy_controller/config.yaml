@@ -37,6 +37,7 @@ options:
   calibration_days: 15
   ki: 0.005
   i_limit: 150
+  dry_run: true
 schema:
   shelly_ip: str
   sunenergy_ip: str
@@ -53,3 +54,4 @@ schema:
   calibration_days: int
   ki: float
   i_limit: int
+  dry_run: bool
