@@ -139,7 +139,7 @@ def load_state() -> dict:
         "solar_p_last": 0.0,
         "haus_p_last": 0.0,
         "last_gs": 0.0,
-        "last_calibration_ts": 0.0,
+        "last_calibration_ts": time.time(),  # Erster Start = jetzt, keine sofortige Zwangsladung
         "active_mode": "night",  # "night", "active", "calibration"
     }
 
@@ -427,26 +427,35 @@ def main():
             # 6. Zwangsladung prüfen (alle calibration_days Tage)
             # ------------------------------------------------------------------
             tage_seit = (time.time() - state["last_calibration_ts"]) / 86400
-            # Zwangsladung bei Sonnenuntergang triggern
-            zwangsladung_nötig = (
+
+            # Zwangsladung nur einmalig bei Sonnenuntergang triggern
+            # Bedingung: Genug Tage vergangen + Sonne gerade untergegangen
+            # + noch nicht im Kalibrierungsmodus
+            zwangsladung_trigger = (
                 tage_seit > calib_days
-                and not sun_above  # Sonne ist weg
+                and not sun_above
                 and curr_soc < 100
+                and state["active_mode"] != "calibration"
             )
+
+            # Einmal gesetzt bleibt calibration aktiv bis SOC=100
+            if zwangsladung_trigger:
+                log.info("Zwangsladung gestartet! %.1f Tage seit letzter Vollladung, SOC=%.1f%%",
+                         tage_seit, curr_soc)
+                state["active_mode"] = "calibration"
+                save_state(state)
 
             # ------------------------------------------------------------------
             # 7. Zwangsladung aktiv?
             # ------------------------------------------------------------------
-            if zwangsladung_nötig:
-                log.info("Zwangsladung! %s Tage seit letzter Vollladung, SOC=%s%%",
-                         round(tage_seit, 1), curr_soc)
+            if state["active_mode"] == "calibration" and curr_soc < 100:
+                log.info("Zwangsladung läuft... SOC=%.1f%%", curr_soc)
                 # SA auf 100% setzen
                 ha_set_number(sa_entity, 100)
                 # MM AUS, wir steuern
                 ha_switch(mm_switch, False)
                 # Maximale Ladeleistung
                 ha_set_number(gs_entity, -2400)
-                state["active_mode"] = "calibration"
                 save_state(state)
                 time.sleep(TICK_S)
                 continue
