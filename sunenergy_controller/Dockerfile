@@ -1,7 +1,6 @@
-ARG BUILD_FROM
-FROM $BUILD_FROM AS base
+FROM python:3.11-alpine
 
-# Install Python dependencies
+# Install dependencies
 RUN pip3 install --no-cache-dir requests
 
 # Copy addon files
