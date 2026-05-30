@@ -334,6 +334,13 @@ def main():
     log.info("Konfiguration geladen: SOC max=%s%%, min=%s%%, HMS Drossel=%s%%",
              soc_normal_max, soc_min, hms_throttle)
 
+    # Beim Start: active_mode immer zurücksetzen
+    # (verhindert dass alter calibration-State beim Neustart sofort greift)
+    state["active_mode"] = "night"
+    state["last_calibration_ts"] = time.time()  # Reset: keine sofortige Zwangsladung
+    save_state(state)
+    log.info("State zurückgesetzt: active_mode=night, Kalibrierungs-Timer neu gestartet")
+
     # SA auf Normalwert setzen beim Start
     ha_set_number(sa_entity, soc_normal_max)
 
