@@ -505,7 +505,7 @@ def main():
             if curr_soc >= soc_normal_max:
                 # IS = max(0, Hausverbrauch - HMS_Leistung)
                 # So produziert SunEnergyXT nur noch was der Haushalt braucht
-                hms_p = state.get("hms_2000_last", 0) + state.get("hms_1600_last", 0)
+                hms_p = solar_p  # solar_p = HMS-2000 + HMS-1600 Leistung
                 is_target = max(0, int(haus_p - hms_p - 50))  # 50W Puffer
                 is_target = min(is_target, 2400)
                 log.info("SOC=%.1f%% ≥ %.1f%% → IS=%dW (haus=%.0fW hms=%.0fW)",
