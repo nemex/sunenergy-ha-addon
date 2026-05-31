@@ -216,6 +216,22 @@ class UIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(html.encode())
 
+        elif self.path == "/log":
+            import os
+            csv_path = "/data/controller_log.csv"
+            if os.path.exists(csv_path):
+                with open(csv_path, "r") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv")
+                self.send_header("Content-Disposition", "attachment; filename=controller_log.csv")
+                self.end_headers()
+                self.wfile.write(data.encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Noch keine Logdaten")
+
         elif self.path == "/state":
             state = load_state()
             self.send_response(200)
