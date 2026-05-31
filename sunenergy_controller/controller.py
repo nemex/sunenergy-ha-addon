@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller
-=======================
-Zero-feed-in PI-controller for SunEnergyXT 500 Pro
-with Hoymiles HMS throttling via OpenDTU.
+SunEnergy XT Controller v2.0
+=============================
+Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
-Konzept:
-- Lokaler Nulleinspeisemodus (MM) AN  = Gerät regelt selbst (Nacht, kein Überschuss)
-- Lokaler Nulleinspeisemodus (MM) AUS = Wir regeln über GS-Sollwert (Überschuss vorhanden)
-- HMS-Drosselung ab SOC >= hms_throttle_soc %
-- SA (Systemladegrenze) = soc_normal_max % im Normalbetrieb
-- Zwangsladung alle calibration_days Tage bei Sonnenuntergang
+Regelkonzept:
+- GS = OP + grid_p  → Akku entlädt/lädt je nach Bedarf (bei JEDEM SOC)
+- IS                → begrenzt DC-Carport wenn zu viel produziert wird
+- HMS               → drosselt Hoymiles wenn zu viel produziert wird
+- Nachts            → MM=AN, Gerät regelt selbst bis SO (10%)
+- Zwangsladung      → alle calibration_days Tage auf 100%
 """
 
 import json
@@ -18,7 +17,6 @@ import csv
 import logging
 import os
 import time
-import math
 import requests
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,22 +31,83 @@ logging.basicConfig(
 log = logging.getLogger("sunenergy_controller")
 
 # ---------------------------------------------------------------------------
-# Konfiguration aus Add-on Options laden
+# Konfiguration
 # ---------------------------------------------------------------------------
 OPTIONS_PATH = "/data/options.json"
+STATE_PATH   = "/data/controller_state.json"
+CSV_PATH     = "/data/controller_log.csv"
+TICK_S       = 5
 
 def load_options() -> dict:
     with open(OPTIONS_PATH) as f:
         return json.load(f)
 
+def load_state() -> dict:
+    try:
+        if Path(STATE_PATH).exists():
+            with open(STATE_PATH) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {
+        "active_mode": "night",
+        "last_calibration_ts": time.time(),
+        "grid_p_filtered": 0.0,
+        "solar_p_last": 0.0,
+        "haus_p_last": 0.0,
+        "last_gs": 0.0,
+        "soc": 0.0,
+    }
+
+def save_state(state: dict):
+    try:
+        with open(STATE_PATH, "w") as f:
+            json.dump(state, f)
+    except Exception as e:
+        log.error("State speichern Fehler: %s", e)
+
+# ---------------------------------------------------------------------------
+# CSV Logging
+# ---------------------------------------------------------------------------
+CSV_FIELDS = [
+    "ts", "mode", "soc", "grid_p", "haus_p", "solar_p",
+    "gs", "op", "is_target", "hms_limit", "hms_2000", "hms_1600"
+]
+
+def csv_log(row: dict):
+    try:
+        write_header = not os.path.exists(CSV_PATH)
+        with open(CSV_PATH, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
+            if write_header:
+                w.writeheader()
+            w.writerow(row)
+    except Exception as e:
+        log.debug("CSV log Fehler: %s", e)
+
 # ---------------------------------------------------------------------------
 # Home Assistant API
 # ---------------------------------------------------------------------------
-HA_URL = "http://supervisor/core"
+HA_URL   = "http://supervisor/core"
 HA_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
+DRY_RUN  = False
 
-def ha_get(entity_id: str):
-    """Liest einen HA-Sensor-Wert."""
+def ha_get_state(entity_id: str, default=None):
+    try:
+        r = requests.get(
+            f"{HA_URL}/api/states/{entity_id}",
+            headers={"Authorization": f"Bearer {HA_TOKEN}"},
+            timeout=5,
+        )
+        if r.status_code == 200:
+            state = r.json().get("state")
+            if state not in ("unknown", "unavailable", None):
+                return state
+    except Exception as e:
+        log.error("HA GET %s: %s", entity_id, e)
+    return default
+
+def ha_get_full(entity_id: str):
     try:
         r = requests.get(
             f"{HA_URL}/api/states/{entity_id}",
@@ -57,22 +116,11 @@ def ha_get(entity_id: str):
         )
         if r.status_code == 200:
             return r.json()
-        log.warning("HA GET %s → %s", entity_id, r.status_code)
-    except Exception as e:
-        log.error("HA GET %s Fehler: %s", entity_id, e)
+    except Exception:
+        pass
     return None
 
-def ha_get_state(entity_id: str, default=None):
-    """Gibt den State-Wert zurück."""
-    data = ha_get(entity_id)
-    if data and data.get("state") not in ("unknown", "unavailable", None):
-        return data["state"]
-    return default
-
-DRY_RUN = False  # Wird in main() gesetzt
-
 def ha_set_number(entity_id: str, value: float) -> bool:
-    """Setzt einen number-Entity-Wert."""
     if DRY_RUN:
         log.info("🔍 [DRY-RUN] WÜRDE setzen: %s = %s", entity_id, round(value, 1))
         return True
@@ -85,11 +133,30 @@ def ha_set_number(entity_id: str, value: float) -> bool:
         )
         return r.status_code in (200, 201)
     except Exception as e:
-        log.error("HA SET %s Fehler: %s", entity_id, e)
+        log.error("HA SET %s: %s", entity_id, e)
         return False
 
+def ha_switch(entity_id: str, turn_on: bool) -> bool:
+    if DRY_RUN:
+        log.info("🔍 [DRY-RUN] WÜRDE schalten: %s = %s", entity_id, "AN" if turn_on else "AUS")
+        return True
+    action = "turn_on" if turn_on else "turn_off"
+    try:
+        r = requests.post(
+            f"{HA_URL}/api/services/switch/{action}",
+            headers={"Authorization": f"Bearer {HA_TOKEN}"},
+            json={"entity_id": entity_id},
+            timeout=5,
+        )
+        return r.status_code in (200, 201)
+    except Exception as e:
+        log.error("HA SWITCH %s: %s", entity_id, e)
+        return False
+
+# ---------------------------------------------------------------------------
+# SunEnergyXT direkt schreiben
+# ---------------------------------------------------------------------------
 def sunenergy_write(ip: str, payload: dict) -> bool:
-    """Schreibt direkt per HTTP auf den SunEnergyXT."""
     if DRY_RUN:
         log.info("🔍 [DRY-RUN] WÜRDE SunEnergyXT schreiben: %s", payload)
         return True
@@ -104,287 +171,96 @@ def sunenergy_write(ip: str, payload: dict) -> bool:
         log.error("SunEnergyXT WRITE Fehler: %s", e)
         return False
 
-def ha_switch(entity_id: str, turn_on: bool) -> bool:
-    """Schaltet einen switch-Entity."""
-    if DRY_RUN:
-        log.info("🔍 [DRY-RUN] WÜRDE schalten: %s = %s", entity_id, "AN" if turn_on else "AUS")
-        return True
-    action = "turn_on" if turn_on else "turn_off"
+def sunenergy_read(ip: str) -> dict:
+    """Liest den aktuellen Status vom SunEnergyXT."""
     try:
-        r = requests.post(
-            f"{HA_URL}/api/services/switch/{action}",
-            headers={"Authorization": f"Bearer {HA_TOKEN}"},
-            json={"entity_id": entity_id},
-            timeout=5,
-        )
-        return r.status_code in (200, 201)
+        r = requests.get(f"http://{ip}/read", timeout=5)
+        if r.status_code == 200:
+            return r.json().get("state", {}).get("reported", {})
     except Exception as e:
-        log.error("HA SWITCH %s Fehler: %s", entity_id, e)
-        return False
+        log.error("SunEnergyXT READ Fehler: %s", e)
+    return {}
 
 # ---------------------------------------------------------------------------
-# CSV Datenlogger
-# ---------------------------------------------------------------------------
-CSV_PATH = "/data/controller_log.csv"
-CSV_FIELDS = [
-    "ts","mode","soc","grid_p","haus_p","solar_p",
-    "gs","is_target","hms_limit","hms_2000","hms_1600",
-    "pi_integral","bp"
-]
-
-def csv_log(row: dict) -> None:
-    """Schreibt eine Zeile in die CSV-Datei."""
-    try:
-        import os
-        write_header = not os.path.exists(CSV_PATH)
-        with open(CSV_PATH, "a", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
-            if write_header:
-                w.writeheader()
-            w.writerow(row)
-    except Exception as e:
-        log.debug("CSV log Fehler: %s", e)
-
-# ---------------------------------------------------------------------------
-# Sonnenauf- und Sonnenuntergang aus HA
+# Sonnenstand
 # ---------------------------------------------------------------------------
 def get_sun_state() -> dict:
-    """Gibt Sonnenauf-/untergang und aktuellen Status zurück."""
-    data = ha_get("sun.sun")
+    data = ha_get_full("sun.sun")
     if data:
-        attrs = data.get("attributes", {})
-        return {
-            "state": data.get("state"),  # "above_horizon" oder "below_horizon"
-            "rising": attrs.get("rising", False),
-            "next_rising": attrs.get("next_rising"),
-            "next_setting": attrs.get("next_setting"),
-        }
-    return {"state": "unknown"}
+        return data
+    return {"state": "below_horizon"}
 
 # ---------------------------------------------------------------------------
-# Zustandsspeicher (persistent über Zyklen)
-# ---------------------------------------------------------------------------
-STATE_PATH = "/data/controller_state.json"
-
-def load_state() -> dict:
-    try:
-        if Path(STATE_PATH).exists():
-            with open(STATE_PATH) as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {
-        "pi_integral": 0.0,
-        "grid_p_filtered": 0.0,
-        "solar_p_last": 0.0,
-        "haus_p_last": 0.0,
-        "last_gs": 0.0,
-        "last_calibration_ts": time.time(),  # Erster Start = jetzt, keine sofortige Zwangsladung
-        "active_mode": "night",  # "night", "active", "calibration"
-    }
-
-def save_state(state: dict):
-    try:
-        with open(STATE_PATH, "w") as f:
-            json.dump(state, f, indent=2)
-    except Exception as e:
-        log.error("State speichern Fehler: %s", e)
-
-# ---------------------------------------------------------------------------
-# Asymmetrischer Tiefpassfilter
-# ---------------------------------------------------------------------------
-def asymmetric_filter(raw: float, last: float) -> float:
-    """
-    Selbstheilend: Bei Sprung >300W sofort auf echten Wert.
-    Netzbezug (raw < -30): schnelle Reaktion 70/30.
-    Sonst: langsame Reaktion 15/85.
-    """
-    if abs(raw - last) > 300:
-        return round(raw, 1)
-    elif raw < -30:
-        return round(last * 0.30 + raw * 0.70, 1)
-    else:
-        return round(last * 0.85 + raw * 0.15, 1)
-
-# ---------------------------------------------------------------------------
-# PI-Regler
-# ---------------------------------------------------------------------------
-def calc_kp(error: float) -> float:
-    """Dynamisches kP abhängig von der Fehlergröße."""
-    abs_err = abs(error)
-    if abs_err > 200:
-        return 0.5
-    elif abs_err > 50:
-        return 0.2
-    else:
-        return 0.08
-
-def pi_step(
-    error: float,
-    last_integral: float,
-    dt: float,
-    ki: float,
-    i_limit: float,
-    in_deadband: bool,
-    tag_modus: bool,
-) -> tuple[float, float]:
-    """
-    Einen PI-Regler-Schritt berechnen.
-    Gibt (output, new_integral) zurück.
-    """
-    # Integral update
-    if in_deadband:
-        # Im Deadband: Integral langsam abbauen
-        decay = 0.97 if tag_modus else 0.90
-        new_integral = last_integral * decay
-    elif abs(error) > 20:
-        new_integral = last_integral + ki * error * dt
-    else:
-        new_integral = last_integral * 0.97
-
-    # Anti-Windup
-    anti_windup_ok = (
-        (-i_limit < new_integral < i_limit)
-        or (new_integral <= -i_limit and error > 0)
-        or (new_integral >= i_limit and error < 0)
-    )
-    if not anti_windup_ok:
-        new_integral = last_integral
-
-    # Begrenzen
-    new_integral = max(-i_limit, min(i_limit, new_integral))
-
-    kp = calc_kp(error)
-    output = kp * error + new_integral
-
-    return round(output, 2), round(new_integral, 2)
-
-# ---------------------------------------------------------------------------
-# Rate-Limiting
-# ---------------------------------------------------------------------------
-def apply_rate_limit(
-    target: float,
-    last_gs: float,
-    grid_p: float,
-    solar_delta: float,
-    haus_delta: float,
-    tag_modus: bool,
-) -> float:
-    delta = target - last_gs
-
-    # Schnelle Sprünge → kein Limit
-    if abs(solar_delta) > 150 or abs(haus_delta) > 200:
-        rate_limit = 2400
-    elif delta < 0 and grid_p < -30:
-        rate_limit = 2400
-    elif tag_modus:
-        rate_limit = 200 if abs(grid_p) > 300 else 100
-    elif delta > 0:
-        rate_limit = 200
-    else:
-        rate_limit = 2400
-
-    if abs(delta) > rate_limit:
-        return last_gs + rate_limit * (1 if delta > 0 else -1)
-    return target
-
-# ---------------------------------------------------------------------------
-# HMS-Drosselung
+# HMS Limits berechnen
 # ---------------------------------------------------------------------------
 def calc_hms_limits(
+    grid_p: float,
     solar_p_2000: float,
     solar_p_1600: float,
-    hms_1600_online: bool,
-    curr_soc: float,
-    grid_p: float,
     haus_p: float,
-    hms_throttle_soc: float,
+    hms_1600_online: bool,
     tag_modus: bool,
+    drosseln: bool,
 ) -> tuple[float, float]:
-    """
-    Berechnet HMS-2000 und HMS-1600 Limits.
-    Ab hms_throttle_soc % wird gedrosselt.
-    """
+    """Berechnet HMS Limits. drosseln=True wenn zu viel produziert wird."""
     max_2000 = 2000.0
     max_1600 = 1600.0
 
-    if not tag_modus:
-        # Nacht: volle Leistung freigeben (HMS schlafen sowieso)
+    if not tag_modus or not drosseln:
         return max_2000, max_1600
 
     total = solar_p_2000 + solar_p_1600
     if total > 50:
-        anteil_2000 = solar_p_2000 / total
+        ratio_2000 = solar_p_2000 / total
+        ratio_1600 = solar_p_1600 / total if hms_1600_online else 0
     else:
-        anteil_2000 = 1.0 if not hms_1600_online else 0.5
+        ratio_2000 = 0.6
+        ratio_1600 = 0.4 if hms_1600_online else 0
 
-    if curr_soc >= hms_throttle_soc:
-        # Drosseln: Zielleistung = aktueller Bedarf
-        target = solar_p_2000 + solar_p_1600 + grid_p
-        min_limit = max(haus_p, 100.0)
-        target = max(min_limit, min(target, 3600.0))
+    # Zielleistung: genau Hausverbrauch
+    hms_target = max(100.0, haus_p)
 
-        limit_2000 = min(round(target * anteil_2000), max_2000)
-        limit_1600 = min(round(target * (1 - anteil_2000)), max_1600)
-    else:
-        # Volle Leistung
-        limit_2000 = max_2000
-        limit_1600 = max_1600
+    limit_2000 = min(int(hms_target * ratio_2000), max_2000)
+    limit_1600 = min(int(hms_target * ratio_1600), max_1600) if hms_1600_online else 0
 
     return limit_2000, limit_1600
 
 # ---------------------------------------------------------------------------
 # Hauptregelschleife
 # ---------------------------------------------------------------------------
-TICK_S = 5  # Regelzyklus in Sekunden
-
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller startet...")
-    opts = load_options()
+    log.info("SunEnergy XT Controller v2.0 startet...")
+    opts  = load_options()
     state = load_state()
 
     DRY_RUN = bool(opts.get("dry_run", True))
     if DRY_RUN:
-        log.info("DRY-RUN Modus aktiv - es wird NICHTS in HA geschrieben!")
+        log.info("DRY-RUN Modus aktiv - es wird NICHTS geschrieben!")
     else:
         log.info("Aktiver Modus - Controller schreibt in HA")
 
     # Konfiguration
-    grid_sensor    = opts["grid_sensor"]
-    soc_sensor     = opts["soc_sensor"]
-    gs_entity      = opts["gs_entity"]
-    mm_switch      = opts["mm_switch"]
-    sa_entity      = opts["sa_entity"]
+    grid_sensor     = opts["grid_sensor"]
+    soc_sensor      = opts["soc_sensor"]
+    gs_entity       = opts["gs_entity"]
+    mm_switch       = opts["mm_switch"]
+    sa_entity       = opts["sa_entity"]
     hms_2000_entity = opts["hms_2000_entity"]
     hms_1600_entity = opts["hms_1600_entity"]
-    soc_normal_max = float(opts["soc_normal_max"])   # 95%
-    soc_min        = float(opts["soc_min"])           # 10%
-    hms_throttle   = float(opts["hms_throttle_soc"]) # 90%
-    calib_days     = float(opts["calibration_days"]) # 15
-    ki             = float(opts["ki"])                # 0.005
-    i_limit        = float(opts["i_limit"])           # 150
-    sunenergy_ip   = opts.get("sunenergy_ip", "192.168.178.94")
-    ha_ip          = opts.get("ha_ip", "192.168.178.132")
-
-    # Deadband Grenzen
-    DEADBAND_HIGH  =  50.0   # W
-    DEADBAND_LOW_D = -50.0   # W tagsüber
-    DEADBAND_LOW_N = -80.0   # W nachts
-    SURPLUS_THRESHOLD = 0.0  # Shelly negativ = Überschuss
-
-    log.info("Konfiguration geladen: SOC max=%s%%, min=%s%%, HMS Drossel=%s%%",
-             soc_normal_max, soc_min, hms_throttle)
-
-    # Beim Start: active_mode immer zurücksetzen
-    # (verhindert dass alter calibration-State beim Neustart sofort greift)
-    state["active_mode"] = "night"
-    state["last_calibration_ts"] = time.time()  # Reset: keine sofortige Zwangsladung
-    save_state(state)
-    log.info("State zurückgesetzt: active_mode=night, Kalibrierungs-Timer neu gestartet")
+    soc_normal_max  = float(opts["soc_normal_max"])    # 93%
+    soc_min         = float(opts["soc_min"])            # 10%
+    calib_days      = float(opts["calibration_days"])  # 15
+    sunenergy_ip    = opts.get("sunenergy_ip", "192.168.178.94")
 
     # SA auf Normalwert setzen beim Start
     ha_set_number(sa_entity, soc_normal_max)
+
+    # State zurücksetzen
+    state["active_mode"] = "night"
+    state["last_calibration_ts"] = time.time()
+    save_state(state)
+    log.info("State zurückgesetzt, SA=%s%%", soc_normal_max)
 
     while True:
         try:
@@ -393,30 +269,21 @@ def main():
             # ------------------------------------------------------------------
             # 1. Messwerte lesen
             # ------------------------------------------------------------------
-            grid_p_raw_str = ha_get_state(grid_sensor, "0")
-            soc_str        = ha_get_state(soc_sensor, "0")
-            gs_last_str    = ha_get_state(gs_entity, "0")
+            grid_p_raw = float(ha_get_state(grid_sensor, "0") or 0)
+            curr_soc   = float(ha_get_state(soc_sensor, "0") or 0)
+            haus_p     = abs(float(ha_get_state("sensor.hausverbrauch_aktuell", "0") or 0))
 
-            # Validierung
-            try:
-                grid_p_raw = float(grid_p_raw_str)
-                curr_soc   = float(soc_str)
-                last_gs    = float(gs_last_str)
-                data_valid = True
-            except (TypeError, ValueError):
-                data_valid = False
-                grid_p_raw = 0.0
-                curr_soc = 0.0
-                last_gs = state["last_gs"]
+            solar_p_2000 = abs(float(ha_get_state("sensor.hoymiles_hms_2000_4t_power", "0") or 0))
+            solar_p_1600 = abs(float(ha_get_state("sensor.hoymiles_hms_1600_4t_power", "0") or 0))
+            hms_1600_online = ha_get_state("binary_sensor.hoymiles_hms_1600_4t_reachable", "off") == "on"
+            solar_p = solar_p_2000 + solar_p_1600
 
-            # Watchdog: Shelly Timestamp prüfen
-            shelly_data = ha_get(grid_sensor)
+            # Watchdog
+            shelly_data = ha_get_full(grid_sensor)
             if shelly_data:
                 last_upd = shelly_data.get("last_updated", "")
                 try:
-                    upd_ts = datetime.fromisoformat(
-                        last_upd.replace("Z", "+00:00")
-                    ).timestamp()
+                    upd_ts = datetime.fromisoformat(last_upd.replace("Z", "+00:00")).timestamp()
                     watchdog_ok = (time.time() - upd_ts) < 60
                 except Exception:
                     watchdog_ok = False
@@ -426,336 +293,165 @@ def main():
             # ------------------------------------------------------------------
             # 2. Sicherheits-Stopp
             # ------------------------------------------------------------------
-            if not watchdog_ok or not data_valid:
-                log.warning("Sicherheits-Stopp! watchdog=%s data_valid=%s",
-                            watchdog_ok, data_valid)
-                # MM AN (Gerät regelt selbst), GS=0
+            if not watchdog_ok:
+                log.warning("Watchdog Fehler! Sicherheits-Stopp.")
                 ha_switch(mm_switch, True)
                 ha_set_number(gs_entity, 0)
-                state["grid_p_filtered"] = grid_p_raw
-                save_state(state)
+                sunenergy_write(sunenergy_ip, {"IS": 2400, "MM": 1, "GS": 0})
                 time.sleep(TICK_S)
                 continue
 
             # ------------------------------------------------------------------
-            # 3. HMS Leistungen lesen
+            # 3. SunEnergyXT Status lesen (OP = aktueller AC-Ausgang)
             # ------------------------------------------------------------------
-            solar_p_2000 = abs(float(ha_get_state(
-                "sensor.hoymiles_hms_2000_4t_power", "0") or 0))
-            solar_p_1600 = abs(float(ha_get_state(
-                "sensor.hoymiles_hms_1600_4t_power", "0") or 0))
-            hms_1600_reachable = ha_get_state(
-                "binary_sensor.hoymiles_hms_1600_4t_reachable", "off")
-            hms_1600_online = hms_1600_reachable == "on"
-
-            solar_p = solar_p_2000 + solar_p_1600
-            solar_delta = solar_p - state["solar_p_last"]
-
-            # Hausverbrauch
-            haus_p = abs(float(ha_get_state(
-                "sensor.hausverbrauch_aktuell", "0") or 0))
-            haus_delta = haus_p - state["haus_p_last"]
+            se_data = sunenergy_read(sunenergy_ip)
+            op_current = float(se_data.get("OP", 0))
+            state["soc"] = curr_soc
 
             # ------------------------------------------------------------------
-            # 4. Filter anwenden
+            # 4. Sonnenstand
             # ------------------------------------------------------------------
-            grid_p = asymmetric_filter(grid_p_raw, state["grid_p_filtered"])
+            sun_above = get_sun_state().get("state") == "above_horizon"
 
             # ------------------------------------------------------------------
-            # 5. Sonnenstand und Modus bestimmen
-            # ------------------------------------------------------------------
-            sun = get_sun_state()
-            sun_above = sun["state"] == "above_horizon"
-
-            # Tag-Modus: Sonne über Horizont UND echter Überschuss vorhanden
-            # (Shelly negativ = mehr Produktion als Verbrauch)
-            ueberschuss_vorhanden = grid_p < SURPLUS_THRESHOLD
-            tag_modus = sun_above and ueberschuss_vorhanden
-
-            # ------------------------------------------------------------------
-            # 6. Zwangsladung prüfen (alle calibration_days Tage)
+            # 5. Zwangsladung prüfen
             # ------------------------------------------------------------------
             tage_seit = (time.time() - state["last_calibration_ts"]) / 86400
-
-            # Zwangsladung nur einmalig bei Sonnenuntergang triggern
-            # Bedingung: Genug Tage vergangen + Sonne gerade untergegangen
-            # + noch nicht im Kalibrierungsmodus
             zwangsladung_trigger = (
                 tage_seit > calib_days
                 and not sun_above
                 and curr_soc < 100
                 and state["active_mode"] != "calibration"
             )
-
-            # Einmal gesetzt bleibt calibration aktiv bis SOC=100
             if zwangsladung_trigger:
-                log.info("Zwangsladung gestartet! %.1f Tage seit letzter Vollladung, SOC=%.1f%%",
-                         tage_seit, curr_soc)
+                log.info("Zwangsladung gestartet! %.1f Tage seit letzter Vollladung", tage_seit)
                 state["active_mode"] = "calibration"
                 save_state(state)
 
-            # ------------------------------------------------------------------
-            # 7. Zwangsladung aktiv?
-            # ------------------------------------------------------------------
             if state["active_mode"] == "calibration" and curr_soc < 100:
                 log.info("Zwangsladung läuft... SOC=%.1f%%", curr_soc)
-                # SA auf 100% setzen
                 ha_set_number(sa_entity, 100)
-                # MM AUS, wir steuern
                 ha_switch(mm_switch, False)
-                # Maximale Ladeleistung
                 ha_set_number(gs_entity, -2400)
-                save_state(state)
                 time.sleep(TICK_S)
                 continue
 
-            # Zwangsladung beendet wenn SOC=100
             if state["active_mode"] == "calibration" and curr_soc >= 100:
-                log.info("Zwangsladung abgeschlossen! SOC=100%%")
+                log.info("Zwangsladung abgeschlossen!")
                 state["last_calibration_ts"] = time.time()
                 state["active_mode"] = "night"
-                # SA zurück auf Normalwert
                 ha_set_number(sa_entity, soc_normal_max)
-                # MM AN
                 ha_switch(mm_switch, True)
                 ha_set_number(gs_entity, 0)
-                save_state(state)
-                time.sleep(TICK_S)
-                continue
-
-            # ------------------------------------------------------------------
-            # 8. SOC voll (≥ soc_normal_max) → IS drosseln für Nulleinspeisung
-            # ------------------------------------------------------------------
-            if curr_soc >= soc_normal_max:
-                # IS = max(0, Hausverbrauch - HMS_Leistung)
-                # So produziert SunEnergyXT nur noch was der Haushalt braucht
-                hms_p = solar_p  # solar_p = HMS-2000 + HMS-1600 Leistung
-                is_target = max(0, int(haus_p - hms_p))  # kein Puffer → Ziel: 0W Netz
-                is_target = min(is_target, 2400)
-                # HMS drosseln — kein Puffer → Ziel: 0W Netz
-                hms_limit = max(100, int(haus_p))
-                if solar_p > 0:
-                    ratio_2000 = solar_p_2000 / solar_p
-                    ratio_1600 = solar_p_1600 / solar_p if hms_1600_online else 0
-                else:
-                    ratio_2000 = 0.6
-                    ratio_1600 = 0.4
-                hms_limit_2000 = min(int(hms_limit * ratio_2000), 2000)
-                hms_limit_1600 = min(int(hms_limit * ratio_1600), 1600) if hms_1600_online else 0
-                log.info("SOC=%.1f%% ≥ %.1f%% → IS=%dW HMS=%dW (haus=%.0fW hms=%.0fW)",
-                         curr_soc, soc_normal_max, is_target, hms_limit, haus_p, hms_p)
-                # GS: negativ = Akku entlädt (liefert ans Netz/Haus)
-                #     positiv = Akku lädt aus Netz
-                # Bei Netzbezug (grid > 25W) → GS negativ → Akku entlädt
-                # Bei Einspeisung (grid < -25W) → GS negativ bleiben (IS/HMS drosseln genug)
-                if grid_p > 25:
-                    gs_target = -min(2400, int(grid_p))  # negativ = Akku entlädt
-                else:
-                    gs_target = 0
-                sunenergy_write(sunenergy_ip, {"IS": is_target, "MM": 0, "GS": gs_target})
-                # CSV Logging
-                csv_log({
-                    "ts":          time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "mode":        "soc_full",
-                    "soc":         round(curr_soc, 1),
-                    "grid_p":      round(grid_p, 1),
-                    "haus_p":      round(haus_p, 1),
-                    "solar_p":     round(solar_p, 1),
-                    "gs":          gs_target,
-                    "is_target":   is_target,
-                    "hms_limit":   hms_limit,
-                    "hms_2000":    round(solar_p_2000, 1),
-                    "hms_1600":    round(solar_p_1600, 1),
-                    "pi_integral": round(state.get("pi_integral", 0), 2),
-                    "bp":          0,
-                })
-                # HMS begrenzen
-                curr_limit_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
-                if abs(curr_limit_2000 - hms_limit_2000) >= 50:
-                    ha_set_number(hms_2000_entity, hms_limit_2000)
-                if hms_1600_online:
-                    curr_limit_1600 = float(ha_get_state(hms_1600_entity, "1600") or 1600)
-                    if abs(curr_limit_1600 - hms_limit_1600) >= 50:
-                        ha_set_number(hms_1600_entity, hms_limit_1600)
-                state["pi_integral"] *= 0.95
-                state["active_mode"] = "soc_full"
-                state["grid_p_filtered"] = grid_p
-                state["solar_p_last"] = solar_p
-                state["haus_p_last"] = haus_p
-                save_state(state)
-                time.sleep(TICK_S)
-                continue
-
-            # ------------------------------------------------------------------
-            # 9. Nachtmodus (kein Überschuss oder Sonne weg)
-            # ------------------------------------------------------------------
-            if not tag_modus:
-                # MM AN, GS=0, IS=2400 — Gerät regelt selbst
-                ha_switch(mm_switch, True)
-                ha_set_number(gs_entity, 0)
-                # IS zurück auf Maximum wenn wir aus soc_full kommen
-                if state.get("active_mode") == "soc_full":
-                    sunenergy_write(sunenergy_ip, {"IS": 2400})
-                    log.info("Nacht: IS zurück auf 2400W")
-                # Integral langsam abbauen
-                state["pi_integral"] *= 0.90
-                state["active_mode"] = "night"
-                state["grid_p_filtered"] = grid_p
-                state["solar_p_last"] = solar_p
-                state["haus_p_last"] = haus_p
-                log.debug("Nacht/kein Überschuss: MM=AN, GS=0, SOC=%.1f%%", curr_soc)
-                save_state(state)
-                time.sleep(TICK_S)
-                continue
-
-            # ------------------------------------------------------------------
-            # 9. Aktive Regelung (Tag, Überschuss vorhanden)
-            # ------------------------------------------------------------------
-            # IS zurück auf Maximum wenn wir aus soc_full kommen
-            if state.get("active_mode") == "soc_full":
                 sunenergy_write(sunenergy_ip, {"IS": 2400})
-                log.info("Aktive Regelung: IS zurück auf 2400W")
+                save_state(state)
+                time.sleep(TICK_S)
+                continue
 
+            # ------------------------------------------------------------------
+            # 6. Nachtmodus
+            # ------------------------------------------------------------------
+            if not sun_above:
+                if state["active_mode"] != "night":
+                    log.info("Nachtmodus: MM=AN, IS=2400")
+                    ha_switch(mm_switch, True)
+                    ha_set_number(gs_entity, 0)
+                    sunenergy_write(sunenergy_ip, {"IS": 2400, "MM": 1, "GS": 0})
+                    ha_set_number(hms_2000_entity, 2000)
+                    if hms_1600_online:
+                        ha_set_number(hms_1600_entity, 1600)
+                state["active_mode"] = "night"
+                state["grid_p_filtered"] = grid_p_raw
+                save_state(state)
+                time.sleep(TICK_S)
+                continue
+
+            # ------------------------------------------------------------------
+            # 7. Tagregelung — universell für jeden SOC
+            # ------------------------------------------------------------------
             state["active_mode"] = "active"
 
-            # MM AUS — wir übernehmen die Regelung
+            # GS Formel: GS_neu = OP + grid_p
+            # grid_p positiv = Netzbezug → GS steigt → Akku entlädt mehr
+            # grid_p negativ = Einspeisung → GS sinkt → Akku lädt mehr
+            gs_new = op_current + grid_p_raw
+            gs_new = max(-2400, min(2400, gs_new))
+
+            # MM AUS — wir regeln
             ha_switch(mm_switch, False)
+            ha_set_number(gs_entity, gs_new)
 
-            # Deadband bestimmen
-            deadband_low = DEADBAND_LOW_D  # tagsüber
-            if grid_p > DEADBAND_HIGH:
-                deadband = "import"
-            elif grid_p < deadband_low:
-                deadband = "export"
+            # IS: begrenzt DC-Carport
+            # Wenn Einspeisung (grid < -25W) → IS reduzieren
+            # Wenn Bezug (grid > 25W) → IS erhöhen
+            # Einfache Formel: IS = haus - solar (was HMS nicht liefert)
+            if grid_p_raw < -25:
+                # Zu viel Produktion → IS runter
+                is_target = max(0, int(haus_p - solar_p))
+                drosseln = True
+            elif grid_p_raw > 25:
+                # Zu wenig → IS hoch
+                is_target = min(2400, int(haus_p - solar_p + grid_p_raw))
+                drosseln = False
             else:
-                deadband = "neutral"
+                is_target = max(0, int(haus_p - solar_p))
+                drosseln = False
 
-            in_deadband = deadband == "neutral"
+            is_target = max(0, min(2400, is_target))
 
-            # Fehler für PI-Regler
-            error = grid_p if not in_deadband else 0.0
-
-            # Feedforward
-            ff_solar = round(-solar_delta) if abs(solar_delta) > 150 else 0
-            ff_haus  = round(haus_delta)   if abs(haus_delta)  > 200 else 0
-            feedforward = ff_solar + ff_haus
-
-            # PI-Schritt
-            pi_out, new_integral = pi_step(
-                error=error,
-                last_integral=state["pi_integral"],
-                dt=TICK_S,
-                ki=ki,
-                i_limit=i_limit,
-                in_deadband=in_deadband,
-                tag_modus=True,
-            )
-
-            # GS-Sollwert berechnen
-            if curr_soc <= soc_min:
-                # SOC zu niedrig — nicht entladen
-                r_target = max(min(last_gs, 0), -10)
-            elif deadband == "import":
-                r_target = max(last_gs + pi_out + feedforward, 0)
-                r_target = min(r_target, 2400)
-            elif deadband == "export" and curr_soc < soc_normal_max:
-                r_target = min(last_gs + pi_out + feedforward, -10)
-                r_target = max(r_target, -2400)
-            elif deadband == "export" and curr_soc >= soc_normal_max:
-                r_target = 0
-            else:
-                r_target = last_gs
-
-            # Rate-Limiting
-            final_gs = apply_rate_limit(
-                target=r_target,
-                last_gs=last_gs,
-                grid_p=grid_p,
-                solar_delta=solar_delta,
-                haus_delta=haus_delta,
-                tag_modus=True,
-            )
-            final_gs = round(final_gs)
-
-            # Schreibschwelle: nur schreiben wenn Änderung > 50W tagsüber
-            delta_gs = abs(final_gs - last_gs)
-            if delta_gs >= 50:
-                ha_set_number(gs_entity, final_gs)
-                log.info(
-                    "GS=%dW | grid=%.1fW | SOC=%.1f%% | err=%.1fW | int=%.2f | "
-                    "dead=%s | ff=%dW",
-                    final_gs, grid_p, curr_soc, error, new_integral,
-                    deadband, feedforward,
-                )
-
-            # ------------------------------------------------------------------
-            # 10. HMS-Drosselung
-            # ------------------------------------------------------------------
+            # HMS Limits
             limit_2000, limit_1600 = calc_hms_limits(
-                solar_p_2000=solar_p_2000,
-                solar_p_1600=solar_p_1600,
-                hms_1600_online=hms_1600_online,
-                curr_soc=curr_soc,
-                grid_p=grid_p,
-                haus_p=haus_p,
-                hms_throttle_soc=hms_throttle,
-                tag_modus=True,
+                grid_p_raw, solar_p_2000, solar_p_1600,
+                haus_p, hms_1600_online, True, drosseln
             )
 
-            # Nur schreiben wenn Änderung > 50W
-            curr_limit_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
-            if abs(curr_limit_2000 - limit_2000) >= 50:
+            # Schreiben
+            sunenergy_write(sunenergy_ip, {"IS": is_target, "MM": 0})
+
+            curr_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
+            if abs(curr_2000 - limit_2000) >= 50:
                 ha_set_number(hms_2000_entity, limit_2000)
-                log.info("HMS-2000 Limit: %dW", limit_2000)
 
             if hms_1600_online:
-                curr_limit_1600 = float(
-                    ha_get_state(hms_1600_entity, "1600") or 1600)
-                if abs(curr_limit_1600 - limit_1600) >= 50:
+                curr_1600 = float(ha_get_state(hms_1600_entity, "1600") or 1600)
+                if abs(curr_1600 - limit_1600) >= 50:
                     ha_set_number(hms_1600_entity, limit_1600)
-                    log.info("HMS-1600 Limit: %dW", limit_1600)
 
-            # ------------------------------------------------------------------
-            # 11. Vollladung erkennen und Zeitstempel speichern
-            # ------------------------------------------------------------------
+            log.info("GS=%dW IS=%dW HMS=%d/%dW | grid=%.0fW haus=%.0fW solar=%.0fW SOC=%.0f%%",
+                     gs_new, is_target, limit_2000, limit_1600,
+                     grid_p_raw, haus_p, solar_p, curr_soc)
+
+            # Vollladung erkennen
             if curr_soc >= 100:
                 state["last_calibration_ts"] = time.time()
-                log.info("Vollladung erkannt, Zeitstempel gespeichert.")
 
-            # ------------------------------------------------------------------
-            # 12. State speichern
-            # ------------------------------------------------------------------
-            state["pi_integral"]      = new_integral
-            state["grid_p_filtered"]  = grid_p
-            state["solar_p_last"]     = solar_p
-            state["haus_p_last"]      = haus_p
-            state["last_gs"]          = final_gs
-            save_state(state)
-
-            # CSV Logging
+            # CSV
             csv_log({
-                "ts":           time.strftime("%Y-%m-%d %H:%M:%S"),
-                "mode":         state["active_mode"],
-                "soc":          round(curr_soc, 1),
-                "grid_p":       round(grid_p, 1),
-                "haus_p":       round(haus_p, 1),
-                "solar_p":      round(solar_p, 1),
-                "gs":           round(final_gs, 0),
-                "is_target":    0,
-                "hms_limit":    0,
-                "hms_2000":     round(solar_p_2000, 1),
-                "hms_1600":     round(solar_p_1600, 1),
-                "pi_integral":  round(new_integral, 2),
-                "bp":           0,
+                "ts":       time.strftime("%Y-%m-%d %H:%M:%S"),
+                "mode":     state["active_mode"],
+                "soc":      round(curr_soc, 1),
+                "grid_p":   round(grid_p_raw, 1),
+                "haus_p":   round(haus_p, 1),
+                "solar_p":  round(solar_p, 1),
+                "gs":       round(gs_new, 0),
+                "op":       round(op_current, 1),
+                "is_target": is_target,
+                "hms_limit": round(limit_2000 + limit_1600, 0),
+                "hms_2000":  round(solar_p_2000, 1),
+                "hms_1600":  round(solar_p_1600, 1),
             })
 
-        except Exception as e:
-            log.error("Unerwarteter Fehler im Regelzyklus: %s", e, exc_info=True)
+            state["grid_p_filtered"] = grid_p_raw
+            state["solar_p_last"]    = solar_p
+            state["haus_p_last"]     = haus_p
+            state["last_gs"]         = gs_new
+            save_state(state)
 
-        # Zyklus-Timing
+        except Exception as e:
+            log.error("Fehler im Regelzyklus: %s", e, exc_info=True)
+
         elapsed = time.monotonic() - tick_start
-        sleep_time = max(0, TICK_S - elapsed)
-        time.sleep(sleep_time)
+        time.sleep(max(0, TICK_S - elapsed))
 
 
 if __name__ == "__main__":
