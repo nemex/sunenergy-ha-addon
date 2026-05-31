@@ -508,9 +508,21 @@ def main():
                 hms_p = solar_p  # solar_p = HMS-2000 + HMS-1600 Leistung
                 is_target = max(0, int(haus_p - hms_p - 50))  # 50W Puffer
                 is_target = min(is_target, 2400)
-                log.info("SOC=%.1f%% ≥ %.1f%% → IS=%dW (haus=%.0fW hms=%.0fW)",
-                         curr_soc, soc_normal_max, is_target, haus_p, hms_p)
+                # HMS drosseln wenn HMS > Hausverbrauch
+                hms_limit = max(100, int(haus_p - 50))
+                hms_limit_2000 = min(hms_limit, 2000)
+                hms_limit_1600 = min(hms_limit, 1600) if hms_1600_online else 0
+                log.info("SOC=%.1f%% ≥ %.1f%% → IS=%dW HMS=%dW (haus=%.0fW hms=%.0fW)",
+                         curr_soc, soc_normal_max, is_target, hms_limit, haus_p, hms_p)
                 sunenergy_write(sunenergy_ip, {"IS": is_target, "MM": 0, "GS": 0})
+                # HMS begrenzen
+                curr_limit_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
+                if abs(curr_limit_2000 - hms_limit_2000) >= 50:
+                    ha_set_number(hms_2000_entity, hms_limit_2000)
+                if hms_1600_online:
+                    curr_limit_1600 = float(ha_get_state(hms_1600_entity, "1600") or 1600)
+                    if abs(curr_limit_1600 - hms_limit_1600) >= 50:
+                        ha_set_number(hms_1600_entity, hms_limit_1600)
                 state["pi_integral"] *= 0.95
                 state["active_mode"] = "soc_full"
                 state["grid_p_filtered"] = grid_p
