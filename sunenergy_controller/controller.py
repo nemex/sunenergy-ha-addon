@@ -544,7 +544,14 @@ def main():
                 hms_limit_1600 = min(int(hms_limit * ratio_1600), 1600) if hms_1600_online else 0
                 log.info("SOC=%.1f%% ≥ %.1f%% → IS=%dW HMS=%dW (haus=%.0fW hms=%.0fW)",
                          curr_soc, soc_normal_max, is_target, hms_limit, haus_p, hms_p)
-                sunenergy_write(sunenergy_ip, {"IS": is_target, "MM": 0, "GS": 0})
+                # GS: Akku entladen wenn Netzbezug > 25W, laden wenn Einspeisung < -25W
+                if grid_p > 25:
+                    gs_target = min(2400, int(grid_p))   # Akku entlädt Lücke
+                elif grid_p < -25:
+                    gs_target = max(-2400, int(grid_p))  # Akku lädt Überschuss
+                else:
+                    gs_target = 0
+                sunenergy_write(sunenergy_ip, {"IS": is_target, "MM": 0, "GS": gs_target})
                 # CSV Logging
                 csv_log({
                     "ts":          time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -553,7 +560,7 @@ def main():
                     "grid_p":      round(grid_p, 1),
                     "haus_p":      round(haus_p, 1),
                     "solar_p":     round(solar_p, 1),
-                    "gs":          0,
+                    "gs":          gs_target,
                     "is_target":   is_target,
                     "hms_limit":   hms_limit,
                     "hms_2000":    round(solar_p_2000, 1),
