@@ -508,10 +508,16 @@ def main():
                 hms_p = solar_p  # solar_p = HMS-2000 + HMS-1600 Leistung
                 is_target = max(0, int(haus_p - hms_p - 50))  # 50W Puffer
                 is_target = min(is_target, 2400)
-                # HMS drosseln wenn HMS > Hausverbrauch
+                # HMS drosseln wenn HMS > Hausverbrauch — proportional zur aktuellen Leistung
                 hms_limit = max(100, int(haus_p - 50))
-                hms_limit_2000 = min(hms_limit, 2000)
-                hms_limit_1600 = min(hms_limit, 1600) if hms_1600_online else 0
+                if solar_p > 0:
+                    ratio_2000 = solar_p_2000 / solar_p
+                    ratio_1600 = solar_p_1600 / solar_p if hms_1600_online else 0
+                else:
+                    ratio_2000 = 0.6
+                    ratio_1600 = 0.4
+                hms_limit_2000 = min(int(hms_limit * ratio_2000), 2000)
+                hms_limit_1600 = min(int(hms_limit * ratio_1600), 1600) if hms_1600_online else 0
                 log.info("SOC=%.1f%% ≥ %.1f%% → IS=%dW HMS=%dW (haus=%.0fW hms=%.0fW)",
                          curr_soc, soc_normal_max, is_target, hms_limit, haus_p, hms_p)
                 sunenergy_write(sunenergy_ip, {"IS": is_target, "MM": 0, "GS": 0})
