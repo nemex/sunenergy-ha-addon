@@ -340,6 +340,8 @@ def main():
     calib_days     = float(opts["calibration_days"]) # 15
     ki             = float(opts["ki"])                # 0.005
     i_limit        = float(opts["i_limit"])           # 150
+    sunenergy_ip   = opts.get("sunenergy_ip", "192.168.178.94")
+    ha_ip          = opts.get("ha_ip", "192.168.178.132")
 
     # Deadband Grenzen
     DEADBAND_HIGH  =  50.0   # W
