@@ -509,7 +509,7 @@ def main():
                     md_string = json.dumps({
                         "mode": "direct",
                         "direct": {"dat_url": proxy_url},
-                        "dat_str": {"pwr": "total_power"}
+                        "dat_str": {"pwr": "total_act_power"}
                     }, separators=(",", ":"))
                     log.info("SOC=%.1f%% ≥ %.1f%% → MM=AN + MD Proxy: %s",
                              curr_soc, soc_normal_max, proxy_url)
