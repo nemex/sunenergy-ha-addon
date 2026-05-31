@@ -1,15 +1,52 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller — Web UI
-Einfaches Live-Dashboard auf Port 8765
+SunEnergy XT Controller — Web UI + Meter Proxy
+Port 8765:
+  GET /        → Live Dashboard
+  GET /state   → JSON State
+  GET /meter   → Shelly Pro 3EM Proxy für SunEnergyXT Zählerbindung
 """
 
 import json
 import time
+import requests
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 STATE_PATH = "/data/controller_state.json"
+OPTIONS_PATH = "/data/options.json"
+
+def load_state() -> dict:
+    try:
+        if Path(STATE_PATH).exists():
+            with open(STATE_PATH) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def load_options() -> dict:
+    try:
+        if Path(OPTIONS_PATH).exists():
+            with open(OPTIONS_PATH) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def get_shelly_power(shelly_ip: str) -> float:
+    """Liest die aktuelle Netzleistung vom Shelly Pro 3EM."""
+    try:
+        r = requests.get(
+            f"http://{shelly_ip}/rpc/EM.GetStatus?id=0",
+            timeout=3
+        )
+        if r.status_code == 200:
+            data = r.json()
+            return float(data.get("total_act_power", 0))
+    except Exception:
+        pass
+    return 0.0
 
 HTML = """<!DOCTYPE html>
 <html lang="de">
@@ -49,6 +86,9 @@ HTML = """<!DOCTYPE html>
   .mode.calibration { background: rgba(240,165,0,0.15); color: var(--accent);
                       border: 1px solid var(--accent); }
   .footer { color: var(--muted); font-size: 11px; margin-top: 24px; }
+  .meter-info { background: var(--surface); border: 1px solid var(--border);
+                border-radius: 4px; padding: 16px; margin-top: 16px; }
+  .meter-url { font-family: var(--mono); font-size: 12px; color: var(--accent); }
   .soc-bar { height: 6px; background: var(--border); border-radius: 3px;
              margin-top: 8px; overflow: hidden; }
   .soc-fill { height: 100%; background: var(--green); border-radius: 3px; }
@@ -83,29 +123,44 @@ HTML = """<!DOCTYPE html>
     <div class="card-value {calib_class}">{calib_days}</div>
   </div>
 </div>
+
+<div class="meter-info">
+  <div class="card-title">🔌 Zähler-Proxy für SunEnergyXT</div>
+  <p style="margin: 8px 0; font-size: 13px;">Trage diese URL im SunEnergyXT als "Lokales Zählerdatenformat" ein:</p>
+  <div class="meter-url">http://{ha_ip}:8765/meter</div>
+</div>
+
 <div class="footer">Letzte Aktualisierung: {timestamp} · Automatische Aktualisierung alle 5s</div>
 </body>
 </html>"""
 
 
-def load_state() -> dict:
-    try:
-        if Path(STATE_PATH).exists():
-            with open(STATE_PATH) as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-
 class UIHandler(BaseHTTPRequestHandler):
     def log_message(self, *args):
-        pass  # Kein HTTP-Logging
+        pass
 
     def do_GET(self):
-        if self.path == "/":
-            state = load_state()
+        opts = load_options()
+        shelly_ip = opts.get("shelly_ip", "192.168.178.90")
 
+        if self.path == "/meter":
+            # Proxy: Shelly Daten in Format umwandeln das SunEnergyXT erwartet
+            power = get_shelly_power(shelly_ip)
+            # SunEnergyXT erwartet total_power (positiv = Bezug, negativ = Einspeisung)
+            meter_data = {
+                "total_power": round(power, 1),
+                "power": round(power, 1),
+                "a_act_power": round(power / 3, 1),
+                "b_act_power": round(power / 3, 1),
+                "c_act_power": round(power / 3, 1),
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(meter_data).encode())
+
+        elif self.path == "/":
+            state = load_state()
             mode = state.get("active_mode", "unknown")
             mode_class = mode if mode in ("active", "night", "calibration") else "night"
             mode_labels = {
@@ -118,10 +173,18 @@ class UIHandler(BaseHTTPRequestHandler):
             gs = state.get("last_gs", 0)
             grid = state.get("grid_p_filtered", 0)
             integral = round(state.get("pi_integral", 0), 2)
+            soc = round(state.get("soc", 0))
 
             calib_ts = state.get("last_calibration_ts", 0)
             calib_days = round((time.time() - calib_ts) / 86400, 1) if calib_ts else "—"
             calib_class = "warning" if isinstance(calib_days, float) and calib_days > 12 else ""
+
+            # HA IP aus Umgebung oder Standard
+            import socket
+            try:
+                ha_ip = socket.gethostbyname("homeassistant.local")
+            except Exception:
+                ha_ip = "192.168.178.132"
 
             html = HTML.format(
                 mode_class=mode_class,
@@ -131,9 +194,10 @@ class UIHandler(BaseHTTPRequestHandler):
                 grid_value=round(grid, 1),
                 grid_class="negative" if grid > 50 else "positive" if grid < -30 else "",
                 integral=integral,
-                soc=round(state.get("soc", 0)),
+                soc=soc,
                 calib_days=calib_days,
                 calib_class=calib_class,
+                ha_ip=ha_ip,
                 timestamp=time.strftime("%H:%M:%S"),
             )
 
@@ -156,5 +220,5 @@ class UIHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", 8765), UIHandler)
-    print("Web UI läuft auf http://0.0.0.0:8765")
+    print("Web UI + Meter Proxy läuft auf http://0.0.0.0:8765")
     server.serve_forever()
