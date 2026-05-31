@@ -128,6 +128,42 @@ HTML = """<!DOCTYPE html>
   <canvas id="chart-power"></canvas>
 </div>
 
+<div class="chart-wrap">
+  <h2>Wechselrichter — Ist vs. Limit</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:8px">
+    <div>
+      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">SunEnergyXT (IS)</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-se-ist">—</span> W</span>
+        <span style="font-size:11px;color:#4a5568">Limit: <span id="inv-se-lim">—</span> W</span>
+      </div>
+      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden">
+        <div id="inv-se-bar" style="height:100%;background:#00e676;border-radius:4px;width:0%;transition:width 1s"></div>
+      </div>
+    </div>
+    <div>
+      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">HMS-2000</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-2000-ist">—</span> W</span>
+        <span style="font-size:11px;color:#4a5568">Limit: <span id="inv-2000-lim">—</span> W</span>
+      </div>
+      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden">
+        <div id="inv-2000-bar" style="height:100%;background:#f0a500;border-radius:4px;width:0%;transition:width 1s"></div>
+      </div>
+    </div>
+    <div>
+      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">HMS-1600</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-1600-ist">—</span> W</span>
+        <span style="font-size:11px;color:#4a5568">Limit: <span id="inv-1600-lim">—</span> W</span>
+      </div>
+      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden">
+        <div id="inv-1600-bar" style="height:100%;background:#00c2ff;border-radius:4px;width:0%;transition:width 1s"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="footer">
   <span id="ts">—</span>
   <a href="/log" class="btn">⬇ CSV Download</a>
@@ -184,6 +220,31 @@ function updateCards(state, csv) {
   setCard('c-soc', soc.toFixed(0) + ' %', soc < 20 ? 'warn' : '');
   document.getElementById('c-soc-bar').style.width = Math.min(100, soc) + '%';
   document.getElementById('ts').textContent = 'Letzte Aktualisierung: ' + new Date().toLocaleTimeString('de-DE');
+
+  // Wechselrichter Ist vs Limit
+  const seIst  = parseFloat(csv.solar_p || 0) - parseFloat(csv.hms_2000 || 0) - parseFloat(csv.hms_1600 || 0);
+  const seLim  = parseFloat(csv.is_target || 0);
+  const h2000Ist = parseFloat(csv.hms_2000 || 0);
+  const h1600Ist = parseFloat(csv.hms_1600 || 0);
+  // HMS Limit proportional aufteilen
+  const hmsTotal = h2000Ist + h1600Ist;
+  const hmsLim = parseFloat(csv.hms_limit || 0);
+  const lim2000 = hmsTotal > 0 ? hmsLim * (h2000Ist / hmsTotal) : hmsLim * 0.6;
+  const lim1600 = hmsTotal > 0 ? hmsLim * (h1600Ist / hmsTotal) : hmsLim * 0.4;
+
+  setInv('inv-se',   seIst > 0 ? seIst : 0,  seLim,  2400);
+  setInv('inv-2000', h2000Ist, lim2000, 2000);
+  setInv('inv-1600', h1600Ist, lim1600, 1600);
+}
+
+function setInv(prefix, ist, lim, max) {
+  document.getElementById(prefix + '-ist').textContent = Math.round(ist);
+  document.getElementById(prefix + '-lim').textContent = Math.round(lim);
+  const pct = lim > 0 ? Math.min(100, ist / lim * 100) : (ist > 0 ? 100 : 0);
+  const color = pct > 95 ? '#ff3d57' : pct > 70 ? '#f0a500' : '#00e676';
+  const bar = document.getElementById(prefix + '-bar');
+  bar.style.width = Math.min(100, ist / max * 100) + '%';
+  bar.style.background = color;
 }
 
 function setCard(id, text, cls) {
