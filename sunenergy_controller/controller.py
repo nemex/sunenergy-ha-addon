@@ -349,19 +349,46 @@ def main():
                 continue
 
             # ------------------------------------------------------------------
-            # 6. Nachtmodus
+            # 6. Nachtmodus — GS weiter aktiv regeln für Akkuentladung
             # ------------------------------------------------------------------
             if not sun_above:
                 if state["active_mode"] != "night":
-                    log.info("Nachtmodus: MM=AN, IS=2400")
-                    ha_switch(mm_switch, True)
-                    ha_set_number(gs_entity, 0)
-                    sunenergy_write(sunenergy_ip, {"IS": 2400, "MM": 1, "GS": 0})
+                    log.info("Nachtmodus: IS=2400, HMS voll")
+                    sunenergy_write(sunenergy_ip, {"IS": 2400})
                     ha_set_number(hms_2000_entity, 2000)
                     if hms_1600_online:
                         ha_set_number(hms_1600_entity, 1600)
+
                 state["active_mode"] = "night"
+
+                # GS weiter regeln: Akku entlädt bei Netzbezug, lädt bei Überschuss
+                gs_new = op_current + grid_p_raw
+                gs_new = max(-2400, min(2400, gs_new))
+
+                ha_switch(mm_switch, False)
+                ha_set_number(gs_entity, gs_new)
+                sunenergy_write(sunenergy_ip, {"MM": 0, "GS": int(gs_new)})
+
+                log.info("Nacht: GS=%dW | grid=%.0fW haus=%.0fW SOC=%.0f%%",
+                         gs_new, grid_p_raw, haus_p, curr_soc)
+
+                csv_log({
+                    "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "mode": "night",
+                    "soc": round(curr_soc, 1),
+                    "grid_p": round(grid_p_raw, 1),
+                    "haus_p": round(haus_p, 1),
+                    "solar_p": 0,
+                    "gs": round(gs_new, 0),
+                    "op": round(op_current, 1),
+                    "is_target": 2400,
+                    "hms_limit": 3600,
+                    "hms_2000": 0,
+                    "hms_1600": 0,
+                })
+
                 state["grid_p_filtered"] = grid_p_raw
+                state["last_gs"] = gs_new
                 save_state(state)
                 time.sleep(TICK_S)
                 continue
