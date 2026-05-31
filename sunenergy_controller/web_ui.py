@@ -144,17 +144,25 @@ class UIHandler(BaseHTTPRequestHandler):
         shelly_ip = opts.get("shelly_ip", "192.168.178.90")
 
         if self.path == "/meter":
-            # Proxy: Shelly Daten in Format umwandeln das SunEnergyXT erwartet
+            # Proxy: Exakt das gleiche Format wie Shelly Pro 3EM /rpc/EM.GetStatus?id=0
             power = get_shelly_power(shelly_ip)
-            # Shelly: negativ=Einspeisung, positiv=Bezug
-            # SunEnergyXT erwartet moeglicherweise: positiv=Einspeisung → negieren
-            power_out = -power
             meter_data = {
-                "total_power": round(power_out, 1),
-                "power": round(power_out, 1),
-                "a_act_power": round(power_out / 3, 1),
-                "b_act_power": round(power_out / 3, 1),
-                "c_act_power": round(power_out / 3, 1),
+                "id": 0,
+                "total_act_power": round(power, 1),
+                "total_current": 0.0,
+                "total_aprt_power": round(abs(power), 1),
+                "a_act_power": round(power / 3, 1),
+                "b_act_power": round(power / 3, 1),
+                "c_act_power": round(power / 3, 1),
+                "a_current": 0.0,
+                "b_current": 0.0,
+                "c_current": 0.0,
+                "a_voltage": 230.0,
+                "b_voltage": 230.0,
+                "c_voltage": 230.0,
+                "a_freq": 50.0,
+                "b_freq": 50.0,
+                "c_freq": 50.0,
             }
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
