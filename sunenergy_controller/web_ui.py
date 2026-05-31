@@ -146,13 +146,15 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.path == "/meter":
             # Proxy: Shelly Daten in Format umwandeln das SunEnergyXT erwartet
             power = get_shelly_power(shelly_ip)
-            # SunEnergyXT erwartet total_power (positiv = Bezug, negativ = Einspeisung)
+            # Shelly: negativ=Einspeisung, positiv=Bezug
+            # SunEnergyXT erwartet moeglicherweise: positiv=Einspeisung → negieren
+            power_out = -power
             meter_data = {
-                "total_power": round(power, 1),
-                "power": round(power, 1),
-                "a_act_power": round(power / 3, 1),
-                "b_act_power": round(power / 3, 1),
-                "c_act_power": round(power / 3, 1),
+                "total_power": round(power_out, 1),
+                "power": round(power_out, 1),
+                "a_act_power": round(power_out / 3, 1),
+                "b_act_power": round(power_out / 3, 1),
+                "c_act_power": round(power_out / 3, 1),
             }
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
