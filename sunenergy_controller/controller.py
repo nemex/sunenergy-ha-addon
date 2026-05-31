@@ -87,6 +87,22 @@ def ha_set_number(entity_id: str, value: float) -> bool:
         log.error("HA SET %s Fehler: %s", entity_id, e)
         return False
 
+def sunenergy_write(ip: str, payload: dict) -> bool:
+    """Schreibt direkt per HTTP auf den SunEnergyXT."""
+    if DRY_RUN:
+        log.info("🔍 [DRY-RUN] WÜRDE SunEnergyXT schreiben: %s", payload)
+        return True
+    try:
+        r = requests.post(
+            f"http://{ip}/write",
+            json={"state": payload},
+            timeout=5,
+        )
+        return r.status_code in (200, 201)
+    except Exception as e:
+        log.error("SunEnergyXT WRITE Fehler: %s", e)
+        return False
+
 def ha_switch(entity_id: str, turn_on: bool) -> bool:
     """Schaltet einen switch-Entity."""
     if DRY_RUN:
@@ -482,15 +498,25 @@ def main():
                 continue
 
             # ------------------------------------------------------------------
-            # 8. SOC voll (≥ soc_normal_max) → MM AN, Gerät regelt DC selbst
+            # 8. SOC voll (≥ soc_normal_max) → MM AN + MD Proxy setzen
             # ------------------------------------------------------------------
             if curr_soc >= soc_normal_max:
-                log.info("SOC=%.1f%% ≥ %.1f%% → MM=AN, Gerät regelt Nulleinspeisung selbst",
-                         curr_soc, soc_normal_max)
-                ha_switch(mm_switch, True)
-                ha_set_number(gs_entity, 0)
+                # MD+MM nur einmal setzen wenn wir in diesen Modus wechseln
+                if state.get("active_mode") != "soc_full":
+                    proxy_url = f"http://{ha_ip}:8765/meter"
+                    md_string = json.dumps({
+                        "mode": "direct",
+                        "direct": {"dat_url": proxy_url},
+                        "dat_str": {"pwr": "total_power"}
+                    }, separators=(",", ":"))
+                    log.info("SOC=%.1f%% ≥ %.1f%% → MM=AN + MD Proxy: %s",
+                             curr_soc, soc_normal_max, proxy_url)
+                    sunenergy_write(sunenergy_ip, {"MM": 1, "MD": md_string, "GS": 0})
+                else:
+                    log.debug("SOC=%.1f%% ≥ %.1f%% → MM=AN (bereits aktiv)",
+                              curr_soc, soc_normal_max)
                 state["pi_integral"] *= 0.95
-                state["active_mode"] = "active"
+                state["active_mode"] = "soc_full"
                 state["grid_p_filtered"] = grid_p
                 state["solar_p_last"] = solar_p
                 state["haus_p_last"] = haus_p
