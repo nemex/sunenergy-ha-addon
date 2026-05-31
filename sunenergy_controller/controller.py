@@ -500,23 +500,17 @@ def main():
                 continue
 
             # ------------------------------------------------------------------
-            # 8. SOC voll (≥ soc_normal_max) → MM AN + MD Proxy setzen
+            # 8. SOC voll (≥ soc_normal_max) → IS drosseln für Nulleinspeisung
             # ------------------------------------------------------------------
             if curr_soc >= soc_normal_max:
-                # MD+MM nur einmal setzen wenn wir in diesen Modus wechseln
-                if state.get("active_mode") != "soc_full":
-                    proxy_url = f"http://{ha_ip}:8765/meter"
-                    md_string = json.dumps({
-                        "mode": "direct",
-                        "direct": {"dat_url": proxy_url},
-                        "dat_str": {"pwr": "total_act_power"}
-                    }, separators=(",", ":"))
-                    log.info("SOC=%.1f%% ≥ %.1f%% → MM=AN + MD Proxy: %s",
-                             curr_soc, soc_normal_max, proxy_url)
-                    sunenergy_write(sunenergy_ip, {"MM": 1, "MD": md_string, "GS": 0})
-                else:
-                    log.debug("SOC=%.1f%% ≥ %.1f%% → MM=AN (bereits aktiv)",
-                              curr_soc, soc_normal_max)
+                # IS = max(0, Hausverbrauch - HMS_Leistung)
+                # So produziert SunEnergyXT nur noch was der Haushalt braucht
+                hms_p = state.get("hms_2000_last", 0) + state.get("hms_1600_last", 0)
+                is_target = max(0, int(haus_p - hms_p - 50))  # 50W Puffer
+                is_target = min(is_target, 2400)
+                log.info("SOC=%.1f%% ≥ %.1f%% → IS=%dW (haus=%.0fW hms=%.0fW)",
+                         curr_soc, soc_normal_max, is_target, haus_p, hms_p)
+                sunenergy_write(sunenergy_ip, {"IS": is_target, "MM": 0, "GS": 0})
                 state["pi_integral"] *= 0.95
                 state["active_mode"] = "soc_full"
                 state["grid_p_filtered"] = grid_p
@@ -530,9 +524,13 @@ def main():
             # 9. Nachtmodus (kein Überschuss oder Sonne weg)
             # ------------------------------------------------------------------
             if not tag_modus:
-                # MM AN, GS=0 — Gerät regelt selbst
+                # MM AN, GS=0, IS=2400 — Gerät regelt selbst
                 ha_switch(mm_switch, True)
                 ha_set_number(gs_entity, 0)
+                # IS zurück auf Maximum wenn wir aus soc_full kommen
+                if state.get("active_mode") == "soc_full":
+                    sunenergy_write(sunenergy_ip, {"IS": 2400})
+                    log.info("Nacht: IS zurück auf 2400W")
                 # Integral langsam abbauen
                 state["pi_integral"] *= 0.90
                 state["active_mode"] = "night"
@@ -547,6 +545,11 @@ def main():
             # ------------------------------------------------------------------
             # 9. Aktive Regelung (Tag, Überschuss vorhanden)
             # ------------------------------------------------------------------
+            # IS zurück auf Maximum wenn wir aus soc_full kommen
+            if state.get("active_mode") == "soc_full":
+                sunenergy_write(sunenergy_ip, {"IS": 2400})
+                log.info("Aktive Regelung: IS zurück auf 2400W")
+
             state["active_mode"] = "active"
 
             # MM AUS — wir übernehmen die Regelung
