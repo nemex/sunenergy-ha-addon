@@ -530,10 +530,10 @@ def main():
                 # IS = max(0, Hausverbrauch - HMS_Leistung)
                 # So produziert SunEnergyXT nur noch was der Haushalt braucht
                 hms_p = solar_p  # solar_p = HMS-2000 + HMS-1600 Leistung
-                is_target = max(0, int(haus_p - hms_p - 50))  # 50W Puffer
+                is_target = max(0, int(haus_p - hms_p))  # kein Puffer → Ziel: 0W Netz
                 is_target = min(is_target, 2400)
-                # HMS drosseln wenn HMS > Hausverbrauch — proportional zur aktuellen Leistung
-                hms_limit = max(100, int(haus_p - 50))
+                # HMS drosseln — kein Puffer → Ziel: 0W Netz
+                hms_limit = max(100, int(haus_p))
                 if solar_p > 0:
                     ratio_2000 = solar_p_2000 / solar_p
                     ratio_1600 = solar_p_1600 / solar_p if hms_1600_online else 0
