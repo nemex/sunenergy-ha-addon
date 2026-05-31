@@ -14,6 +14,7 @@ Konzept:
 """
 
 import json
+import csv
 import logging
 import os
 import time
@@ -120,6 +121,29 @@ def ha_switch(entity_id: str, turn_on: bool) -> bool:
     except Exception as e:
         log.error("HA SWITCH %s Fehler: %s", entity_id, e)
         return False
+
+# ---------------------------------------------------------------------------
+# CSV Datenlogger
+# ---------------------------------------------------------------------------
+CSV_PATH = "/data/controller_log.csv"
+CSV_FIELDS = [
+    "ts","mode","soc","grid_p","haus_p","solar_p",
+    "gs","is_target","hms_limit","hms_2000","hms_1600",
+    "pi_integral","bp"
+]
+
+def csv_log(row: dict) -> None:
+    """Schreibt eine Zeile in die CSV-Datei."""
+    try:
+        import os
+        write_header = not os.path.exists(CSV_PATH)
+        with open(CSV_PATH, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
+            if write_header:
+                w.writeheader()
+            w.writerow(row)
+    except Exception as e:
+        log.debug("CSV log Fehler: %s", e)
 
 # ---------------------------------------------------------------------------
 # Sonnenauf- und Sonnenuntergang aus HA
@@ -521,6 +545,22 @@ def main():
                 log.info("SOC=%.1f%% ≥ %.1f%% → IS=%dW HMS=%dW (haus=%.0fW hms=%.0fW)",
                          curr_soc, soc_normal_max, is_target, hms_limit, haus_p, hms_p)
                 sunenergy_write(sunenergy_ip, {"IS": is_target, "MM": 0, "GS": 0})
+                # CSV Logging
+                csv_log({
+                    "ts":          time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "mode":        "soc_full",
+                    "soc":         round(curr_soc, 1),
+                    "grid_p":      round(grid_p, 1),
+                    "haus_p":      round(haus_p, 1),
+                    "solar_p":     round(solar_p, 1),
+                    "gs":          0,
+                    "is_target":   is_target,
+                    "hms_limit":   hms_limit,
+                    "hms_2000":    round(solar_p_2000, 1),
+                    "hms_1600":    round(solar_p_1600, 1),
+                    "pi_integral": round(state.get("pi_integral", 0), 2),
+                    "bp":          0,
+                })
                 # HMS begrenzen
                 curr_limit_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
                 if abs(curr_limit_2000 - hms_limit_2000) >= 50:
@@ -683,6 +723,23 @@ def main():
             state["haus_p_last"]      = haus_p
             state["last_gs"]          = final_gs
             save_state(state)
+
+            # CSV Logging
+            csv_log({
+                "ts":           time.strftime("%Y-%m-%d %H:%M:%S"),
+                "mode":         state["active_mode"],
+                "soc":          round(curr_soc, 1),
+                "grid_p":       round(grid_p, 1),
+                "haus_p":       round(haus_p, 1),
+                "solar_p":      round(solar_p, 1),
+                "gs":           round(final_gs, 0),
+                "is_target":    0,
+                "hms_limit":    0,
+                "hms_2000":     round(solar_p_2000, 1),
+                "hms_1600":     round(solar_p_1600, 1),
+                "pi_integral":  round(new_integral, 2),
+                "bp":           0,
+            })
 
         except Exception as e:
             log.error("Unerwarteter Fehler im Regelzyklus: %s", e, exc_info=True)
