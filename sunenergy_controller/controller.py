@@ -482,7 +482,24 @@ def main():
                 continue
 
             # ------------------------------------------------------------------
-            # 8. Nachtmodus (kein Überschuss oder Sonne weg)
+            # 8. SOC voll (≥ soc_normal_max) → MM AN, Gerät regelt DC selbst
+            # ------------------------------------------------------------------
+            if curr_soc >= soc_normal_max:
+                log.info("SOC=%.1f%% ≥ %.1f%% → MM=AN, Gerät regelt Nulleinspeisung selbst",
+                         curr_soc, soc_normal_max)
+                ha_switch(mm_switch, True)
+                ha_set_number(gs_entity, 0)
+                state["pi_integral"] *= 0.95
+                state["active_mode"] = "active"
+                state["grid_p_filtered"] = grid_p
+                state["solar_p_last"] = solar_p
+                state["haus_p_last"] = haus_p
+                save_state(state)
+                time.sleep(TICK_S)
+                continue
+
+            # ------------------------------------------------------------------
+            # 9. Nachtmodus (kein Überschuss oder Sonne weg)
             # ------------------------------------------------------------------
             if not tag_modus:
                 # MM AN, GS=0 — Gerät regelt selbst
