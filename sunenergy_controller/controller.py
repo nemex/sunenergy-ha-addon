@@ -410,24 +410,32 @@ def main():
             ha_switch(mm_switch, False)
             ha_set_number(gs_entity, gs_new)
 
-            # IS: begrenzt DC-Carport
-            # Wenn Einspeisung (grid < -25W) → IS reduzieren
-            # Wenn Bezug (grid > 25W) → IS erhöhen
-            # Einfache Formel: IS = haus - solar (was HMS nicht liefert)
-            if grid_p_raw < -75:
-                # Deutlicher Überschuss → IS runter (größerer Deadband verhindert Oszillation)
+            # IS/HMS: langsam regeln (alle 30 Sekunden) damit GS zuerst stabilisiert
+            # GS reagiert sofort, IS/HMS nur alle 6 Ticks
+            is_tick = state.get("is_tick", 0) + 1
+            state["is_tick"] = is_tick
+            do_is_update = (is_tick % 6 == 0)
+
+            if curr_soc >= soc_normal_max:
+                # Akku voll → IS/HMS drosseln
                 is_target = max(0, int(haus_p - solar_p))
                 drosseln = True
-            elif grid_p_raw > 75:
-                # Deutlicher Bezug → IS hoch
-                is_target = min(2400, int(haus_p - solar_p + grid_p_raw))
+            elif grid_p_raw < -50 and do_is_update:
+                # Überschuss → IS runter (langsam)
+                is_last = float(state.get("last_is", 2400))
+                is_target = max(0, int(is_last - 100))
+                drosseln = True
+            elif grid_p_raw > 50 and do_is_update:
+                # Bezug → IS hoch (langsam)
+                is_last = float(state.get("last_is", 2400))
+                is_target = min(2400, int(is_last + 100))
                 drosseln = False
             else:
-                # Im Deadband → IS halten
-                is_target = max(0, int(haus_p - solar_p))
+                is_target = int(state.get("last_is", 2400))
                 drosseln = False
 
             is_target = max(0, min(2400, is_target))
+            state["last_is"] = is_target
 
             # HMS Limits
             limit_2000, limit_1600 = calc_hms_limits(
