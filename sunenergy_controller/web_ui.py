@@ -311,7 +311,6 @@ function updateCharts(rows) {
 }
 
 async function deleteLog() {
-  if (!confirm('Log wirklich löschen?')) return;
   try {
     const r = await fetch('/log/delete');
     const d = await r.json();
