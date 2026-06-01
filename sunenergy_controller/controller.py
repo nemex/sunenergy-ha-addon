@@ -208,26 +208,21 @@ def get_sun_state() -> dict:
 # HMS Limits berechnen
 # ---------------------------------------------------------------------------
 def calc_hms_limits(
-    grid_p: float,
+    hms_limit_target: float,
     solar_p_2000: float,
     solar_p_1600: float,
-    haus_p: float,
     hms_2000_online: bool,
     hms_1600_online: bool,
-    tag_modus: bool,
-    drosseln: bool,
 ) -> tuple[float, float]:
-    """Berechnet HMS Limits. drosseln=True wenn zu viel produziert wird."""
+    """Teilt das berechnete Gesamt-HMS-Limit stufenlos auf die beiden Inverter auf."""
     max_2000 = 2000.0
     max_1600 = 1600.0
 
-    if not tag_modus or not drosseln:
-        return (max_2000 if hms_2000_online else 0, max_1600 if hms_1600_online else 0)
-
-    total = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
-    if total > 50:
-        ratio_2000 = (solar_p_2000 / total) if hms_2000_online else 0
-        ratio_1600 = (solar_p_1600 / total) if hms_1600_online else 0
+    total_solar = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
+    
+    if total_solar > 50:
+        ratio_2000 = (solar_p_2000 / total_solar) if hms_2000_online else 0
+        ratio_1600 = (solar_p_1600 / total_solar) if hms_1600_online else 0
     else:
         if hms_2000_online and hms_1600_online:
             ratio_2000 = 0.55
@@ -242,21 +237,19 @@ def calc_hms_limits(
             ratio_2000 = 0.0
             ratio_1600 = 0.0
 
-    # Zielleistung: Hausverbrauch + 100W Puffer, mindestens 200W total
-    hms_target = max(200.0, haus_p + 100.0)
-
-    limit_2000 = 0
-    limit_1600 = 0
+    limit_2000 = 0.0
+    limit_1600 = 0.0
 
     if hms_2000_online:
-        limit_2000 = min(int(hms_target * ratio_2000), max_2000)
-        limit_2000 = max(150, limit_2000)
+        limit_2000 = min(int(hms_limit_target * ratio_2000), max_2000)
+        limit_2000 = max(0.0, limit_2000)
 
     if hms_1600_online:
-        limit_1600 = min(int(hms_target * ratio_1600), max_1600)
-        limit_1600 = max(150, limit_1600)
+        limit_1600 = min(int(hms_limit_target * ratio_1600), max_1600)
+        limit_1600 = max(0.0, limit_1600)
 
     return limit_2000, limit_1600
+
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +294,7 @@ def main():
     # State zurücksetzen
     state["active_mode"] = "night"
     state["last_calibration_ts"] = time.time()
+    state["last_hms_limit"] = 3600.0
     save_state(state)
     log.info("State zurückgesetzt, SA=%s%%", soc_normal_max)
 
@@ -401,52 +395,62 @@ def main():
             # ------------------------------------------------------------------
             if not sun_above:
                 if state["active_mode"] != "night":
-                    log.info("Nachtmodus aktiv: MM=1, max Limits und Entladung dem Gerät überlassen")
+                    log.info("Nachtmodus aktiv: MM=0, wir regeln die Entladung aktiv")
                     
-                    # Einmalig in HA setzen
-                    current_mm_state = ha_get_state(mm_switch, "off")
-                    if current_mm_state != "on":
-                        ha_switch(mm_switch, True)
-                    
-                    ha_set_number(gs_entity, 0)
-                    
-                    # Direkt ans Gerät schreiben (nur einmal)
-                    sunenergy_write(sunenergy_ip, {"MM": 1, "GS": 0, "IS": 2400})
+                    # MM ausschalten (für manuelle Regelung über GS)
+                    current_mm_state = ha_get_state(mm_switch, "on")
+                    if current_mm_state != "off":
+                        ha_switch(mm_switch, False)
                     
                     # Hoymiles auf Maximum setzen
                     ha_set_number(hms_2000_entity, 2000)
                     if hms_1600_online:
                         ha_set_number(hms_1600_entity, 1600)
                     
+                    # IS auf Maximum
+                    sunenergy_write(sunenergy_ip, {"MM": 0, "IS": 2400})
+                    
                     state["active_mode"] = "night"
-                    state["last_device_mm"] = 1
+                    state["last_device_mm"] = 0
                     state["last_device_is"] = 2400
-                    state["last_gs_written"] = 0
                     state["last_hms_2000_lim"] = 2000
                     state["last_hms_1600_lim"] = 1600
+                    state["last_hms_limit"] = 3600.0
 
-                log.info("Nacht: Autoregler aktiv (MM=1) | grid=%.0fW haus=%.0fW SOC=%.0f%%",
-                         grid_p_raw, haus_p, curr_soc)
+                # GS nachts aktiv regeln
+                gs_last = float(state.get("last_gs", 0))
+                gs_new = gs_last + grid_p_raw * 0.5
+                gs_new = max(-2400, min(2400, gs_new))
+                
+                gs_new_rounded = round(gs_new / 10) * 10
+                if state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_new_rounded) >= 10:
+                    ha_set_number(gs_entity, gs_new_rounded)
+                    state["last_gs_written"] = gs_new_rounded
 
+                log.info("Nacht: Aktive Regelung (MM=0) | GS=%dW | grid=%.0fW haus=%.0fW SOC=%.0f%%",
+                         gs_new_rounded, grid_p_raw, haus_p, curr_soc)
+
+                # CSV schreiben
                 csv_log({
-                    "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "mode": "night",
-                    "soc": round(curr_soc, 1),
-                    "grid_p": round(grid_p_raw, 1),
-                    "haus_p": round(haus_p, 1),
-                    "solar_p": round(solar_p, 1),
-                    "gs": 0.0,
-                    "op": round(op_current, 1),
-                    "pv": round(pv_current, 1),
+                    "ts":       time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "mode":     "night",
+                    "soc":      round(curr_soc, 1),
+                    "grid_p":   round(grid_p_raw, 1),
+                    "haus_p":   round(haus_p, 1),
+                    "solar_p":  round(solar_p, 1),
+                    "gs":       round(gs_new_rounded, 0),
+                    "op":       round(op_current, 1),
+                    "pv":       round(pv_current, 1),
                     "is_target": 2400,
                     "hms_limit": 3600,
-                    "hms_2000": round(solar_p_2000, 1),
-                    "hms_1600": round(solar_p_1600, 1),
+                    "hms_2000":  round(solar_p_2000, 1),
+                    "hms_1600":  round(solar_p_1600, 1),
                     "hms_2000_lim": 2000,
                     "hms_1600_lim": 1600,
                 })
 
                 state["grid_p_filtered"] = grid_p_raw
+                state["last_gs"]         = gs_new
                 save_state(state)
                 time.sleep(TICK_S)
                 continue
@@ -472,46 +476,52 @@ def main():
                 ha_set_number(gs_entity, gs_new_rounded)
                 state["last_gs_written"] = gs_new_rounded
 
-            # IS/HMS: langsam regeln (alle 30 Sekunden) damit GS zuerst stabilisiert
-            is_tick = state.get("is_tick", 0) + 1
-            state["is_tick"] = is_tick
-            do_is_update = (is_tick % 6 == 0)
+            # HMS stufenlos regeln
+            hms_limit_last = float(state.get("last_hms_limit", 3600.0))
+            hms_change = 0.0
 
-            # Drossel-Status bestimmen (sofort reagieren, Hysterese im Speicher)
-            drosseln = state.get("drosseln", False)
-            if curr_soc >= soc_normal_max:
-                drosseln = True
-            elif grid_p_raw < -50:
-                # Drosseln nur, wenn die Batterie bereits auf minimaler Entladung (0W) steht
-                is_last_written = float(state.get("last_is", 2400))
-                drosseln = (is_last_written <= 10)
+            if grid_p_raw < -50:
+                # Einspeisung: Hoymiles drosseln
+                hms_change = grid_p_raw * 0.5
             elif grid_p_raw > 50:
-                drosseln = False
+                # Bezug: Hoymiles freigeben (mehr erzeugen lassen)
+                # Aber nur, wenn sie aktuell durch ihr Limit gedeckelt sind
+                if solar_p >= hms_limit_last - 100:
+                    hms_change = grid_p_raw * 0.5
+
+            # Maximale Änderung pro Tick (5s) begrenzen, um extreme Sprünge zu vermeiden
+            hms_change = max(-400.0, min(400.0, hms_change))
+
+            hms_limit_new = hms_limit_last + hms_change
+            hms_limit_new = max(0.0, min(3600.0, hms_limit_new))
+            state["last_hms_limit"] = hms_limit_new
+
+            # HMS Limits berechnen
+            limit_2000, limit_1600 = calc_hms_limits(
+                hms_limit_new, solar_p_2000, solar_p_1600,
+                hms_2000_online, hms_1600_online
+            )
+
+            # Drossel-Flag für HA/Visualisierung setzen
+            drosseln = (limit_2000 < 2000.0) or (limit_1600 < 1600.0)
             state["drosseln"] = drosseln
 
-            # IS Limit der Batterie anpassen (jeder Regelzyklus, 5s)
+            # IS Limit der Batterie anpassen
             if curr_soc <= soc_min:
                 is_target = 0
             elif curr_soc >= soc_normal_max:
-                if drosseln:
-                    is_target = max(0, int(haus_p - solar_p))
-                else:
-                    is_last = float(state.get("last_is", 2400))
-                    is_target = min(2400, int(is_last + 100))
+                # Bei vollem Akku: Entladeleistung stufenlos auf Restbedarf + 200W Puffer begrenzen.
+                # Der Puffer verhindert Reglerkonflikte (Wind-up), während das Limit vor Einspeisung schützt.
+                is_target = max(0, int(haus_p - solar_p)) + 200
             else:
-                # Akku nicht voll: Entladeleistung exakt auf den Restbedarf begrenzen
-                is_target = max(0, int(haus_p - solar_p))
+                # Normaler Betrieb: IS voll freigeben (2400W), damit der GS-Regler
+                # die Nulleinspeisung ohne harten Limit-Konflikt (Wind-up) ausregeln kann
+                is_target = 2400
 
             # Runden auf 10W-Schritte und Grenzwerte einhalten (0 bis 2400W)
             is_target = round(is_target / 10) * 10
             is_target = max(0, min(2400, is_target))
             state["last_is"] = is_target
-
-            # HMS Limits berechnen
-            limit_2000, limit_1600 = calc_hms_limits(
-                grid_p_raw, solar_p_2000, solar_p_1600,
-                haus_p, hms_2000_online, hms_1600_online, True, drosseln
-            )
 
             # Direkt ans Gerät schreiben (nur bei Änderungen)
             device_payload = {}
@@ -526,6 +536,11 @@ def main():
                 sunenergy_write(sunenergy_ip, device_payload)
 
             # Hoymiles Limits setzen (mit Signalverlust-Schutz)
+            # is_tick wird für Trägheitsprüfung verwendet
+            is_tick = state.get("is_tick", 0) + 1
+            state["is_tick"] = is_tick
+            do_is_update = (is_tick % 6 == 0)
+
             if hms_2000_online:
                 curr_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
                 # Senden wenn Wert abweicht ODER wenn Inverter trotz Drosselung > 50W über Limit liegt
@@ -539,8 +554,8 @@ def main():
                 if need_send_1600:
                     ha_set_number(hms_1600_entity, limit_1600)
 
-            log.info("GS=%dW IS=%dW HMS=%d/%dW | grid=%.0fW haus=%.0fW solar=%.0fW SOC=%.0f%%",
-                     gs_new_rounded, is_target, limit_2000, limit_1600,
+            log.info("GS=%dW IS=%dW HMS=%d/%dW (Target=%dW) | grid=%.0fW haus=%.0fW solar=%.0fW SOC=%.0f%%",
+                     gs_new_rounded, is_target, limit_2000, limit_1600, int(hms_limit_new),
                      grid_p_raw, haus_p, solar_p, curr_soc)
 
             # Vollladung erkennen
