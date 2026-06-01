@@ -130,36 +130,43 @@ HTML = """<!DOCTYPE html>
 
 <div class="chart-wrap">
   <h2>Wechselrichter — Ist vs. Limit</h2>
+  <div style="margin-bottom:10px">
+    <span style="font-size:10px;color:#4a5568">Status: </span>
+    <span id="inv-status" style="font-size:11px;font-family:monospace">—</span>
+  </div>
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:8px">
     <div>
-      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">SunEnergyXT (IS)</div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">SunEnergyXT (DC+AC)</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px">
         <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-se-ist">—</span> W</span>
-        <span style="font-size:11px;color:#4a5568">Limit: <span id="inv-se-lim">—</span> W</span>
+        <span style="font-size:11px;color:#4a5568">IS Limit: <span id="inv-se-lim">—</span> W</span>
       </div>
-      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden">
+      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden;margin-bottom:4px">
         <div id="inv-se-bar" style="height:100%;background:#00e676;border-radius:4px;width:0%;transition:width 1s"></div>
       </div>
+      <div id="inv-se-reason" style="font-size:10px;color:#4a5568">—</div>
     </div>
     <div>
-      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">HMS-2000</div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">HMS-2000</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px">
         <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-2000-ist">—</span> W</span>
         <span style="font-size:11px;color:#4a5568">Limit: <span id="inv-2000-lim">—</span> W</span>
       </div>
-      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden">
+      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden;margin-bottom:4px">
         <div id="inv-2000-bar" style="height:100%;background:#f0a500;border-radius:4px;width:0%;transition:width 1s"></div>
       </div>
+      <div id="inv-2000-reason" style="font-size:10px;color:#4a5568">—</div>
     </div>
     <div>
-      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">HMS-1600</div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">HMS-1600</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px">
         <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-1600-ist">—</span> W</span>
         <span style="font-size:11px;color:#4a5568">Limit: <span id="inv-1600-lim">—</span> W</span>
       </div>
-      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden">
+      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden;margin-bottom:4px">
         <div id="inv-1600-bar" style="height:100%;background:#00c2ff;border-radius:4px;width:0%;transition:width 1s"></div>
       </div>
+      <div id="inv-1600-reason" style="font-size:10px;color:#4a5568">—</div>
     </div>
   </div>
 </div>
@@ -167,6 +174,7 @@ HTML = """<!DOCTYPE html>
 <div class="footer">
   <span id="ts">—</span>
   <a href="/log" class="btn">⬇ CSV Download</a>
+  <button class="btn" style="margin-left:8px;border-color:#ff3d57;color:#ff3d57" onclick="deleteLog()">🗑 Log löschen</button>
 </div>
 
 <script>
@@ -221,9 +229,9 @@ function updateCards(state, csv) {
   document.getElementById('c-soc-bar').style.width = Math.min(100, soc) + '%';
   document.getElementById('ts').textContent = 'Letzte Aktualisierung: ' + new Date().toLocaleTimeString('de-DE');
 
-  // Wechselrichter Ist vs Limit
-  const seIst  = parseFloat(csv.solar_p || 0) - parseFloat(csv.hms_2000 || 0) - parseFloat(csv.hms_1600 || 0);
-  const seLim  = parseFloat(csv.is_target || 0);
+  // Wechselrichter Ist vs Limit — direkt aus CSV-Feldern
+  const seIst  = parseFloat(csv.op || 0);        // SunEnergyXT AC-Ausgang
+  const seLim  = parseFloat(csv.is_target || 0); // IS Limit
   const h2000Ist = parseFloat(csv.hms_2000 || 0);
   const h1600Ist = parseFloat(csv.hms_1600 || 0);
   // HMS Limit proportional aufteilen
@@ -232,7 +240,41 @@ function updateCards(state, csv) {
   const lim2000 = hmsTotal > 0 ? hmsLim * (h2000Ist / hmsTotal) : hmsLim * 0.6;
   const lim1600 = hmsTotal > 0 ? hmsLim * (h1600Ist / hmsTotal) : hmsLim * 0.4;
 
-  setInv('inv-se',   seIst > 0 ? seIst : 0,  seLim,  2400);
+  // Status bestimmen
+  const grid = parseFloat(csv.grid_p || 0);
+  const soc  = parseFloat(csv.soc || 0);
+  const mode = csv.mode || 'night';
+  let statusText = '—';
+  let seReason = '—', h2000Reason = '—', h1600Reason = '—';
+
+  if (mode === 'night') {
+    statusText = '⚪ Nacht — kein Betrieb';
+    seReason = 'Nacht';
+    h2000Reason = 'Nacht';
+    h1600Reason = 'Nacht';
+  } else if (grid < -25) {
+    statusText = '🟡 Gedrosselt — Überschuss (' + Math.round(grid) + 'W Einspeisung)';
+    seReason = seLim < 2400 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
+    h2000Reason = lim2000 < 2000 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
+    h1600Reason = lim1600 < 1600 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
+  } else if (grid > 25) {
+    statusText = '🟢 Volle Leistung — Netzbezug (' + Math.round(grid) + 'W)';
+    seReason = '✅ volle Leistung';
+    h2000Reason = '✅ volle Leistung';
+    h1600Reason = '✅ volle Leistung';
+  } else {
+    statusText = '🟢 Nulleinspeisung aktiv (' + Math.round(grid) + 'W)';
+    seReason = seLim < 2400 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
+    h2000Reason = lim2000 < 2000 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
+    h1600Reason = lim1600 < 1600 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
+  }
+
+  document.getElementById('inv-status').textContent = statusText;
+  document.getElementById('inv-se-reason').textContent = seReason;
+  document.getElementById('inv-2000-reason').textContent = h2000Reason;
+  document.getElementById('inv-1600-reason').textContent = h1600Reason;
+
+  setInv('inv-se',   seIst,   seLim,  2400);
   setInv('inv-2000', h2000Ist, lim2000, 2000);
   setInv('inv-1600', h1600Ist, lim1600, 1600);
 }
@@ -266,6 +308,16 @@ function updateCharts(rows) {
   powerChart.data.datasets[2].data = rows.map(r => parseFloat(r.is_target || 0));
   powerChart.data.datasets[3].data = rows.map(r => parseFloat(r.hms_limit || 0));
   powerChart.update();
+}
+
+async function deleteLog() {
+  if (!confirm('Log wirklich löschen?')) return;
+  try {
+    const r = await fetch('/log/delete');
+    const d = await r.json();
+    if (d.status === 'ok') alert('Log gelöscht!');
+    else alert('Fehler: ' + d.message);
+  } catch(e) { alert('Fehler!'); }
 }
 
 async function refresh() {
@@ -338,6 +390,14 @@ class UIHandler(BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.end_headers()
                 self.wfile.write(b"Noch keine Logdaten")
+
+        elif self.path == "/log/delete":
+            try:
+                if os.path.exists(CSV_PATH):
+                    os.remove(CSV_PATH)
+                self._json({"status": "ok", "message": "Log gelöscht"})
+            except Exception as e:
+                self._json({"status": "error", "message": str(e)})
         else:
             self.send_response(404)
             self.end_headers()
