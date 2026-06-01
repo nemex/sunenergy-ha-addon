@@ -72,7 +72,8 @@ def save_state(state: dict):
 # ---------------------------------------------------------------------------
 CSV_FIELDS = [
     "ts", "mode", "soc", "grid_p", "haus_p", "solar_p",
-    "gs", "op", "pv", "is_target", "hms_limit", "hms_2000", "hms_1600"
+    "gs", "op", "pv", "is_target", "hms_limit", "hms_2000", "hms_1600",
+    "hms_2000_lim", "hms_1600_lim"
 ]
 
 def csv_log(row: dict):
@@ -410,6 +411,8 @@ def main():
                     state["last_device_mm"] = 1
                     state["last_device_is"] = 2400
                     state["last_gs_written"] = 0
+                    state["last_hms_2000_lim"] = 2000
+                    state["last_hms_1600_lim"] = 1600
 
                 log.info("Nacht: Autoregler aktiv (MM=1) | grid=%.0fW haus=%.0fW SOC=%.0f%%",
                          grid_p_raw, haus_p, curr_soc)
@@ -428,6 +431,8 @@ def main():
                     "hms_limit": 3600,
                     "hms_2000": round(solar_p_2000, 1),
                     "hms_1600": round(solar_p_1600, 1),
+                    "hms_2000_lim": 2000,
+                    "hms_1600_lim": 1600,
                 })
 
                 state["grid_p_filtered"] = grid_p_raw
@@ -534,7 +539,12 @@ def main():
                 "hms_limit": round(limit_2000 + limit_1600, 0),
                 "hms_2000":  round(solar_p_2000, 1),
                 "hms_1600":  round(solar_p_1600, 1),
+                "hms_2000_lim": round(limit_2000, 0),
+                "hms_1600_lim": round(limit_1600, 0),
             })
+
+            state["last_hms_2000_lim"] = limit_2000
+            state["last_hms_1600_lim"] = limit_1600
 
             state["grid_p_filtered"] = grid_p_raw
             state["solar_p_last"]    = solar_p
