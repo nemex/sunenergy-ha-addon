@@ -242,13 +242,22 @@ def calc_hms_limits(
             ratio_2000 = 0.0
             ratio_1600 = 0.0
 
-    # Zielleistung: genau Hausverbrauch
-    hms_target = max(100.0, haus_p)
+    # Zielleistung: Hausverbrauch + 100W Puffer, mindestens 200W total
+    hms_target = max(200.0, haus_p + 100.0)
 
-    limit_2000 = min(int(hms_target * ratio_2000), max_2000) if hms_2000_online else 0
-    limit_1600 = min(int(hms_target * ratio_1600), max_1600) if hms_1600_online else 0
+    limit_2000 = 0
+    limit_1600 = 0
+
+    if hms_2000_online:
+        limit_2000 = min(int(hms_target * ratio_2000), max_2000)
+        limit_2000 = max(150, limit_2000)
+
+    if hms_1600_online:
+        limit_1600 = min(int(hms_target * ratio_1600), max_1600)
+        limit_1600 = max(150, limit_1600)
 
     return limit_2000, limit_1600
+
 
 # ---------------------------------------------------------------------------
 # Hauptregelschleife
