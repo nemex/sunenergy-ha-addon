@@ -216,13 +216,13 @@ function updateCards(state, csv) {
   el.textContent = { active: 'AKTIV REGELND', soc_full: 'SOC VOLL (IS)', night: 'NACHT', calibration: 'ZWANGSLADUNG' }[mode] || mode.toUpperCase();
   el.className = 'mode ' + mode;
 
-  const grid = parseFloat(csv.grid_p || 0);
+  const grid = parseFloat(csv.grid_p || state.grid_p_filtered || 0);
   setCard('c-grid', grid.toFixed(0) + ' W', grid > 50 ? 'neg' : grid < -30 ? 'pos' : '');
-  setCard('c-haus', parseFloat(csv.haus_p || 0).toFixed(0) + ' W', '');
-  setCard('c-solar', parseFloat(csv.solar_p || 0).toFixed(0) + ' W', 'pos');
-  setCard('c-gs', parseFloat(csv.gs || 0).toFixed(0) + ' W', '');
-  setCard('c-is', csv.is_target !== undefined ? parseFloat(csv.is_target).toFixed(0) + ' W' : '— W', '');
-  setCard('c-hms', csv.hms_limit !== undefined ? parseFloat(csv.hms_limit).toFixed(0) + ' W' : '— W', '');
+  setCard('c-haus', parseFloat(csv.haus_p || state.haus_p_last || 0).toFixed(0) + ' W', '');
+  setCard('c-solar', parseFloat(csv.solar_p || state.solar_p_last || 0).toFixed(0) + ' W', 'pos');
+  setCard('c-gs', parseFloat(csv.gs || state.last_gs || 0).toFixed(0) + ' W', '');
+  setCard('c-is', (csv.is_target !== undefined ? parseFloat(csv.is_target) : parseFloat(state.last_is || 0)).toFixed(0) + ' W', '');
+  setCard('c-hms', (csv.hms_limit !== undefined ? parseFloat(csv.hms_limit) : 0).toFixed(0) + ' W', '');
 
   const soc = parseFloat(csv.soc || state.soc || 0);
   setCard('c-soc', soc.toFixed(0) + ' %', soc < 20 ? 'warn' : '');
@@ -230,7 +230,7 @@ function updateCards(state, csv) {
   document.getElementById('ts').textContent = 'Letzte Aktualisierung: ' + new Date().toLocaleTimeString('de-DE');
 
   // Wechselrichter Ist vs Limit — direkt aus CSV-Feldern
-  const seIst  = parseFloat(csv.op || 0);        // SunEnergyXT AC-Ausgang
+  const seIst  = parseFloat(csv.op || csv.gs || 0);  // SunEnergyXT AC-Ausgang (op neu, gs fallback)
   const seLim  = parseFloat(csv.is_target || 0); // IS Limit
   const h2000Ist = parseFloat(csv.hms_2000 || 0);
   const h1600Ist = parseFloat(csv.hms_1600 || 0);
@@ -328,6 +328,9 @@ async function refresh() {
     if (apiR.rows && apiR.rows.length > 0) {
       updateCards(stateR, apiR.rows[apiR.rows.length - 1]);
       updateCharts(apiR.rows);
+    } else {
+      // Keine CSV-Daten — trotzdem state-Karten aktualisieren
+      updateCards(stateR, {});
     }
   } catch(e) {}
 }
