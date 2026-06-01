@@ -502,8 +502,10 @@ def main():
                 hms_2000_online, hms_1600_online
             )
 
-            # Drossel-Flag für HA/Visualisierung setzen
-            drosseln = (limit_2000 < 2000.0) or (limit_1600 < 1600.0)
+            # Drossel-Flag für HA/Visualisierung und Batterie-Entkoppelung setzen
+            # Wir drosseln aktiv, wenn das Limit unter Maximum liegt UND die Hoymiles
+            # tatsächlich an diesem Limit hängen (also mehr erzeugen könnten).
+            drosseln = (hms_limit_new < 3500.0) and (solar_p >= hms_limit_new - 150.0)
             state["drosseln"] = drosseln
 
             # IS Limit der Batterie anpassen
@@ -512,8 +514,10 @@ def main():
             elif curr_soc >= soc_normal_max:
                 if drosseln:
                     # Wenn die Hoymiles gedrosselt sind (Überschuss vorhanden), darf die Batterie
-                    # nicht entladen, damit die Hoymiles das Haus versorgen und wir nicht einspeisen.
-                    is_target = 0
+                    # nur maximal ihre eigene PV-Leistung abgeben, damit wir nicht aus den Zellen entladen.
+                    # Gedeckelt auf den Restbedarf des Hauses, um Einspeisung zu verhindern.
+                    restbedarf = max(0, int(haus_p - solar_p))
+                    is_target = min(pv_current, restbedarf)
                 else:
                     # Wenn die Hoymiles voll offen sind und nicht ausreichen, liefert die Batterie den Rest
                     is_target = max(0, int(haus_p - solar_p)) + 200
