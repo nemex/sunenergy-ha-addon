@@ -321,18 +321,23 @@ async function deleteLog() {
 
 async function refresh() {
   try {
-    const [stateR, apiR] = await Promise.all([
-      fetch('/state').then(r => r.json()),
-      fetch('/api').then(r => r.json())
-    ]);
-    if (apiR.rows && apiR.rows.length > 0) {
-      updateCards(stateR, apiR.rows[apiR.rows.length - 1]);
-      updateCharts(apiR.rows);
-    } else {
-      // Keine CSV-Daten — trotzdem state-Karten aktualisieren
-      updateCards(stateR, {});
+    const stateR = await fetch('/state').then(r => r.json());
+    // Immer state anzeigen, auch ohne CSV
+    updateCards(stateR, {});
+    document.getElementById('ts').textContent = 'Letzte Aktualisierung: ' + new Date().toLocaleTimeString('de-DE');
+    
+    try {
+      const apiR = await fetch('/api').then(r => r.json());
+      if (apiR.rows && apiR.rows.length > 0) {
+        updateCards(stateR, apiR.rows[apiR.rows.length - 1]);
+        updateCharts(apiR.rows);
+      }
+    } catch(e) {
+      console.log('API Fehler:', e);
     }
-  } catch(e) {}
+  } catch(e) {
+    console.log('State Fehler:', e);
+  }
 }
 
 refresh();
