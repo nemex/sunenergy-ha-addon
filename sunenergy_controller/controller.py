@@ -482,26 +482,28 @@ def main():
             if curr_soc >= soc_normal_max:
                 drosseln = True
             elif grid_p_raw < -50:
-                # Drosseln nur, wenn die Batterie bereits mit maximaler Leistung lädt
-                drosseln = (gs_new_rounded <= -2350)
+                # Drosseln nur, wenn die Batterie bereits auf minimaler Entladung (0W) steht
+                is_last_written = float(state.get("last_is", 2400))
+                drosseln = (is_last_written <= 10)
             elif grid_p_raw > 50:
                 drosseln = False
             state["drosseln"] = drosseln
 
-            # IS Limit der Batterie langsam anpassen (alle 30s)
-            if do_is_update:
-                if curr_soc >= soc_normal_max:
-                    if drosseln:
-                        is_target = max(0, int(haus_p - solar_p))
-                    else:
-                        is_last = float(state.get("last_is", 2400))
-                        is_target = min(2400, int(is_last + 100))
+            # IS Limit der Batterie anpassen (jeder Regelzyklus, 5s)
+            if curr_soc <= soc_min:
+                is_target = 0
+            elif curr_soc >= soc_normal_max:
+                if drosseln:
+                    is_target = max(0, int(haus_p - solar_p))
                 else:
-                    # Wenn Akku nicht voll, immer volles DC-Ladelimit erlauben
-                    is_target = 2400
+                    is_last = float(state.get("last_is", 2400))
+                    is_target = min(2400, int(is_last + 100))
             else:
-                is_target = int(state.get("last_is", 2400))
+                # Akku nicht voll: Entladeleistung exakt auf den Restbedarf begrenzen
+                is_target = max(0, int(haus_p - solar_p))
 
+            # Runden auf 10W-Schritte und Grenzwerte einhalten (0 bis 2400W)
+            is_target = round(is_target / 10) * 10
             is_target = max(0, min(2400, is_target))
             state["last_is"] = is_target
 
