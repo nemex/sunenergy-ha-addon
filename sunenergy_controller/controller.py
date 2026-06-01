@@ -143,6 +143,8 @@ def ha_set_number(entity_id: str, value: float) -> bool:
             json={"entity_id": entity_id, "value": round(value, 1)},
             timeout=5,
         )
+        if r.status_code not in (200, 201):
+            log.error("HA SET %s fehlgeschlagen mit Status %s: %s", entity_id, r.status_code, r.text)
         return r.status_code in (200, 201)
     except Exception as e:
         log.error("HA SET %s: %s", entity_id, e)
@@ -466,23 +468,29 @@ def main():
             state["is_tick"] = is_tick
             do_is_update = (is_tick % 6 == 0)
 
+            # Drossel-Status bestimmen (sofort reagieren, Hysterese im Speicher)
+            drosseln = state.get("drosseln", False)
             if curr_soc >= soc_normal_max:
-                # Akku voll → IS/HMS drosseln
-                is_target = max(0, int(haus_p - solar_p))
                 drosseln = True
-            elif grid_p_raw < -50 and do_is_update:
-                # Überschuss → IS runter (langsam)
-                is_last = float(state.get("last_is", 2400))
-                is_target = max(0, int(is_last - 100))
+            elif grid_p_raw < -50:
                 drosseln = True
-            elif grid_p_raw > 50 and do_is_update:
-                # Bezug → IS hoch (langsam)
-                is_last = float(state.get("last_is", 2400))
-                is_target = min(2400, int(is_last + 100))
+            elif grid_p_raw > 50:
                 drosseln = False
+            state["drosseln"] = drosseln
+
+            # IS Limit der Batterie langsam anpassen (alle 30s)
+            if do_is_update:
+                if drosseln:
+                    is_last = float(state.get("last_is", 2400))
+                    if curr_soc >= soc_normal_max:
+                        is_target = max(0, int(haus_p - solar_p))
+                    else:
+                        is_target = max(0, int(is_last - 100))
+                else:
+                    is_last = float(state.get("last_is", 2400))
+                    is_target = min(2400, int(is_last + 100))
             else:
                 is_target = int(state.get("last_is", 2400))
-                drosseln = False
 
             is_target = max(0, min(2400, is_target))
             state["last_is"] = is_target
@@ -505,15 +513,18 @@ def main():
             if device_payload:
                 sunenergy_write(sunenergy_ip, device_payload)
 
-            # Hoymiles Limits setzen (nur bei nennenswerter Abweichung)
+            # Hoymiles Limits setzen (mit Signalverlust-Schutz)
             if hms_2000_online:
                 curr_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
-                if abs(curr_2000 - limit_2000) >= 50:
+                # Senden wenn Wert abweicht ODER wenn Inverter trotz Drosselung > 50W über Limit liegt
+                need_send_2000 = (abs(curr_2000 - limit_2000) >= 50) or (drosseln and solar_p_2000 > limit_2000 + 50 and do_is_update)
+                if need_send_2000:
                     ha_set_number(hms_2000_entity, limit_2000)
 
             if hms_1600_online:
                 curr_1600 = float(ha_get_state(hms_1600_entity, "1600") or 1600)
-                if abs(curr_1600 - limit_1600) >= 50:
+                need_send_1600 = (abs(curr_1600 - limit_1600) >= 50) or (drosseln and solar_p_1600 > limit_1600 + 50 and do_is_update)
+                if need_send_1600:
                     ha_set_number(hms_1600_entity, limit_1600)
 
             log.info("GS=%dW IS=%dW HMS=%d/%dW | grid=%.0fW haus=%.0fW solar=%.0fW SOC=%.0f%%",
