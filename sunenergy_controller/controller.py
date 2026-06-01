@@ -57,6 +57,7 @@ def load_state() -> dict:
         "haus_p_last": 0.0,
         "last_gs": 0.0,
         "soc": 0.0,
+        "pv_last": 0.0,
     }
 
 def save_state(state: dict):
@@ -71,7 +72,7 @@ def save_state(state: dict):
 # ---------------------------------------------------------------------------
 CSV_FIELDS = [
     "ts", "mode", "soc", "grid_p", "haus_p", "solar_p",
-    "gs", "op", "is_target", "hms_limit", "hms_2000", "hms_1600"
+    "gs", "op", "pv", "is_target", "hms_limit", "hms_2000", "hms_1600"
 ]
 
 def csv_log(row: dict):
@@ -306,7 +307,9 @@ def main():
             # ------------------------------------------------------------------
             se_data = sunenergy_read(sunenergy_ip)
             op_current = float(se_data.get("OP", 0))
+            pv_current = float(se_data.get("PV", 0))
             state["soc"] = curr_soc
+            state["pv_last"] = pv_current
 
             # ------------------------------------------------------------------
             # 4. Sonnenstand
@@ -383,6 +386,7 @@ def main():
                     "solar_p": 0,
                     "gs": round(gs_new, 0),
                     "op": round(op_current, 1),
+                    "pv": 0.0,
                     "is_target": 2400,
                     "hms_limit": 3600,
                     "hms_2000": 0,
@@ -473,6 +477,7 @@ def main():
                 "solar_p":  round(solar_p, 1),
                 "gs":       round(gs_new, 0),
                 "op":       round(op_current, 1),
+                "pv":       round(pv_current, 1),
                 "is_target": is_target,
                 "hms_limit": round(limit_2000 + limit_1600, 0),
                 "hms_2000":  round(solar_p_2000, 1),
