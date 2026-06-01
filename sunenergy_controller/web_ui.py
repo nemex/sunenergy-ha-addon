@@ -241,29 +241,28 @@ function updateCards(state, csv) {
   const lim1600 = hmsTotal > 0 ? hmsLim * (h1600Ist / hmsTotal) : hmsLim * 0.4;
 
   // Status bestimmen
-  const grid = parseFloat(csv.grid_p || 0);
-  const soc  = parseFloat(csv.soc || 0);
-  const mode = csv.mode || 'night';
+  const currentGrid = csv.grid_p !== undefined ? parseFloat(csv.grid_p) : grid;
+  const currentMode = csv.mode || mode;
   let statusText = '—';
   let seReason = '—', h2000Reason = '—', h1600Reason = '—';
 
-  if (mode === 'night') {
+  if (currentMode === 'night') {
     statusText = '⚪ Nacht — kein Betrieb';
     seReason = 'Nacht';
     h2000Reason = 'Nacht';
     h1600Reason = 'Nacht';
-  } else if (grid < -25) {
-    statusText = '🟡 Gedrosselt — Überschuss (' + Math.round(grid) + 'W Einspeisung)';
+  } else if (currentGrid < -25) {
+    statusText = '🟡 Gedrosselt — Überschuss (' + Math.round(currentGrid) + 'W Einspeisung)';
     seReason = seLim < 2400 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
     h2000Reason = lim2000 < 2000 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
     h1600Reason = lim1600 < 1600 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
-  } else if (grid > 25) {
-    statusText = '🟢 Volle Leistung — Netzbezug (' + Math.round(grid) + 'W)';
+  } else if (currentGrid > 25) {
+    statusText = '🟢 Volle Leistung — Netzbezug (' + Math.round(currentGrid) + 'W)';
     seReason = '✅ volle Leistung';
     h2000Reason = '✅ volle Leistung';
     h1600Reason = '✅ volle Leistung';
   } else {
-    statusText = '🟢 Nulleinspeisung aktiv (' + Math.round(grid) + 'W)';
+    statusText = '🟢 Nulleinspeisung aktiv (' + Math.round(currentGrid) + 'W)';
     seReason = seLim < 2400 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
     h2000Reason = lim2000 < 2000 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
     h1600Reason = lim1600 < 1600 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
