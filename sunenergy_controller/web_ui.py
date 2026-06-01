@@ -230,7 +230,7 @@ function updateCards(state, csv) {
   document.getElementById('ts').textContent = 'Letzte Aktualisierung: ' + new Date().toLocaleTimeString('de-DE');
 
   // Wechselrichter Ist vs Limit — direkt aus CSV-Feldern
-  const seIst  = parseFloat(csv.op || csv.gs || 0);  // SunEnergyXT AC-Ausgang (op neu, gs fallback)
+  const seIst  = parseFloat(csv.pv !== undefined ? csv.pv : (state.pv_last || 0));  // SunEnergyXT PV-Leistung
   const seLim  = parseFloat(csv.is_target || 0); // IS Limit
   const h2000Ist = parseFloat(csv.hms_2000 || 0);
   const h1600Ist = parseFloat(csv.hms_1600 || 0);
