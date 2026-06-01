@@ -78,6 +78,16 @@ CSV_FIELDS = [
 def csv_log(row: dict):
     try:
         write_header = not os.path.exists(CSV_PATH)
+        if os.path.exists(CSV_PATH):
+            try:
+                with open(CSV_PATH, "r") as f:
+                    header = f.readline().strip().split(",")
+                if header != CSV_FIELDS:
+                    log.warning("CSV Header veraltet. Lösche alte CSV-Datei.")
+                    os.remove(CSV_PATH)
+                    write_header = True
+            except Exception as e:
+                log.error("Fehler beim Überprüfen des CSV-Headers: %s", e)
         with open(CSV_PATH, "a", newline="") as f:
             w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
             if write_header:
@@ -199,6 +209,7 @@ def calc_hms_limits(
     solar_p_2000: float,
     solar_p_1600: float,
     haus_p: float,
+    hms_2000_online: bool,
     hms_1600_online: bool,
     tag_modus: bool,
     drosseln: bool,
@@ -208,20 +219,30 @@ def calc_hms_limits(
     max_1600 = 1600.0
 
     if not tag_modus or not drosseln:
-        return max_2000, max_1600
+        return (max_2000 if hms_2000_online else 0, max_1600 if hms_1600_online else 0)
 
-    total = solar_p_2000 + solar_p_1600
+    total = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
     if total > 50:
-        ratio_2000 = solar_p_2000 / total
-        ratio_1600 = solar_p_1600 / total if hms_1600_online else 0
+        ratio_2000 = (solar_p_2000 / total) if hms_2000_online else 0
+        ratio_1600 = (solar_p_1600 / total) if hms_1600_online else 0
     else:
-        ratio_2000 = 0.6
-        ratio_1600 = 0.4 if hms_1600_online else 0
+        if hms_2000_online and hms_1600_online:
+            ratio_2000 = 0.55
+            ratio_1600 = 0.45
+        elif hms_2000_online:
+            ratio_2000 = 1.0
+            ratio_1600 = 0.0
+        elif hms_1600_online:
+            ratio_2000 = 0.0
+            ratio_1600 = 1.0
+        else:
+            ratio_2000 = 0.0
+            ratio_1600 = 0.0
 
     # Zielleistung: genau Hausverbrauch
     hms_target = max(100.0, haus_p)
 
-    limit_2000 = min(int(hms_target * ratio_2000), max_2000)
+    limit_2000 = min(int(hms_target * ratio_2000), max_2000) if hms_2000_online else 0
     limit_1600 = min(int(hms_target * ratio_1600), max_1600) if hms_1600_online else 0
 
     return limit_2000, limit_1600
@@ -249,6 +270,14 @@ def main():
     sa_entity       = opts["sa_entity"]
     hms_2000_entity = opts["hms_2000_entity"]
     hms_1600_entity = opts["hms_1600_entity"]
+    
+    # Neue konfigurierbare Sensoren
+    haus_power_sensor     = opts.get("haus_power_sensor", "sensor.hausverbrauch_aktuell")
+    hms_2000_power_sensor = opts.get("hms_2000_power_sensor", "sensor.hoymiles_hms_2000_4t_power")
+    hms_1600_power_sensor = opts.get("hms_1600_power_sensor", "sensor.hoymiles_hms_1600_4t_power")
+    hms_2000_reachable_sensor = opts.get("hms_2000_reachable_sensor", "binary_sensor.hoymiles_hms_2000_4t_reachable")
+    hms_1600_reachable_sensor = opts.get("hms_1600_reachable_sensor", "binary_sensor.hoymiles_hms_1600_4t_reachable")
+
     soc_normal_max  = float(opts["soc_normal_max"])    # 93%
     soc_min         = float(opts["soc_min"])            # 10%
     calib_days      = float(opts["calibration_days"])  # 15
@@ -269,15 +298,19 @@ def main():
 
             # ------------------------------------------------------------------
             # 1. Messwerte lesen
-            # ------------------------------------------------------------------
+            # ------------------------------------------------------------------            # 1. Messwerte lesen
             grid_p_raw = float(ha_get_state(grid_sensor, "0") or 0)
             curr_soc   = float(ha_get_state(soc_sensor, "0") or 0)
-            haus_p     = abs(float(ha_get_state("sensor.hausverbrauch_aktuell", "0") or 0))
+            haus_p     = abs(float(ha_get_state(haus_power_sensor, "0") or 0))
 
-            solar_p_2000 = abs(float(ha_get_state("sensor.hoymiles_hms_2000_4t_power", "0") or 0))
-            solar_p_1600 = abs(float(ha_get_state("sensor.hoymiles_hms_1600_4t_power", "0") or 0))
-            hms_1600_online = ha_get_state("binary_sensor.hoymiles_hms_1600_4t_reachable", "off") == "on"
-            solar_p = solar_p_2000 + solar_p_1600
+            solar_p_2000 = abs(float(ha_get_state(hms_2000_power_sensor, "0") or 0))
+            solar_p_1600 = abs(float(ha_get_state(hms_1600_power_sensor, "0") or 0))
+            
+            # Robustes Checken: Wenn Leistung > 10W, ist er online. Ansonsten aus HA lesen.
+            hms_2000_online = (ha_get_state(hms_2000_reachable_sensor, "off") == "on") or (solar_p_2000 > 10.0)
+            hms_1600_online = (ha_get_state(hms_1600_reachable_sensor, "off") == "on") or (solar_p_1600 > 10.0)
+            
+            solar_p = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
 
             # Watchdog
             shelly_data = ha_get_full(grid_sensor)
@@ -352,30 +385,34 @@ def main():
                 continue
 
             # ------------------------------------------------------------------
-            # 6. Nachtmodus — GS weiter aktiv regeln für Akkuentladung
+            # 6. Nachtmodus — Gerät regelt selbst via MM=1 ( materialschonend )
             # ------------------------------------------------------------------
             if not sun_above:
                 if state["active_mode"] != "night":
-                    log.info("Nachtmodus: IS=2400, HMS voll")
-                    sunenergy_write(sunenergy_ip, {"IS": 2400})
+                    log.info("Nachtmodus aktiv: MM=1, max Limits und Entladung dem Gerät überlassen")
+                    
+                    # Einmalig in HA setzen
+                    current_mm_state = ha_get_state(mm_switch, "off")
+                    if current_mm_state != "on":
+                        ha_switch(mm_switch, True)
+                    
+                    ha_set_number(gs_entity, 0)
+                    
+                    # Direkt ans Gerät schreiben (nur einmal)
+                    sunenergy_write(sunenergy_ip, {"MM": 1, "GS": 0, "IS": 2400})
+                    
+                    # Hoymiles auf Maximum setzen
                     ha_set_number(hms_2000_entity, 2000)
                     if hms_1600_online:
                         ha_set_number(hms_1600_entity, 1600)
+                    
+                    state["active_mode"] = "night"
+                    state["last_device_mm"] = 1
+                    state["last_device_is"] = 2400
+                    state["last_gs_written"] = 0
 
-                state["active_mode"] = "night"
-
-                # GS weiter regeln: Akku entlädt bei Netzbezug, lädt bei Überschuss
-                # Dämpfung: nur 50% des Fehlers korrigieren → verhindert Oszillation
-                gs_last = float(state.get("last_gs", 0))
-                gs_new = gs_last + grid_p_raw * 0.5
-                gs_new = max(-2400, min(2400, gs_new))
-
-                ha_switch(mm_switch, False)
-                ha_set_number(gs_entity, gs_new)
-                sunenergy_write(sunenergy_ip, {"MM": 0, "GS": int(gs_new)})
-
-                log.info("Nacht: GS=%dW | grid=%.0fW haus=%.0fW SOC=%.0f%%",
-                         gs_new, grid_p_raw, haus_p, curr_soc)
+                log.info("Nacht: Autoregler aktiv (MM=1) | grid=%.0fW haus=%.0fW SOC=%.0f%%",
+                         grid_p_raw, haus_p, curr_soc)
 
                 csv_log({
                     "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -383,39 +420,43 @@ def main():
                     "soc": round(curr_soc, 1),
                     "grid_p": round(grid_p_raw, 1),
                     "haus_p": round(haus_p, 1),
-                    "solar_p": 0,
-                    "gs": round(gs_new, 0),
+                    "solar_p": round(solar_p, 1),
+                    "gs": 0.0,
                     "op": round(op_current, 1),
-                    "pv": 0.0,
+                    "pv": round(pv_current, 1),
                     "is_target": 2400,
                     "hms_limit": 3600,
-                    "hms_2000": 0,
-                    "hms_1600": 0,
+                    "hms_2000": round(solar_p_2000, 1),
+                    "hms_1600": round(solar_p_1600, 1),
                 })
 
                 state["grid_p_filtered"] = grid_p_raw
-                state["last_gs"] = gs_new
                 save_state(state)
                 time.sleep(TICK_S)
                 continue
 
             # ------------------------------------------------------------------
-            # 7. Tagregelung — universell für jeden SOC
+            # 7. Tagregelung — universell für jeden SOC mit Spam-Schutz
             # ------------------------------------------------------------------
             state["active_mode"] = "active"
 
             # GS Formel: gedämpft → gs_last + grid_p * 0.5
-            # Verhindert Oszillation, pendelt sich bei ±25W ein
             gs_last = float(state.get("last_gs", 0))
             gs_new = gs_last + grid_p_raw * 0.5
             gs_new = max(-2400, min(2400, gs_new))
 
-            # MM AUS — wir regeln
-            ha_switch(mm_switch, False)
-            ha_set_number(gs_entity, gs_new)
+            # MM AUS — wir regeln (nur schalten, wenn nicht bereits aus)
+            current_mm_state = ha_get_state(mm_switch, "on")
+            if current_mm_state != "off":
+                ha_switch(mm_switch, False)
+
+            # GS Sollwert in HA schreiben (nur bei nennenswerten Änderungen)
+            gs_new_rounded = round(gs_new / 10) * 10
+            if state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_new_rounded) >= 10:
+                ha_set_number(gs_entity, gs_new_rounded)
+                state["last_gs_written"] = gs_new_rounded
 
             # IS/HMS: langsam regeln (alle 30 Sekunden) damit GS zuerst stabilisiert
-            # GS reagiert sofort, IS/HMS nur alle 6 Ticks
             is_tick = state.get("is_tick", 0) + 1
             state["is_tick"] = is_tick
             do_is_update = (is_tick % 6 == 0)
@@ -441,18 +482,29 @@ def main():
             is_target = max(0, min(2400, is_target))
             state["last_is"] = is_target
 
-            # HMS Limits
+            # HMS Limits berechnen
             limit_2000, limit_1600 = calc_hms_limits(
                 grid_p_raw, solar_p_2000, solar_p_1600,
-                haus_p, hms_1600_online, True, drosseln
+                haus_p, hms_2000_online, hms_1600_online, True, drosseln
             )
 
-            # Schreiben
-            sunenergy_write(sunenergy_ip, {"IS": is_target, "MM": 0})
+            # Direkt ans Gerät schreiben (nur bei Änderungen)
+            device_payload = {}
+            if state.get("last_device_is") != is_target:
+                device_payload["IS"] = is_target
+                state["last_device_is"] = is_target
+            if state.get("last_device_mm") != 0:
+                device_payload["MM"] = 0
+                state["last_device_mm"] = 0
+                
+            if device_payload:
+                sunenergy_write(sunenergy_ip, device_payload)
 
-            curr_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
-            if abs(curr_2000 - limit_2000) >= 50:
-                ha_set_number(hms_2000_entity, limit_2000)
+            # Hoymiles Limits setzen (nur bei nennenswerter Abweichung)
+            if hms_2000_online:
+                curr_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
+                if abs(curr_2000 - limit_2000) >= 50:
+                    ha_set_number(hms_2000_entity, limit_2000)
 
             if hms_1600_online:
                 curr_1600 = float(ha_get_state(hms_1600_entity, "1600") or 1600)
@@ -460,14 +512,14 @@ def main():
                     ha_set_number(hms_1600_entity, limit_1600)
 
             log.info("GS=%dW IS=%dW HMS=%d/%dW | grid=%.0fW haus=%.0fW solar=%.0fW SOC=%.0f%%",
-                     gs_new, is_target, limit_2000, limit_1600,
+                     gs_new_rounded, is_target, limit_2000, limit_1600,
                      grid_p_raw, haus_p, solar_p, curr_soc)
 
             # Vollladung erkennen
             if curr_soc >= 100:
                 state["last_calibration_ts"] = time.time()
 
-            # CSV
+            # CSV schreiben
             csv_log({
                 "ts":       time.strftime("%Y-%m-%d %H:%M:%S"),
                 "mode":     state["active_mode"],
@@ -475,7 +527,7 @@ def main():
                 "grid_p":   round(grid_p_raw, 1),
                 "haus_p":   round(haus_p, 1),
                 "solar_p":  round(solar_p, 1),
-                "gs":       round(gs_new, 0),
+                "gs":       round(gs_new_rounded, 0),
                 "op":       round(op_current, 1),
                 "pv":       round(pv_current, 1),
                 "is_target": is_target,
