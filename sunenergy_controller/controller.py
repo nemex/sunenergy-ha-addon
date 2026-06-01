@@ -502,8 +502,10 @@ def main():
                 hms_2000_online, hms_1600_online
             )
 
-            # Drossel-Flag für HA/Visualisierung setzen
-            drosseln = (limit_2000 < 2000.0) or (limit_1600 < 1600.0)
+            # Drossel-Flag für HA/Visualisierung und Batterie-Entkoppelung setzen
+            # Wir drosseln aktiv, wenn das Limit unter Maximum liegt UND die Hoymiles
+            # tatsächlich an diesem Limit hängen (also mehr erzeugen könnten).
+            drosseln = (hms_limit_new < 3500.0) and (solar_p >= hms_limit_new - 150.0)
             state["drosseln"] = drosseln
 
             # IS Limit der Batterie anpassen
