@@ -110,7 +110,8 @@ HTML = """<!DOCTYPE html>
   <div class="card"><div class="card-title">Solar (HMS)</div><div id="c-solar" class="card-value">— W</div></div>
   <div class="card"><div class="card-title">GS Sollwert</div><div id="c-gs" class="card-value">— W</div></div>
   <div class="card"><div class="card-title">IS Limit</div><div id="c-is" class="card-value">— W</div></div>
-  <div class="card"><div class="card-title">HMS Limit</div><div id="c-hms" class="card-value">— W</div></div>
+  <div class="card"><div class="card-title">HMS 2000 Limit</div><div id="c-hms-2000" class="card-value">— W</div></div>
+  <div class="card"><div class="card-title">HMS 1600 Limit</div><div id="c-hms-1600" class="card-value">— W</div></div>
   <div class="card">
     <div class="card-title">SOC</div>
     <div id="c-soc" class="card-value">— %</div>
@@ -222,7 +223,10 @@ function updateCards(state, csv) {
   setCard('c-solar', parseFloat(csv.solar_p || state.solar_p_last || 0).toFixed(0) + ' W', 'pos');
   setCard('c-gs', parseFloat(csv.gs || state.last_gs || 0).toFixed(0) + ' W', '');
   setCard('c-is', (csv.is_target !== undefined ? parseFloat(csv.is_target) : parseFloat(state.last_is || 0)).toFixed(0) + ' W', '');
-  setCard('c-hms', (csv.hms_limit !== undefined ? parseFloat(csv.hms_limit) : 0).toFixed(0) + ' W', '');
+  const lim2000 = parseFloat(csv.hms_2000_lim !== undefined ? csv.hms_2000_lim : (state.last_hms_2000_lim !== undefined ? state.last_hms_2000_lim : 2000));
+  const lim1600 = parseFloat(csv.hms_1600_lim !== undefined ? csv.hms_1600_lim : (state.last_hms_1600_lim !== undefined ? state.last_hms_1600_lim : 1600));
+  setCard('c-hms-2000', lim2000.toFixed(0) + ' W', '');
+  setCard('c-hms-1600', lim1600.toFixed(0) + ' W', '');
 
   const soc = parseFloat(csv.soc || state.soc || 0);
   setCard('c-soc', soc.toFixed(0) + ' %', soc < 20 ? 'warn' : '');
@@ -230,40 +234,34 @@ function updateCards(state, csv) {
   document.getElementById('ts').textContent = 'Letzte Aktualisierung: ' + new Date().toLocaleTimeString('de-DE');
 
   // Wechselrichter Ist vs Limit — direkt aus CSV-Feldern
-  const seIst  = parseFloat(csv.op || csv.gs || 0);  // SunEnergyXT AC-Ausgang (op neu, gs fallback)
+  const seIst  = parseFloat(csv.pv !== undefined ? csv.pv : (state.pv_last || 0));  // SunEnergyXT PV-Leistung
   const seLim  = parseFloat(csv.is_target || 0); // IS Limit
   const h2000Ist = parseFloat(csv.hms_2000 || 0);
   const h1600Ist = parseFloat(csv.hms_1600 || 0);
-  // HMS Limit proportional aufteilen
-  const hmsTotal = h2000Ist + h1600Ist;
-  const hmsLim = parseFloat(csv.hms_limit || 0);
-  const lim2000 = hmsTotal > 0 ? hmsLim * (h2000Ist / hmsTotal) : hmsLim * 0.6;
-  const lim1600 = hmsTotal > 0 ? hmsLim * (h1600Ist / hmsTotal) : hmsLim * 0.4;
 
   // Status bestimmen
-  const grid = parseFloat(csv.grid_p || 0);
-  const soc  = parseFloat(csv.soc || 0);
-  const mode = csv.mode || 'night';
+  const currentGrid = csv.grid_p !== undefined ? parseFloat(csv.grid_p) : grid;
+  const currentMode = csv.mode || mode;
   let statusText = '—';
   let seReason = '—', h2000Reason = '—', h1600Reason = '—';
 
-  if (mode === 'night') {
+  if (currentMode === 'night') {
     statusText = '⚪ Nacht — kein Betrieb';
     seReason = 'Nacht';
     h2000Reason = 'Nacht';
     h1600Reason = 'Nacht';
-  } else if (grid < -25) {
-    statusText = '🟡 Gedrosselt — Überschuss (' + Math.round(grid) + 'W Einspeisung)';
+  } else if (currentGrid < -25) {
+    statusText = '🟡 Gedrosselt — Überschuss (' + Math.round(currentGrid) + 'W Einspeisung)';
     seReason = seLim < 2400 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
     h2000Reason = lim2000 < 2000 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
     h1600Reason = lim1600 < 1600 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
-  } else if (grid > 25) {
-    statusText = '🟢 Volle Leistung — Netzbezug (' + Math.round(grid) + 'W)';
+  } else if (currentGrid > 25) {
+    statusText = '🟢 Volle Leistung — Netzbezug (' + Math.round(currentGrid) + 'W)';
     seReason = '✅ volle Leistung';
     h2000Reason = '✅ volle Leistung';
     h1600Reason = '✅ volle Leistung';
   } else {
-    statusText = '🟢 Nulleinspeisung aktiv (' + Math.round(grid) + 'W)';
+    statusText = '🟢 Nulleinspeisung aktiv (' + Math.round(currentGrid) + 'W)';
     seReason = seLim < 2400 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
     h2000Reason = lim2000 < 2000 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
     h1600Reason = lim1600 < 1600 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
