@@ -414,15 +414,16 @@ def main():
             # Wenn Einspeisung (grid < -25W) → IS reduzieren
             # Wenn Bezug (grid > 25W) → IS erhöhen
             # Einfache Formel: IS = haus - solar (was HMS nicht liefert)
-            if grid_p_raw < -25:
-                # Zu viel Produktion → IS runter
+            if grid_p_raw < -75:
+                # Deutlicher Überschuss → IS runter (größerer Deadband verhindert Oszillation)
                 is_target = max(0, int(haus_p - solar_p))
                 drosseln = True
-            elif grid_p_raw > 25:
-                # Zu wenig → IS hoch
+            elif grid_p_raw > 75:
+                # Deutlicher Bezug → IS hoch
                 is_target = min(2400, int(haus_p - solar_p + grid_p_raw))
                 drosseln = False
             else:
+                # Im Deadband → IS halten
                 is_target = max(0, int(haus_p - solar_p))
                 drosseln = False
 
