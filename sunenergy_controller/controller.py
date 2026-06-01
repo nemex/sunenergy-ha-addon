@@ -362,7 +362,9 @@ def main():
                 state["active_mode"] = "night"
 
                 # GS weiter regeln: Akku entlädt bei Netzbezug, lädt bei Überschuss
-                gs_new = op_current + grid_p_raw
+                # Dämpfung: nur 50% des Fehlers korrigieren → verhindert Oszillation
+                gs_last = float(state.get("last_gs", 0))
+                gs_new = gs_last + grid_p_raw * 0.5
                 gs_new = max(-2400, min(2400, gs_new))
 
                 ha_switch(mm_switch, False)
@@ -398,10 +400,10 @@ def main():
             # ------------------------------------------------------------------
             state["active_mode"] = "active"
 
-            # GS Formel: GS_neu = OP + grid_p
-            # grid_p positiv = Netzbezug → GS steigt → Akku entlädt mehr
-            # grid_p negativ = Einspeisung → GS sinkt → Akku lädt mehr
-            gs_new = op_current + grid_p_raw
+            # GS Formel: gedämpft → gs_last + grid_p * 0.5
+            # Verhindert Oszillation, pendelt sich bei ±25W ein
+            gs_last = float(state.get("last_gs", 0))
+            gs_new = gs_last + grid_p_raw * 0.5
             gs_new = max(-2400, min(2400, gs_new))
 
             # MM AUS — wir regeln
