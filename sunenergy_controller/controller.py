@@ -510,9 +510,13 @@ def main():
             if curr_soc <= soc_min:
                 is_target = 0
             elif curr_soc >= soc_normal_max:
-                # Bei vollem Akku: Entladeleistung stufenlos auf Restbedarf + 200W Puffer begrenzen.
-                # Der Puffer verhindert Reglerkonflikte (Wind-up), während das Limit vor Einspeisung schützt.
-                is_target = max(0, int(haus_p - solar_p)) + 200
+                if drosseln:
+                    # Wenn die Hoymiles gedrosselt sind (Überschuss vorhanden), darf die Batterie
+                    # nicht entladen, damit die Hoymiles das Haus versorgen und wir nicht einspeisen.
+                    is_target = 0
+                else:
+                    # Wenn die Hoymiles voll offen sind und nicht ausreichen, liefert die Batterie den Rest
+                    is_target = max(0, int(haus_p - solar_p)) + 200
             else:
                 # Normaler Betrieb: IS voll freigeben (2400W), damit der GS-Regler
                 # die Nulleinspeisung ohne harten Limit-Konflikt (Wind-up) ausregeln kann
