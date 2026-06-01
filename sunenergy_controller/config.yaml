@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "1.4.5"
+version: "1.4.6"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -32,6 +32,11 @@ options:
   gs_entity: "number.sunenergyxt_500_pro_sollwert_leistung_netzanschluss"
   mm_switch: "switch.sunenergyxt_500_pro_lokaler_nulleinspeisemodus"
   sa_entity: "number.sunenergyxt_500_pro_system_ladegrenze"
+  haus_power_sensor: "sensor.hausverbrauch_aktuell"
+  hms_2000_power_sensor: "sensor.hoymiles_hms_2000_4t_power"
+  hms_1600_power_sensor: "sensor.hoymiles_hms_1600_4t_power"
+  hms_2000_reachable_sensor: "binary_sensor.hoymiles_hms_2000_4t_reachable"
+  hms_1600_reachable_sensor: "binary_sensor.hoymiles_hms_1600_4t_reachable"
   soc_normal_max: 93
   soc_min: 10
   calibration_days: 15
@@ -47,6 +52,11 @@ schema:
   gs_entity: str
   mm_switch: str
   sa_entity: str
+  haus_power_sensor: str
+  hms_2000_power_sensor: str
+  hms_1600_power_sensor: str
+  hms_2000_reachable_sensor: str
+  hms_1600_reachable_sensor: str
   soc_normal_max: int
   soc_min: int
   calibration_days: int
