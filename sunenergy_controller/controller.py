@@ -512,8 +512,8 @@ def main():
             if curr_soc <= soc_min:
                 is_target = 0
             elif curr_soc >= soc_normal_max:
-                if drosseln:
-                    # Wenn die Hoymiles gedrosselt sind (Überschuss vorhanden), darf die Batterie
+                if drosseln or (grid_p_raw < -50):
+                    # Wenn die Hoymiles gedrosselt sind ODER wir aktuell einspeisen, darf die Batterie
                     # nur maximal ihre eigene PV-Leistung abgeben, damit wir nicht aus den Zellen entladen.
                     # Gedeckelt auf den Restbedarf des Hauses, um Einspeisung zu verhindern.
                     restbedarf = max(0, int(haus_p - solar_p))
