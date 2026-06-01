@@ -234,11 +234,9 @@ function updateCards(state, csv) {
   const seLim  = parseFloat(csv.is_target || 0); // IS Limit
   const h2000Ist = parseFloat(csv.hms_2000 || 0);
   const h1600Ist = parseFloat(csv.hms_1600 || 0);
-  // HMS Limit proportional aufteilen
-  const hmsTotal = h2000Ist + h1600Ist;
-  const hmsLim = parseFloat(csv.hms_limit || 0);
-  const lim2000 = hmsTotal > 0 ? hmsLim * (h2000Ist / hmsTotal) : hmsLim * 0.6;
-  const lim1600 = hmsTotal > 0 ? hmsLim * (h1600Ist / hmsTotal) : hmsLim * 0.4;
+  // Echte Limits direkt aus CSV / State auslesen
+  const lim2000 = parseFloat(csv.hms_2000_lim !== undefined ? csv.hms_2000_lim : (state.last_hms_2000_lim !== undefined ? state.last_hms_2000_lim : 2000));
+  const lim1600 = parseFloat(csv.hms_1600_lim !== undefined ? csv.hms_1600_lim : (state.last_hms_1600_lim !== undefined ? state.last_hms_1600_lim : 1600));
 
   // Status bestimmen
   const currentGrid = csv.grid_p !== undefined ? parseFloat(csv.grid_p) : grid;
