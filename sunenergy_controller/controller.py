@@ -496,16 +496,12 @@ def main():
                 hms_change = max(-400.0, min(400.0, hms_change))
                 hms_limit_new = hms_limit_last + hms_change
             elif curr_soc < soc_normal_max:
-                # Akku nicht voll und keine Einspeisung:
-                if pb_current < 2000.0:
-                    # Weit weg vom Ladelimit: Inverter zu 100% öffnen für maximale MPPT-Effizienz
-                    hms_limit_new = 3600.0
-                else:
-                    # Nahe am Ladelimit: Limit halten/langsam regeln
-                    if solar_p >= hms_limit_last - 100:
-                        hms_change = 80.0
-                    hms_change = max(-400.0, min(400.0, hms_change))
-                    hms_limit_new = hms_limit_last + hms_change
+                # Akku nicht voll und keine Einspeisung: stufenlos regeln
+                # um Überschwingen/Oszillationen nahe der Vollladung zu verhindern.
+                if solar_p >= hms_limit_last - 100:
+                    hms_change = 80.0
+                hms_change = max(-400.0, min(400.0, hms_change))
+                hms_limit_new = hms_limit_last + hms_change
             else:
                 hms_limit_new = hms_limit_last
 
