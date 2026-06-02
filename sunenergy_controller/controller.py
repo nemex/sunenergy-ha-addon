@@ -350,7 +350,7 @@ def main():
             se_data = sunenergy_read(sunenergy_ip)
             op_current = float(se_data.get("OP", 0))
             pv_current = float(se_data.get("PV", 0))
-            pb_current = float(se_data.get("PB", 0))
+            pb_current = float(se_data.get("BP", 0))
             state["soc"] = curr_soc
             state["pv_last"] = pv_current
 
