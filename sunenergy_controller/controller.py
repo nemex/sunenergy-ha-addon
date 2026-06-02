@@ -491,6 +491,11 @@ def main():
                 # Aber nur, wenn sie aktuell durch ihr Limit gedeckelt sind
                 if solar_p >= hms_limit_last - 100:
                     hms_change = grid_p_raw * 0.5
+            elif (curr_soc < soc_normal_max) and (op_current > 50.0):
+                # Akku entlädt und nicht voll: Hoymiles freigeben (Akku schonen/laden)
+                # Aber nur, wenn sie aktuell durch ihr Limit gedeckelt sind
+                if solar_p >= hms_limit_last - 100:
+                    hms_change = op_current * 0.5
 
             # Maximale Änderung pro Tick (5s) begrenzen, um extreme Sprünge zu vermeiden
             hms_change = max(-400.0, min(400.0, hms_change))
