@@ -491,9 +491,7 @@ def main():
                 hms_limit_new = hms_limit_last + hms_change
             elif grid_p_raw > 50:
                 # Bezug: Hoymiles freigeben (mehr erzeugen lassen)
-                # Aber nur, wenn sie aktuell durch ihr Limit gedeckelt sind
-                if solar_p >= hms_limit_last - 100:
-                    hms_change = grid_p_raw * 0.5
+                hms_change = grid_p_raw * 0.5
                 hms_change = max(-400.0, min(400.0, hms_change))
                 hms_limit_new = hms_limit_last + hms_change
             elif curr_soc < soc_normal_max:
