@@ -291,12 +291,15 @@ def main():
     # SA auf Normalwert setzen beim Start
     ha_set_number(sa_entity, soc_normal_max)
 
-    # State zurücksetzen
+    # State initialisieren (falls nicht aus vorherigem Lauf geladen)
+    if "last_calibration_ts" not in state:
+        state["last_calibration_ts"] = time.time()
+    if "last_hms_limit" not in state:
+        state["last_hms_limit"] = 3600.0
+
     state["active_mode"] = "night"
-    state["last_calibration_ts"] = time.time()
-    state["last_hms_limit"] = 3600.0
     save_state(state)
-    log.info("State zurückgesetzt, SA=%s%%", soc_normal_max)
+    log.info("Addon gestartet, SA=%s%%, HMS-Limit=%sW", soc_normal_max, state["last_hms_limit"])
 
     while True:
         try:
@@ -488,6 +491,11 @@ def main():
                 # Aber nur, wenn sie aktuell durch ihr Limit gedeckelt sind
                 if solar_p >= hms_limit_last - 100:
                     hms_change = grid_p_raw * 0.5
+            elif (curr_soc < soc_normal_max) and (op_current > 50.0):
+                # Akku entlädt und nicht voll: Hoymiles freigeben (Akku schonen/laden)
+                # Aber nur, wenn sie aktuell durch ihr Limit gedeckelt sind
+                if solar_p >= hms_limit_last - 100:
+                    hms_change = op_current * 0.5
 
             # Maximale Änderung pro Tick (5s) begrenzen, um extreme Sprünge zu vermeiden
             hms_change = max(-400.0, min(400.0, hms_change))
