@@ -290,6 +290,7 @@ def main():
 
     # SA auf Normalwert setzen beim Start
     ha_set_number(sa_entity, soc_normal_max)
+    sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max)})
 
     # State initialisieren (falls nicht aus vorherigem Lauf geladen)
     if "last_calibration_ts" not in state:
@@ -389,7 +390,7 @@ def main():
                 ha_set_number(sa_entity, soc_normal_max)
                 ha_switch(mm_switch, True)
                 ha_set_number(gs_entity, 0)
-                sunenergy_write(sunenergy_ip, {"IS": 2400})
+                sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max), "IS": 2400})
                 save_state(state)
                 time.sleep(TICK_S)
                 continue
@@ -526,11 +527,11 @@ def main():
             # IS Limit der Batterie anpassen
             if curr_soc <= soc_min:
                 is_target = 0
-            elif curr_soc >= soc_normal_max:
-                if drosseln or (grid_p_raw < -50):
-                    # Wenn die Hoymiles gedrosselt sind ODER wir aktuell einspeisen, darf die Batterie
-                    # nur maximal ihre eigene PV-Leistung abgeben, damit wir nicht aus den Zellen entladen.
-                    # Gedeckelt auf den Restbedarf des Hauses, um Einspeisung zu verhindern.
+            elif curr_soc >= soc_normal_max or ((gs_new_rounded < -200) and (pb_current < 150.0)):
+                if drosseln or (grid_p_raw < -50) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
+                    # Wenn die Hoymiles gedrosselt sind ODER wir aktuell einspeisen ODER die Batterie
+                    # die Ladung verweigert (BMS voll/gesperrt), darf die Batterie nur maximal ihre eigene
+                    # PV-Leistung abgeben, um Einspeisung des Carport-Überschusses zu verhindern.
                     restbedarf = max(0, int(haus_p - solar_p))
                     is_target = min(pv_current, restbedarf)
                 else:
