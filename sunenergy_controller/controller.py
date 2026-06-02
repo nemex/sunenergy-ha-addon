@@ -283,7 +283,7 @@ def main():
     hms_2000_reachable_sensor = opts.get("hms_2000_reachable_sensor", "binary_sensor.hoymiles_hms_2000_4t_reachable")
     hms_1600_reachable_sensor = opts.get("hms_1600_reachable_sensor", "binary_sensor.hoymiles_hms_1600_4t_reachable")
 
-    soc_normal_max  = float(opts["soc_normal_max"])    # 93%
+    soc_normal_max  = float(opts["soc_normal_max"])    # 95%
     soc_min         = float(opts["soc_min"])            # 10%
     calib_days      = float(opts["calibration_days"])  # 15
     sunenergy_ip    = opts.get("sunenergy_ip", "192.168.178.94")
@@ -350,6 +350,7 @@ def main():
             se_data = sunenergy_read(sunenergy_ip)
             op_current = float(se_data.get("OP", 0))
             pv_current = float(se_data.get("PV", 0))
+            pb_current = float(se_data.get("PB", 0))
             state["soc"] = curr_soc
             state["pv_last"] = pv_current
 
@@ -486,22 +487,29 @@ def main():
             if grid_p_raw < -50:
                 # Einspeisung: Hoymiles drosseln
                 hms_change = grid_p_raw * 0.5
+                hms_change = max(-400.0, min(400.0, hms_change))
+                hms_limit_new = hms_limit_last + hms_change
             elif grid_p_raw > 50:
                 # Bezug: Hoymiles freigeben (mehr erzeugen lassen)
                 # Aber nur, wenn sie aktuell durch ihr Limit gedeckelt sind
                 if solar_p >= hms_limit_last - 100:
                     hms_change = grid_p_raw * 0.5
+                hms_change = max(-400.0, min(400.0, hms_change))
+                hms_limit_new = hms_limit_last + hms_change
             elif curr_soc < soc_normal_max:
-                # Akku nicht voll und keine Einspeisung: Hoymiles langsam freigeben,
-                # um den Akku zu laden / zu entlasten.
-                # Aber nur, wenn sie aktuell durch ihr Limit gedeckelt sind
-                if solar_p >= hms_limit_last - 100:
-                    hms_change = 80.0
+                # Akku nicht voll und keine Einspeisung:
+                if pb_current < 2000.0:
+                    # Weit weg vom Ladelimit: Inverter zu 100% öffnen für maximale MPPT-Effizienz
+                    hms_limit_new = 3600.0
+                else:
+                    # Nahe am Ladelimit: Limit halten/langsam regeln
+                    if solar_p >= hms_limit_last - 100:
+                        hms_change = 80.0
+                    hms_change = max(-400.0, min(400.0, hms_change))
+                    hms_limit_new = hms_limit_last + hms_change
+            else:
+                hms_limit_new = hms_limit_last
 
-            # Maximale Änderung pro Tick (5s) begrenzen, um extreme Sprünge zu vermeiden
-            hms_change = max(-400.0, min(400.0, hms_change))
-
-            hms_limit_new = hms_limit_last + hms_change
             hms_limit_new = max(0.0, min(3600.0, hms_limit_new))
             state["last_hms_limit"] = hms_limit_new
 
