@@ -557,21 +557,18 @@ def main():
             # 7. Tagregelung — universell für jeden SOC mit Spam-Schutz
             # ------------------------------------------------------------------
             if feed_in_active:
-                state["active_mode"] = "feed_in" if (curr_soc >= manual_feed_in_min_soc and solar_p > haus_p) else "feed_in_standby"
+                state["active_mode"] = "feed_in" if is_actively_feeding_in else "feed_in_standby"
             else:
                 state["active_mode"] = "active"
 
-            # GS Formel: gedämpft → gs_last + grid_p * 0.5
+            # Netz-Fehler bezüglich des Soll-Netzwertes (0W bzw. -500W bei manueller Einspeisung)
+            grid_error = grid_p_raw - grid_target
+
+            # GS Formel: gedämpft → gs_last + grid_error * 0.5
             gs_last = float(state.get("last_gs", 0))
-            gs_new = gs_last + grid_p_raw * 0.5
+            gs_new = gs_last + grid_error * 0.5
             if low_soc_active:
                 gs_new = min(0.0, gs_new)
-
-            # Bei aktiver manueller Einspeisung (SOC hoch genug und PV-Überschuss vorhanden)
-            # setzen wir GS auf 0W (kein AC-Laden der Batterie)
-            if feed_in_active and curr_soc >= manual_feed_in_min_soc and solar_p > haus_p:
-                gs_new = 0.0
-
             gs_new = max(-2400, min(2400, gs_new))
 
             # MM AUS — wir regeln (nur schalten, wenn nicht bereits aus)
@@ -590,25 +587,25 @@ def main():
             hms_change = 0.0
 
             # Bei aktiver manueller Einspeisung Hoymiles voll öffnen
-            if feed_in_active and curr_soc >= manual_feed_in_min_soc and solar_p > haus_p:
+            if is_actively_feeding_in:
                 hms_limit_new = 3600.0
             # Unter 90% SOC lassen wir die Hoymiles standardmäßig voll offen (3600W),
             # außer wir speisen ein (>100W) und die Batterie lädt bereits mit maximaler Leistung AC (GS <= -2350W)
-            elif curr_soc < 90.0 and not (grid_p_raw < -100 and gs_new_rounded <= -2350):
+            elif curr_soc < 90.0 and not (grid_error < -100 and gs_new_rounded <= -2350):
                 hms_limit_new = 3600.0
-            elif grid_p_raw < -50:
+            elif grid_error < -50:
                 # Einspeisung: Hoymiles drosseln (mit Anti-Windup durch Baseline-Klemmen auf aktuelle Solarleistung + 100W)
                 hms_limit_baseline = min(hms_limit_last, solar_p + 100.0)
-                hms_change = grid_p_raw * 0.5
+                hms_change = grid_error * 0.5
                 hms_change = max(-400.0, min(400.0, hms_change))
                 hms_limit_new = hms_limit_baseline + hms_change
-            elif grid_p_raw > 50:
+            elif grid_error > 50:
                 # Bezug: Hoymiles freigeben (mehr erzeugen lassen)
-                hms_change = grid_p_raw * 0.5
+                hms_change = grid_error * 0.5
                 hms_change = max(-400.0, min(400.0, hms_change))
                 hms_limit_new = hms_limit_last + hms_change
             elif curr_soc < soc_normal_max:
-                # Akku nicht voll und keine Einspeisung: stufenlos regeln
+                # Akku nicht voll und keine Abweichung vom Sollwert: stufenlos regeln
                 # um Überschwingen/Oszillationen nahe der Vollladung zu verhindern.
                 if solar_p >= hms_limit_last - 100:
                     hms_change = 80.0
@@ -635,19 +632,21 @@ def main():
             # IS Limit der Batterie anpassen
             if low_soc_active:
                 is_target = 10
-            elif feed_in_active and curr_soc >= manual_feed_in_min_soc and solar_p > haus_p:
-                # Batterieentladung sperren während aktiver manueller Einspeisung
-                is_target = 10
             elif curr_soc >= soc_normal_max or ((gs_new_rounded < -200) and (pb_current < 150.0)):
-                if drosseln or (grid_p_raw < -50) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
+                if drosseln or (grid_error < -50) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                     # Wenn die Hoymiles gedrosselt sind ODER wir aktuell einspeisen ODER die Batterie
                     # die Ladung verweigert (BMS voll/gesperrt), darf die Batterie nur maximal ihre eigene
                     # PV-Leistung abgeben, um Einspeisung des Carport-Überschusses zu verhindern.
                     restbedarf = max(0, int(haus_p - solar_p))
+                    if is_actively_feeding_in:
+                        restbedarf += int(manual_feed_in_power)
                     is_target = min(pv_current, restbedarf)
                 else:
                     # Wenn die Hoymiles voll offen sind und nicht ausreichen, liefert die Batterie den Rest
-                    is_target = max(0, int(haus_p - solar_p)) + 200
+                    restbedarf = max(0, int(haus_p - solar_p))
+                    if is_actively_feeding_in:
+                        restbedarf += int(manual_feed_in_power)
+                    is_target = restbedarf + 200
             else:
                 # Normaler Betrieb: IS voll freigeben (2400W), damit der GS-Regler
                 # die Nulleinspeisung ohne harten Limit-Konflikt (Wind-up) ausregeln kann
