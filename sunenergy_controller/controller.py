@@ -297,6 +297,10 @@ def main():
         state["last_calibration_ts"] = time.time()
     if "last_hms_limit" not in state:
         state["last_hms_limit"] = 3600.0
+    if "last_hms_2000_lim" not in state:
+        state["last_hms_2000_lim"] = 2000.0
+    if "last_hms_1600_lim" not in state:
+        state["last_hms_1600_lim"] = 1600.0
 
     state["active_mode"] = "night"
     save_state(state)
@@ -503,7 +507,11 @@ def main():
             hms_limit_last = float(state.get("last_hms_limit", 3600.0))
             hms_change = 0.0
 
-            if grid_p_raw < -50:
+            # Unter 90% SOC lassen wir die Hoymiles standardmäßig voll offen (3600W),
+            # außer wir speisen ein (>100W) und die Batterie lädt bereits mit maximaler Leistung AC (GS <= -2350W)
+            if curr_soc < 90.0 and not (grid_p_raw < -100 and gs_new_rounded <= -2350):
+                hms_limit_new = 3600.0
+            elif grid_p_raw < -50:
                 # Einspeisung: Hoymiles drosseln
                 hms_change = grid_p_raw * 0.5
                 hms_change = max(-400.0, min(400.0, hms_change))
@@ -580,17 +588,20 @@ def main():
             do_is_update = (is_tick % 6 == 0)
 
             if hms_2000_online:
-                curr_2000 = float(ha_get_state(hms_2000_entity, "2000") or 2000)
-                # Senden wenn Wert abweicht ODER wenn Inverter trotz Drosselung > 50W über Limit liegt
-                need_send_2000 = (abs(curr_2000 - limit_2000) >= 50) or (drosseln and solar_p_2000 > limit_2000 + 50 and do_is_update)
+                last_written_2000 = float(state.get("last_hms_2000_lim", 2000.0))
+                # Senden wenn der neue Wert um >= 50W vom zuletzt geschriebenen abweicht
+                # ODER wenn Inverter trotz Drosselung > 50W über Limit liegt
+                need_send_2000 = (abs(last_written_2000 - limit_2000) >= 50) or (drosseln and solar_p_2000 > limit_2000 + 50 and do_is_update)
                 if need_send_2000:
                     ha_set_number(hms_2000_entity, limit_2000)
+                    state["last_hms_2000_lim"] = limit_2000
 
             if hms_1600_online:
-                curr_1600 = float(ha_get_state(hms_1600_entity, "1600") or 1600)
-                need_send_1600 = (abs(curr_1600 - limit_1600) >= 50) or (drosseln and solar_p_1600 > limit_1600 + 50 and do_is_update)
+                last_written_1600 = float(state.get("last_hms_1600_lim", 1600.0))
+                need_send_1600 = (abs(last_written_1600 - limit_1600) >= 50) or (drosseln and solar_p_1600 > limit_1600 + 50 and do_is_update)
                 if need_send_1600:
                     ha_set_number(hms_1600_entity, limit_1600)
+                    state["last_hms_1600_lim"] = limit_1600
 
             log.info("GS=%dW IS=%dW HMS=%d/%dW (Target=%dW) | grid=%.0fW haus=%.0fW solar=%.0fW SOC=%.0f%%",
                      gs_new_rounded, is_target, limit_2000, limit_1600, int(hms_limit_new),
@@ -619,8 +630,7 @@ def main():
                 "hms_1600_lim": round(limit_1600, 0),
             })
 
-            state["last_hms_2000_lim"] = limit_2000
-            state["last_hms_1600_lim"] = limit_1600
+            # last_hms_2000/1600_lim werden jetzt nur noch bei echten Schreibbefehlen aktualisiert (drift-safe)
 
             state["grid_p_filtered"] = grid_p_raw
             state["solar_p_last"]    = solar_p
