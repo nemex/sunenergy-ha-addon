@@ -218,6 +218,11 @@ def calc_hms_limits(
     max_2000 = 2000.0
     max_1600 = 1600.0
 
+    # Wenn das Gesamtlimit auf Maximum steht, öffnen wir beide Wechselrichter voll.
+    # Dies verhindert unnötige Regelschwankungen/Proportional-Updates bei wolkenbedingter Solaränderung.
+    if hms_limit_target >= 3600.0:
+        return (max_2000 if hms_2000_online else 0.0), (max_1600 if hms_1600_online else 0.0)
+
     total_solar = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
     
     if total_solar > 50:
