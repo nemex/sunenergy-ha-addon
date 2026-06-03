@@ -517,10 +517,11 @@ def main():
             if curr_soc < 90.0 and not (grid_p_raw < -100 and gs_new_rounded <= -2350):
                 hms_limit_new = 3600.0
             elif grid_p_raw < -50:
-                # Einspeisung: Hoymiles drosseln
+                # Einspeisung: Hoymiles drosseln (mit Anti-Windup durch Baseline-Klemmen auf aktuelle Solarleistung + 100W)
+                hms_limit_baseline = min(hms_limit_last, solar_p + 100.0)
                 hms_change = grid_p_raw * 0.5
                 hms_change = max(-400.0, min(400.0, hms_change))
-                hms_limit_new = hms_limit_last + hms_change
+                hms_limit_new = hms_limit_baseline + hms_change
             elif grid_p_raw > 50:
                 # Bezug: Hoymiles freigeben (mehr erzeugen lassen)
                 hms_change = grid_p_raw * 0.5
