@@ -88,6 +88,8 @@ HTML = """<!DOCTYPE html>
   .mode.active { background: rgba(0,230,118,0.15); color: var(--green); border: 1px solid var(--green); }
   .mode.soc_full { background: rgba(240,165,0,0.15); color: var(--accent); border: 1px solid var(--accent); }
   .mode.night { background: rgba(74,85,104,0.3); color: var(--muted); border: 1px solid var(--muted); }
+  .mode.feed_in { background: rgba(0,194,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
+  .mode.feed_in_standby { background: rgba(240,165,0,0.15); color: var(--accent); border: 1px solid var(--accent); }
   .soc-bar { height: 5px; background: var(--border); border-radius: 3px; margin-top: 6px; overflow: hidden; }
   .soc-fill { height: 100%; background: var(--green); border-radius: 3px; transition: width 1s; }
   .chart-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 16px; margin-bottom: 20px; }
@@ -214,7 +216,7 @@ const powerChart = makeChart('chart-power', [
 function updateCards(state, csv) {
   const mode = state.active_mode || 'night';
   const el = document.getElementById('c-mode');
-  el.textContent = { active: 'AKTIV REGELND', soc_full: 'SOC VOLL (IS)', night: 'NACHT', calibration: 'ZWANGSLADUNG' }[mode] || mode.toUpperCase();
+  el.textContent = { active: 'AKTIV REGELND', soc_full: 'SOC VOLL (IS)', night: 'NACHT', calibration: 'ZWANGSLADUNG', feed_in: 'EINSPEISUNG AKTIV', feed_in_standby: 'EINSPEISUNG STANDBY' }[mode] || mode.toUpperCase();
   el.className = 'mode ' + mode;
 
   const grid = parseFloat(csv.grid_p || state.grid_p_filtered || 0);
