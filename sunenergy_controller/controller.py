@@ -343,58 +343,6 @@ def main():
             
             solar_p = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
 
-            # ------------------------------------------------------------------
-            # 1b. Manuelle Einspeisung prüfen und integrieren
-            # ------------------------------------------------------------------
-            manual_feed_in_switch = opts.get("manual_feed_in_switch", "input_boolean.sunenergy_manual_feed_in")
-            manual_feed_in_target = float(opts.get("manual_feed_in_target", 0.5))
-            manual_feed_in_min_soc = float(opts.get("manual_feed_in_min_soc", 90.0))
-
-            feed_in_active = False
-            if manual_feed_in_switch:
-                feed_in_state = ha_get_state(manual_feed_in_switch, "off")
-                feed_in_active = (feed_in_state == "on")
-
-            if feed_in_active:
-                if not state.get("manual_feed_in_active", False):
-                    # Transition von Aus auf An
-                    state["manual_feed_in_active"] = True
-                    state["manual_feed_in_accumulated_kwh"] = 0.0
-                    log.info("🔋 Manuelle Einspeisung gestartet. Ziel: %.2f kWh (Mindest-SOC: %.0f%%)", 
-                             manual_feed_in_target, manual_feed_in_min_soc)
-
-                conditions_met = (curr_soc >= manual_feed_in_min_soc) and (solar_p > haus_p)
-                if conditions_met and grid_p_raw < 0:
-                    tick_kwh = (-grid_p_raw * TICK_S) / 3600000.0
-                    state["manual_feed_in_accumulated_kwh"] = state.get("manual_feed_in_accumulated_kwh", 0.0) + tick_kwh
-                
-                accumulated = state.get("manual_feed_in_accumulated_kwh", 0.0)
-                if conditions_met:
-                    log.info("🔋 Manuelle Einspeisung aktiv: %.4f / %.2f kWh (Aktuell: %.0f W)", 
-                             accumulated, manual_feed_in_target, grid_p_raw)
-                else:
-                    log.info("🔋 Manuelle Einspeisung im Standby: %.4f / %.2f kWh (SOC: %.1f%%/%.0f%%, Solar: %.0fW/Haus: %.0fW)",
-                             accumulated, manual_feed_in_target, curr_soc, manual_feed_in_min_soc, solar_p, haus_p)
-
-                if accumulated >= manual_feed_in_target:
-                    log.info("🔋 Manuelle Einspeisung Ziel von %.2f kWh erreicht! Schalte ab...", manual_feed_in_target)
-                    if not DRY_RUN:
-                        requests.post(
-                            f"{HA_URL}/api/services/input_boolean/turn_off",
-                            headers={"Authorization": f"Bearer {HA_TOKEN}"},
-                            json={"entity_id": manual_feed_in_switch},
-                            timeout=5,
-                        )
-                    state["manual_feed_in_active"] = False
-                    state["manual_feed_in_accumulated_kwh"] = 0.0
-                    feed_in_active = False
-            else:
-                if state.get("manual_feed_in_active", False):
-                    # Transition von An auf Aus
-                    state["manual_feed_in_active"] = False
-                    state["manual_feed_in_accumulated_kwh"] = 0.0
-                    log.info("🔋 Manuelle Einspeisung gestoppt.")
-
             # Watchdog
             shelly_data = ha_get_full(grid_sensor)
             if shelly_data:
@@ -427,6 +375,70 @@ def main():
             pb_current = float(se_data.get("BP", 0))
             state["soc"] = curr_soc
             state["pv_last"] = pv_current
+
+            # ------------------------------------------------------------------
+            # 3b. Manuelle Einspeisung prüfen und integrieren
+            # ------------------------------------------------------------------
+            manual_feed_in_switch = opts.get("manual_feed_in_switch", "input_boolean.sunenergy_manual_feed_in")
+            manual_feed_in_target = float(opts.get("manual_feed_in_target", 0.5))
+            manual_feed_in_min_soc = float(opts.get("manual_feed_in_min_soc", 90.0))
+            manual_feed_in_power = float(opts.get("manual_feed_in_power", 500.0))
+
+            feed_in_active = False
+            if manual_feed_in_switch:
+                feed_in_state = ha_get_state(manual_feed_in_switch, "off")
+                feed_in_active = (feed_in_state == "on")
+
+            grid_target = 0.0
+            is_actively_feeding_in = False
+
+            if feed_in_active:
+                if not state.get("manual_feed_in_active", False):
+                    # Transition von Aus auf An
+                    state["manual_feed_in_active"] = True
+                    state["manual_feed_in_accumulated_kwh"] = 0.0
+                    log.info("🔋 Manuelle Einspeisung gestartet. Ziel: %.2f kWh (Leistung: %.0fW, Mindest-SOC: %.0f%%)", 
+                             manual_feed_in_target, manual_feed_in_power, manual_feed_in_min_soc)
+
+                # Überschuss-Bedingung: Gesamte Erzeugung (Hoymiles + DC-PV) übersteigt Hausverbrauch
+                conditions_met = (curr_soc >= manual_feed_in_min_soc) and ((solar_p + pv_current) > haus_p)
+                if conditions_met:
+                    is_actively_feeding_in = True
+                    grid_target = -manual_feed_in_power
+                    
+                    if grid_p_raw < 0:
+                        tick_kwh = (-grid_p_raw * TICK_S) / 3600000.0
+                        state["manual_feed_in_accumulated_kwh"] = state.get("manual_feed_in_accumulated_kwh", 0.0) + tick_kwh
+
+                accumulated = state.get("manual_feed_in_accumulated_kwh", 0.0)
+                if is_actively_feeding_in:
+                    log.info("🔋 Manuelle Einspeisung aktiv: %.4f / %.2f kWh (Ziel-Netz: -%.0f W, Aktuell: %.0f W)", 
+                             accumulated, manual_feed_in_target, manual_feed_in_power, grid_p_raw)
+                else:
+                    log.info("🔋 Manuelle Einspeisung im Standby: %.4f / %.2f kWh (SOC: %.1f%%/%.0f%%, Solar gesamt: %.0fW/Haus: %.0fW)",
+                             accumulated, manual_feed_in_target, curr_soc, manual_feed_in_min_soc, (solar_p + pv_current), haus_p)
+
+                if accumulated >= manual_feed_in_target:
+                    log.info("🔋 Manuelle Einspeisung Ziel von %.2f kWh erreicht! Schalte ab...", manual_feed_in_target)
+                    if not DRY_RUN:
+                        requests.post(
+                            f"{HA_URL}/api/services/input_boolean/turn_off",
+                            headers={"Authorization": f"Bearer {HA_TOKEN}"},
+                            json={"entity_id": manual_feed_in_switch},
+                            timeout=5,
+                        )
+                    state["manual_feed_in_active"] = False
+                    state["manual_feed_in_accumulated_kwh"] = 0.0
+                    feed_in_active = False
+                    is_actively_feeding_in = False
+                    grid_target = 0.0
+            else:
+                if state.get("manual_feed_in_active", False):
+                    # Transition von An auf Aus
+                    state["manual_feed_in_active"] = False
+                    state["manual_feed_in_accumulated_kwh"] = 0.0
+                    log.info("🔋 Manuelle Einspeisung gestoppt.")
+
 
             # ------------------------------------------------------------------
             # 4. Sonnenstand

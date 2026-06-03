@@ -44,6 +44,7 @@ options:
   manual_feed_in_switch: "input_boolean.sunenergy_manual_feed_in"
   manual_feed_in_target: 0.5
   manual_feed_in_min_soc: 90
+  manual_feed_in_power: 500
 schema:
   shelly_ip: str
   sunenergy_ip: str
@@ -67,4 +68,5 @@ schema:
   manual_feed_in_switch: str
   manual_feed_in_target: float
   manual_feed_in_min_soc: float
+  manual_feed_in_power: int
 
