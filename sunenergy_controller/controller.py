@@ -313,6 +313,14 @@ def main():
             curr_soc   = float(ha_get_state(soc_sensor, "0") or 0)
             haus_p     = abs(float(ha_get_state(haus_power_sensor, "0") or 0))
 
+            # Hysteresis für niedrigen SOC (Entladeschutz)
+            low_soc_active = state.get("low_soc_active", False)
+            if curr_soc <= soc_min:
+                low_soc_active = True
+            elif curr_soc >= (soc_min + 2.0): # erst ab 12% wieder freigeben
+                low_soc_active = False
+            state["low_soc_active"] = low_soc_active
+
             solar_p_2000 = abs(float(ha_get_state(hms_2000_power_sensor, "0") or 0))
             solar_p_1600 = abs(float(ha_get_state(hms_1600_power_sensor, "0") or 0))
             
@@ -425,6 +433,8 @@ def main():
                 # GS nachts aktiv regeln
                 gs_last = float(state.get("last_gs", 0))
                 gs_new = gs_last + grid_p_raw * 0.5
+                if low_soc_active:
+                    gs_new = min(0.0, gs_new)
                 gs_new = max(-2400, min(2400, gs_new))
                 
                 gs_new_rounded = round(gs_new / 10) * 10
@@ -432,8 +442,14 @@ def main():
                     ha_set_number(gs_entity, gs_new_rounded)
                     state["last_gs_written"] = gs_new_rounded
 
-                log.info("Nacht: Aktive Regelung (MM=0) | GS=%dW | grid=%.0fW haus=%.0fW SOC=%.0f%%",
-                         gs_new_rounded, grid_p_raw, haus_p, curr_soc)
+                # IS nachts regeln (Sicherheits-Drosselung bei leerem Akku)
+                is_target_night = 10 if low_soc_active else 2400
+                if state.get("last_device_is") != is_target_night:
+                    sunenergy_write(sunenergy_ip, {"IS": is_target_night})
+                    state["last_device_is"] = is_target_night
+
+                log.info("Nacht: Aktive Regelung (MM=0) | GS=%dW IS=%dW | grid=%.0fW haus=%.0fW SOC=%.0f%%",
+                         gs_new_rounded, is_target_night, grid_p_raw, haus_p, curr_soc)
 
                 # CSV schreiben
                 csv_log({
@@ -446,7 +462,7 @@ def main():
                     "gs":       round(gs_new_rounded, 0),
                     "op":       round(op_current, 1),
                     "pv":       round(pv_current, 1),
-                    "is_target": 2400,
+                    "is_target": is_target_night,
                     "hms_limit": 3600,
                     "hms_2000":  round(solar_p_2000, 1),
                     "hms_1600":  round(solar_p_1600, 1),
@@ -468,6 +484,8 @@ def main():
             # GS Formel: gedämpft → gs_last + grid_p * 0.5
             gs_last = float(state.get("last_gs", 0))
             gs_new = gs_last + grid_p_raw * 0.5
+            if low_soc_active:
+                gs_new = min(0.0, gs_new)
             gs_new = max(-2400, min(2400, gs_new))
 
             # MM AUS — wir regeln (nur schalten, wenn nicht bereits aus)
@@ -521,8 +539,8 @@ def main():
             state["drosseln"] = drosseln
 
             # IS Limit der Batterie anpassen
-            if curr_soc <= soc_min:
-                is_target = 0
+            if low_soc_active:
+                is_target = 10
             elif curr_soc >= soc_normal_max or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                 if drosseln or (grid_p_raw < -50) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                     # Wenn die Hoymiles gedrosselt sind ODER wir aktuell einspeisen ODER die Batterie
@@ -538,9 +556,9 @@ def main():
                 # die Nulleinspeisung ohne harten Limit-Konflikt (Wind-up) ausregeln kann
                 is_target = 2400
 
-            # Runden auf 10W-Schritte und Grenzwerte einhalten (0 bis 2400W)
+            # Runden auf 10W-Schritte und Grenzwerte einhalten (10 bis 2400W)
             is_target = round(is_target / 10) * 10
-            is_target = max(0, min(2400, is_target))
+            is_target = max(10, min(2400, is_target))
             state["last_is"] = is_target
 
             # Direkt ans Gerät schreiben (nur bei Änderungen)
