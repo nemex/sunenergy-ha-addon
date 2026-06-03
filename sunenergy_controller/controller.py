@@ -401,10 +401,11 @@ def main():
                              manual_feed_in_target, manual_feed_in_power, manual_feed_in_min_soc)
 
                 # Überschuss-Bedingung: Gesamte Erzeugung (Hoymiles + DC-PV) übersteigt Hausverbrauch
-                conditions_met = (curr_soc >= manual_feed_in_min_soc) and ((solar_p + pv_current) > haus_p)
+                surplus = (solar_p + pv_current) - haus_p
+                conditions_met = (curr_soc >= manual_feed_in_min_soc) and (surplus > 0.0)
                 if conditions_met:
                     is_actively_feeding_in = True
-                    grid_target = -manual_feed_in_power
+                    grid_target = -min(manual_feed_in_power, surplus)
                     
                     if grid_p_raw < 0:
                         tick_kwh = (-grid_p_raw * TICK_S) / 3600000.0
@@ -632,20 +633,20 @@ def main():
             # IS Limit der Batterie anpassen
             if low_soc_active:
                 is_target = 10
+            elif is_actively_feeding_in:
+                # Während aktiver manueller Einspeisung darf die Batterie maximal ihre eigene PV-Leistung abgeben,
+                # um ein Entladen der Batterie-Zellen ins Netz zu verhindern.
+                is_target = pv_current
             elif curr_soc >= soc_normal_max or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                 if drosseln or (grid_error < -50) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                     # Wenn die Hoymiles gedrosselt sind ODER wir aktuell einspeisen ODER die Batterie
                     # die Ladung verweigert (BMS voll/gesperrt), darf die Batterie nur maximal ihre eigene
                     # PV-Leistung abgeben, um Einspeisung des Carport-Überschusses zu verhindern.
                     restbedarf = max(0, int(haus_p - solar_p))
-                    if is_actively_feeding_in:
-                        restbedarf += int(manual_feed_in_power)
                     is_target = min(pv_current, restbedarf)
                 else:
                     # Wenn die Hoymiles voll offen sind und nicht ausreichen, liefert die Batterie den Rest
                     restbedarf = max(0, int(haus_p - solar_p))
-                    if is_actively_feeding_in:
-                        restbedarf += int(manual_feed_in_power)
                     is_target = restbedarf + 200
             else:
                 # Normaler Betrieb: IS voll freigeben (2400W), damit der GS-Regler
