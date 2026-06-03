@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "1.6.8"
+version: "1.6.9"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -41,6 +41,9 @@ options:
   soc_min: 10
   calibration_days: 15
   dry_run: false
+  manual_feed_in_switch: "input_boolean.sunenergy_manual_feed_in"
+  manual_feed_in_target: 0.5
+  manual_feed_in_min_soc: 90
 schema:
   shelly_ip: str
   sunenergy_ip: str
@@ -61,3 +64,7 @@ schema:
   soc_min: int
   calibration_days: int
   dry_run: bool
+  manual_feed_in_switch: str
+  manual_feed_in_target: float
+  manual_feed_in_min_soc: float
+

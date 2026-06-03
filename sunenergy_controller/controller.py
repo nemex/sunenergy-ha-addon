@@ -306,6 +306,10 @@ def main():
         state["last_hms_2000_lim"] = 2000.0
     if "last_hms_1600_lim" not in state:
         state["last_hms_1600_lim"] = 1600.0
+    if "manual_feed_in_active" not in state:
+        state["manual_feed_in_active"] = False
+    if "manual_feed_in_accumulated_kwh" not in state:
+        state["manual_feed_in_accumulated_kwh"] = 0.0
 
     state["active_mode"] = "night"
     save_state(state)
@@ -338,6 +342,58 @@ def main():
             hms_1600_online = (ha_get_state(hms_1600_reachable_sensor, "off") == "on") or (solar_p_1600 > 10.0)
             
             solar_p = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
+
+            # ------------------------------------------------------------------
+            # 1b. Manuelle Einspeisung prüfen und integrieren
+            # ------------------------------------------------------------------
+            manual_feed_in_switch = opts.get("manual_feed_in_switch", "input_boolean.sunenergy_manual_feed_in")
+            manual_feed_in_target = float(opts.get("manual_feed_in_target", 0.5))
+            manual_feed_in_min_soc = float(opts.get("manual_feed_in_min_soc", 90.0))
+
+            feed_in_active = False
+            if manual_feed_in_switch:
+                feed_in_state = ha_get_state(manual_feed_in_switch, "off")
+                feed_in_active = (feed_in_state == "on")
+
+            if feed_in_active:
+                if not state.get("manual_feed_in_active", False):
+                    # Transition von Aus auf An
+                    state["manual_feed_in_active"] = True
+                    state["manual_feed_in_accumulated_kwh"] = 0.0
+                    log.info("🔋 Manuelle Einspeisung gestartet. Ziel: %.2f kWh (Mindest-SOC: %.0f%%)", 
+                             manual_feed_in_target, manual_feed_in_min_soc)
+
+                conditions_met = (curr_soc >= manual_feed_in_min_soc) and (solar_p > haus_p)
+                if conditions_met and grid_p_raw < 0:
+                    tick_kwh = (-grid_p_raw * TICK_S) / 3600000.0
+                    state["manual_feed_in_accumulated_kwh"] = state.get("manual_feed_in_accumulated_kwh", 0.0) + tick_kwh
+                
+                accumulated = state.get("manual_feed_in_accumulated_kwh", 0.0)
+                if conditions_met:
+                    log.info("🔋 Manuelle Einspeisung aktiv: %.4f / %.2f kWh (Aktuell: %.0f W)", 
+                             accumulated, manual_feed_in_target, grid_p_raw)
+                else:
+                    log.info("🔋 Manuelle Einspeisung im Standby: %.4f / %.2f kWh (SOC: %.1f%%/%.0f%%, Solar: %.0fW/Haus: %.0fW)",
+                             accumulated, manual_feed_in_target, curr_soc, manual_feed_in_min_soc, solar_p, haus_p)
+
+                if accumulated >= manual_feed_in_target:
+                    log.info("🔋 Manuelle Einspeisung Ziel von %.2f kWh erreicht! Schalte ab...", manual_feed_in_target)
+                    if not DRY_RUN:
+                        requests.post(
+                            f"{HA_URL}/api/services/input_boolean/turn_off",
+                            headers={"Authorization": f"Bearer {HA_TOKEN}"},
+                            json={"entity_id": manual_feed_in_switch},
+                            timeout=5,
+                        )
+                    state["manual_feed_in_active"] = False
+                    state["manual_feed_in_accumulated_kwh"] = 0.0
+                    feed_in_active = False
+            else:
+                if state.get("manual_feed_in_active", False):
+                    # Transition von An auf Aus
+                    state["manual_feed_in_active"] = False
+                    state["manual_feed_in_accumulated_kwh"] = 0.0
+                    log.info("🔋 Manuelle Einspeisung gestoppt.")
 
             # Watchdog
             shelly_data = ha_get_full(grid_sensor)
@@ -488,13 +544,22 @@ def main():
             # ------------------------------------------------------------------
             # 7. Tagregelung — universell für jeden SOC mit Spam-Schutz
             # ------------------------------------------------------------------
-            state["active_mode"] = "active"
+            if feed_in_active:
+                state["active_mode"] = "feed_in" if (curr_soc >= manual_feed_in_min_soc and solar_p > haus_p) else "feed_in_standby"
+            else:
+                state["active_mode"] = "active"
 
             # GS Formel: gedämpft → gs_last + grid_p * 0.5
             gs_last = float(state.get("last_gs", 0))
             gs_new = gs_last + grid_p_raw * 0.5
             if low_soc_active:
                 gs_new = min(0.0, gs_new)
+
+            # Bei aktiver manueller Einspeisung (SOC hoch genug und PV-Überschuss vorhanden)
+            # setzen wir GS auf 0W (kein AC-Laden der Batterie)
+            if feed_in_active and curr_soc >= manual_feed_in_min_soc and solar_p > haus_p:
+                gs_new = 0.0
+
             gs_new = max(-2400, min(2400, gs_new))
 
             # MM AUS — wir regeln (nur schalten, wenn nicht bereits aus)
@@ -512,9 +577,12 @@ def main():
             hms_limit_last = float(state.get("last_hms_limit", 3600.0))
             hms_change = 0.0
 
+            # Bei aktiver manueller Einspeisung Hoymiles voll öffnen
+            if feed_in_active and curr_soc >= manual_feed_in_min_soc and solar_p > haus_p:
+                hms_limit_new = 3600.0
             # Unter 90% SOC lassen wir die Hoymiles standardmäßig voll offen (3600W),
             # außer wir speisen ein (>100W) und die Batterie lädt bereits mit maximaler Leistung AC (GS <= -2350W)
-            if curr_soc < 90.0 and not (grid_p_raw < -100 and gs_new_rounded <= -2350):
+            elif curr_soc < 90.0 and not (grid_p_raw < -100 and gs_new_rounded <= -2350):
                 hms_limit_new = 3600.0
             elif grid_p_raw < -50:
                 # Einspeisung: Hoymiles drosseln (mit Anti-Windup durch Baseline-Klemmen auf aktuelle Solarleistung + 100W)
@@ -554,6 +622,9 @@ def main():
 
             # IS Limit der Batterie anpassen
             if low_soc_active:
+                is_target = 10
+            elif feed_in_active and curr_soc >= manual_feed_in_min_soc and solar_p > haus_p:
+                # Batterieentladung sperren während aktiver manueller Einspeisung
                 is_target = 10
             elif curr_soc >= soc_normal_max or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                 if drosseln or (grid_p_raw < -50) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
