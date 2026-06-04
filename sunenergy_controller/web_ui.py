@@ -380,6 +380,18 @@ class UIHandler(BaseHTTPRequestHandler):
         elif self.path == "/state":
             self._json(load_state())
 
+        elif self.path == "/debug_ha":
+            ha_url = "http://supervisor/core/api/states/sensor.hausverbrauch_aktuell"
+            ha_token = os.environ.get("SUPERVISOR_TOKEN", "")
+            try:
+                r = requests.get(ha_url, headers={"Authorization": f"Bearer {ha_token}"}, timeout=5)
+                if r.status_code == 200:
+                    self._json(r.json())
+                else:
+                    self._json({"error": f"HA returned status {r.status_code}", "text": r.text})
+            except Exception as e:
+                self._json({"error": str(e)})
+
         elif self.path == "/api":
             rows = get_csv_data(100)
             self._json({"rows": rows})
