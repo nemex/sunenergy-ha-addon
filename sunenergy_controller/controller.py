@@ -315,6 +315,11 @@ def main():
     save_state(state)
     log.info("Addon gestartet, SA=%s%%, HMS-Limit=%sW", soc_normal_max, state["last_hms_limit"])
 
+    # Lokaler Cache für SunEnergyXT Daten zur Entlastung bei API-Ausfällen (Option C)
+    op_current = 0.0
+    pv_current = float(state.get("pv_last", 0.0))
+    pb_current = 0.0
+
     while True:
         try:
             tick_start = time.monotonic()
@@ -322,9 +327,24 @@ def main():
             # ------------------------------------------------------------------
             # 1. Messwerte lesen
             # ------------------------------------------------------------------            # 1. Messwerte lesen
-            grid_p_raw = float(ha_get_state(grid_sensor, "0") or 0)
-            curr_soc   = float(ha_get_state(soc_sensor, "0") or 0)
-            haus_p     = abs(float(ha_get_state(haus_power_sensor, "0") or 0))
+            grid_val = ha_get_state(grid_sensor)
+            if grid_val not in (None, "unknown", "unavailable"):
+                grid_p_raw = float(grid_val)
+            else:
+                grid_p_raw = float(state.get("grid_p_filtered", 0.0))
+
+            soc_val = ha_get_state(soc_sensor)
+            if soc_val not in (None, "unknown", "unavailable"):
+                curr_soc = float(soc_val)
+                state["soc"] = curr_soc
+            else:
+                curr_soc = float(state.get("soc", 0.0))
+
+            haus_val = ha_get_state(haus_power_sensor)
+            if haus_val not in (None, "unknown", "unavailable"):
+                haus_p = abs(float(haus_val))
+            else:
+                haus_p = float(state.get("haus_p_last", 0.0))
 
             # Hysteresis für niedrigen SOC (Entladeschutz)
             low_soc_active = state.get("low_soc_active", False)
@@ -334,8 +354,17 @@ def main():
                 low_soc_active = False
             state["low_soc_active"] = low_soc_active
 
-            solar_p_2000 = abs(float(ha_get_state(hms_2000_power_sensor, "0") or 0))
-            solar_p_1600 = abs(float(ha_get_state(hms_1600_power_sensor, "0") or 0))
+            solar_2000_val = ha_get_state(hms_2000_power_sensor)
+            if solar_2000_val not in (None, "unknown", "unavailable"):
+                solar_p_2000 = abs(float(solar_2000_val))
+            else:
+                solar_p_2000 = float(state.get("solar_p_2000_last", 0.0))
+
+            solar_1600_val = ha_get_state(hms_1600_power_sensor)
+            if solar_1600_val not in (None, "unknown", "unavailable"):
+                solar_p_1600 = abs(float(solar_1600_val))
+            else:
+                solar_p_1600 = float(state.get("solar_p_1600_last", 0.0))
             
             # Robustes Checken: Wenn Leistung > 10W, ist er online. Ansonsten aus HA lesen.
             hms_2000_online = (ha_get_state(hms_2000_reachable_sensor, "off") == "on") or (solar_p_2000 > 10.0)
@@ -370,9 +399,14 @@ def main():
             # 3. SunEnergyXT Status lesen (OP = aktueller AC-Ausgang)
             # ------------------------------------------------------------------
             se_data = sunenergy_read(sunenergy_ip)
-            op_current = float(se_data.get("OP", 0))
-            pv_current = float(se_data.get("PV", 0))
-            pb_current = float(se_data.get("BP", 0))
+            if se_data:
+                op_current = float(se_data.get("OP", 0))
+                pv_current = float(se_data.get("PV", 0))
+                pb_current = float(se_data.get("BP", 0))
+            else:
+                log.warning("SunEnergyXT API nicht erreichbar, verwende letzte Werte (OP=%.1fW, PV=%.1fW, BP=%.1fW)", 
+                            op_current, pv_current, pb_current)
+            
             state["soc"] = curr_soc
             state["pv_last"] = pv_current
 
@@ -725,6 +759,8 @@ def main():
             state["solar_p_last"]    = solar_p
             state["haus_p_last"]     = haus_p
             state["last_gs"]         = gs_new
+            state["solar_p_2000_last"] = solar_p_2000
+            state["solar_p_1600_last"] = solar_p_1600
             save_state(state)
 
         except Exception as e:

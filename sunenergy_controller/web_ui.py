@@ -380,8 +380,12 @@ class UIHandler(BaseHTTPRequestHandler):
         elif self.path == "/state":
             self._json(load_state())
 
-        elif self.path == "/debug_ha":
-            ha_url = "http://supervisor/core/api/states/sensor.hausverbrauch_aktuell"
+        elif self.path.startswith("/debug_ha"):
+            import urllib.parse
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            entity = query.get("entity", ["sensor.hausverbrauch_aktuell"])[0]
+            ha_url = f"http://supervisor/core/api/states/{entity}"
             ha_token = os.environ.get("SUPERVISOR_TOKEN", "")
             try:
                 r = requests.get(ha_url, headers={"Authorization": f"Bearer {ha_token}"}, timeout=5)
