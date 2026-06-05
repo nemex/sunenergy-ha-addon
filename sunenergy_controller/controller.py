@@ -624,10 +624,6 @@ def main():
             # Bei aktiver manueller Einspeisung Hoymiles voll öffnen
             if is_actively_feeding_in:
                 hms_limit_new = 3600.0
-            # Unter 90% SOC lassen wir die Hoymiles standardmäßig voll offen (3600W),
-            # außer wir speisen ein (>100W) und die Batterie lädt bereits mit maximaler Leistung AC (GS <= -2350W)
-            elif curr_soc < 90.0 and not (grid_error < -100 and gs_new_rounded <= -2350):
-                hms_limit_new = 3600.0
             elif grid_error < -50:
                 # Einspeisung: Hoymiles drosseln (mit Anti-Windup durch Baseline-Klemmen auf aktuelle Solarleistung + 100W)
                 hms_limit_baseline = min(hms_limit_last, solar_p + 100.0)
@@ -671,7 +667,7 @@ def main():
                 # Während aktiver manueller Einspeisung darf die Batterie maximal ihre eigene PV-Leistung abgeben,
                 # um ein Entladen der Batterie-Zellen ins Netz zu verhindern.
                 is_target = pv_current
-            elif curr_soc >= soc_normal_max or ((gs_new_rounded < -200) and (pb_current < 150.0)):
+            elif curr_soc >= (soc_normal_max - 3.0) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                 if drosseln or (grid_error < -50) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                     # Wenn die Hoymiles gedrosselt sind ODER wir aktuell einspeisen ODER die Batterie
                     # die Ladung verweigert (BMS voll/gesperrt), darf die Batterie nur maximal ihre eigene
@@ -690,6 +686,13 @@ def main():
             # Runden auf 10W-Schritte und Grenzwerte einhalten (10 bis 2400W)
             is_target = round(is_target / 10) * 10
             is_target = max(10, min(2400, is_target))
+            
+            # Sanfter Anstieg (Rate-Limit) um max +500W pro Tick, um Firmware-Spikes beim Entdrosseln zu verhindern
+            is_last = float(state.get("last_is", 2400.0))
+            if is_target > is_last:
+                is_target = min(is_target, is_last + 500.0)
+                is_target = round(is_target / 10) * 10
+                
             state["last_is"] = is_target
 
             # Direkt ans Gerät schreiben (nur bei Änderungen)
