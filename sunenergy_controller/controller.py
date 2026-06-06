@@ -633,7 +633,7 @@ def main():
             elif grid_error > 50:
                 # Bezug: Hoymiles freigeben (mehr erzeugen lassen)
                 hms_change = grid_error * 0.5
-                hms_change = max(-400.0, min(400.0, hms_change))
+                hms_change = max(-400.0, min(800.0, hms_change))
                 hms_limit_new = hms_limit_last + hms_change
             elif curr_soc < soc_normal_max:
                 # Akku nicht voll und keine Abweichung vom Sollwert: stufenlos regeln
@@ -687,10 +687,10 @@ def main():
             is_target = round(is_target / 10) * 10
             is_target = max(10, min(2400, is_target))
             
-            # Sanfter Anstieg (Rate-Limit) um max +500W pro Tick, um Firmware-Spikes beim Entdrosseln zu verhindern
+            # Sanfter Anstieg (Rate-Limit) um max +1000W pro Tick, um Firmware-Spikes beim Entdrosseln zu verhindern
             is_last = float(state.get("last_is", 2400.0))
             if is_target > is_last:
-                is_target = min(is_target, is_last + 500.0)
+                is_target = min(is_target, is_last + 1000.0)
                 is_target = round(is_target / 10) * 10
                 
             state["last_is"] = is_target
