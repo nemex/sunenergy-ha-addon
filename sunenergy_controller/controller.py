@@ -340,11 +340,7 @@ def main():
             else:
                 curr_soc = float(state.get("soc", 0.0))
 
-            haus_val = ha_get_state(haus_power_sensor)
-            if haus_val not in (None, "unknown", "unavailable"):
-                haus_p = abs(float(haus_val))
-            else:
-                haus_p = float(state.get("haus_p_last", 0.0))
+            # (Hausverbrauch wird weiter unten lokal und verzögerungsfrei berechnet)
 
             # Hysteresis für niedrigen SOC (Entladeschutz)
             low_soc_active = state.get("low_soc_active", False)
@@ -409,6 +405,11 @@ def main():
             
             state["soc"] = curr_soc
             state["pv_last"] = pv_current
+
+            # Berechne den Hausverbrauch lokal und verzögerungsfrei (ohne den trägen Shelly 1PM)
+            # battery_ac_est ist positiv bei Entladung (OP) und negativ bei Ladung (-BP)
+            battery_ac_est = op_current if op_current > 5.0 else -pb_current
+            haus_p = max(0.0, grid_p_raw + solar_p + battery_ac_est)
 
             # ------------------------------------------------------------------
             # 3b. Manuelle Einspeisung prüfen und integrieren
