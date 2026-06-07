@@ -551,15 +551,27 @@ def main():
                 gs_new = max(-2400, min(2400, gs_new))
                 
                 gs_new_rounded = round(gs_new / 10) * 10
+                
+                device_payload_night = {}
+                if state.get("last_device_gs") != gs_new_rounded:
+                    device_payload_night["GS"] = gs_new_rounded
+                    state["last_device_gs"] = gs_new_rounded
+                
+                is_target_night = 10 if low_soc_active else 2400
+                if state.get("last_device_is") != is_target_night:
+                    device_payload_night["IS"] = is_target_night
+                    state["last_device_is"] = is_target_night
+                    
+                if state.get("last_device_mm") != 0:
+                    device_payload_night["MM"] = 0
+                    state["last_device_mm"] = 0
+                    
+                if device_payload_night:
+                    sunenergy_write(sunenergy_ip, device_payload_night)
+
                 if state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_new_rounded) >= 10:
                     ha_set_number(gs_entity, gs_new_rounded)
                     state["last_gs_written"] = gs_new_rounded
-
-                # IS nachts regeln (Sicherheits-Drosselung bei leerem Akku)
-                is_target_night = 10 if low_soc_active else 2400
-                if state.get("last_device_is") != is_target_night:
-                    sunenergy_write(sunenergy_ip, {"IS": is_target_night})
-                    state["last_device_is"] = is_target_night
 
                 log.info("Nacht: Aktive Regelung (MM=0) | GS=%dW IS=%dW | grid=%.0fW haus=%.0fW SOC=%.0f%%",
                          gs_new_rounded, is_target_night, grid_p_raw, haus_p, curr_soc)
@@ -712,6 +724,9 @@ def main():
             if state.get("last_device_mm") != 0:
                 device_payload["MM"] = 0
                 state["last_device_mm"] = 0
+            if state.get("last_device_gs") != gs_new_rounded:
+                device_payload["GS"] = gs_new_rounded
+                state["last_device_gs"] = gs_new_rounded
                 
             if device_payload:
                 sunenergy_write(sunenergy_ip, device_payload)
