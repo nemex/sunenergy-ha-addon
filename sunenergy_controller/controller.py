@@ -626,11 +626,20 @@ def main():
             if is_actively_feeding_in:
                 hms_limit_new = 3600.0
             elif grid_error < -50:
-                # Einspeisung: Hoymiles drosseln (mit Anti-Windup durch Baseline-Klemmen auf aktuelle Solarleistung + 100W)
-                hms_limit_baseline = min(hms_limit_last, solar_p + 100.0)
-                hms_change = grid_error * 0.5
-                hms_change = max(-400.0, min(400.0, hms_change))
-                hms_limit_new = hms_limit_baseline + hms_change
+                # Priorisierung: Akku-Entladung reduzieren vor Hoymiles-Drosselung
+                # Der Akku kann seine Entladung reduzieren, wenn der Sollwert positiv ist
+                # und die aktuelle Entladung über dem solaren Zufluss (PV) liegt.
+                battery_can_reduce_discharge = (gs_new_rounded > 0) and (op_current > pv_current + 20.0)
+                if battery_can_reduce_discharge:
+                    # Der Akku kann die Drosselung über die Reduzierung seiner Entladung abfangen.
+                    # Wir drosseln die Hoymiles noch nicht, sondern lassen das Limit unverändert.
+                    hms_limit_new = hms_limit_last
+                else:
+                    # Einspeisung: Hoymiles drosseln (mit Anti-Windup durch Baseline-Klemmen auf aktuelle Solarleistung + 100W)
+                    hms_limit_baseline = min(hms_limit_last, solar_p + 100.0)
+                    hms_change = grid_error * 0.5
+                    hms_change = max(-400.0, min(400.0, hms_change))
+                    hms_limit_new = hms_limit_baseline + hms_change
             elif grid_error > 50:
                 # Bezug: Hoymiles freigeben (mehr erzeugen lassen)
                 hms_change = grid_error * 0.5
@@ -677,8 +686,7 @@ def main():
                     is_target = min(pv_current, restbedarf)
                 else:
                     # Wenn die Hoymiles voll offen sind und nicht ausreichen, liefert die Batterie den Rest
-                    restbedarf = max(0, int(haus_p - solar_p))
-                    is_target = restbedarf + 200
+                    is_target = 2400
             else:
                 # Normaler Betrieb: IS voll freigeben (2400W), damit der GS-Regler
                 # die Nulleinspeisung ohne harten Limit-Konflikt (Wind-up) ausregeln kann
