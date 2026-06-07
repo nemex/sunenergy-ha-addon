@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.0
+SunEnergy XT Controller v1.8.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -311,6 +311,12 @@ def main():
     if "manual_feed_in_accumulated_kwh" not in state:
         state["manual_feed_in_accumulated_kwh"] = 0.0
 
+    # Fix #4: Device-State explizit auf None setzen damit der erste Tick
+    # immer schreibt (None != jeder Wert → Write-Bedingung immer True)
+    state["last_device_gs"] = None
+    state["last_device_mm"] = None
+    state["last_device_is"] = None
+
     state["active_mode"] = "night"
     save_state(state)
     log.info("Addon gestartet, SA=%s%%, HMS-Limit=%sW", soc_normal_max, state["last_hms_limit"])
@@ -501,6 +507,10 @@ def main():
                 ha_set_number(sa_entity, 100)
                 ha_switch(mm_switch, False)
                 ha_set_number(gs_entity, -2400)
+                # Fix #1: GS auch direkt ans Gerät schreiben (nicht nur HA)
+                sunenergy_write(sunenergy_ip, {"GS": -2400, "MM": 0})
+                state["last_device_gs"] = -2400
+                state["last_device_mm"] = 0
                 time.sleep(TICK_S)
                 continue
 
@@ -511,7 +521,11 @@ def main():
                 ha_set_number(sa_entity, soc_normal_max)
                 ha_switch(mm_switch, True)
                 ha_set_number(gs_entity, 0)
-                sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max), "IS": 2400})
+                sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
+                # Fix #2+#5: State zurücksetzen damit nächster Tick alle Werte neu schreibt
+                state["last_device_gs"] = None
+                state["last_device_mm"] = None
+                state["last_device_is"] = None
                 save_state(state)
                 time.sleep(TICK_S)
                 continue
@@ -539,6 +553,9 @@ def main():
                     state["active_mode"] = "night"
                     state["last_device_mm"] = 0
                     state["last_device_is"] = 2400
+                    # Fix #3: last_device_gs auf None → erster GS-Write im Nachtmodus
+                    # wird nicht übersprungen
+                    state["last_device_gs"] = None
                     state["last_hms_2000_lim"] = 2000
                     state["last_hms_1600_lim"] = 1600
                     state["last_hms_limit"] = 3600.0
@@ -648,7 +665,9 @@ def main():
                     hms_limit_new = hms_limit_last
                 else:
                     # Einspeisung: Hoymiles drosseln (mit Anti-Windup durch Baseline-Klemmen auf aktuelle Solarleistung + 100W)
-                    hms_limit_baseline = min(hms_limit_last, solar_p + 100.0)
+                    # Fix #8: Baseline nicht unter 300W fallen lassen — verhindert zu aggressives
+                    # Drosseln bei plötzlichem Wolkendurchgang (solar_p ≈ 0)
+                    hms_limit_baseline = max(300.0, min(hms_limit_last, solar_p + 100.0))
                     hms_change = grid_error * 0.5
                     hms_change = max(-400.0, min(400.0, hms_change))
                     hms_limit_new = hms_limit_baseline + hms_change
