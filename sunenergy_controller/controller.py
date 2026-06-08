@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v1.8.9
+SunEnergy XT Controller v1.9.0
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -314,7 +314,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v1.8.9 startet...")
+    log.info("SunEnergy XT Controller v1.9.0 startet...")
     opts  = load_options()
     state = load_state()
 
@@ -560,9 +560,22 @@ def main():
             sun_above = get_sun_state().get("state") == "above_horizon"
 
             # ------------------------------------------------------------------
-            # 5. Zwangsladung prüfen
+            # 5. Zwangsladung prüfen und Ladelimit (SA) anpassen
             # ------------------------------------------------------------------
             tage_seit = (time.time() - state["last_calibration_ts"]) / 86400
+            
+            # Kalibrierungs-Ladelimit bestimmen: 100% wenn fällig (erlaubt solares Laden), sonst soc_normal_max
+            target_sa = 100 if tage_seit > calib_days else soc_normal_max
+            if state.get("last_written_sa") != target_sa:
+                log.info("Setze Ladelimit SA auf %d%% (Kalibrierung fällig: %s)", target_sa, "Ja" if tage_seit > calib_days else "Nein")
+                ha_set_number(sa_entity, target_sa)
+                sunenergy_write(sunenergy_ip, {"SA": int(target_sa)})
+                state["last_written_sa"] = target_sa
+                save_state(state)
+
+            # Verwende target_sa (100 oder 95) als dynamische SOC-Grenze in der Regelung
+            soc_max_limit = float(target_sa)
+
             zwangsladung_trigger = (
                 tage_seit > calib_days
                 and not sun_above
@@ -594,6 +607,7 @@ def main():
                 ha_switch(mm_switch, True)
                 ha_set_number(gs_entity, 0)
                 sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
+                state["last_written_sa"] = soc_normal_max
                 # Fix #2+#5: State zurücksetzen damit nächster Tick alle Werte neu schreibt
                 state["last_device_gs"] = None
                 state["last_device_mm"] = None
@@ -754,7 +768,7 @@ def main():
                 hms_change = grid_error * 0.5
                 hms_change = max(-400.0, min(800.0, hms_change))
                 hms_limit_new = hms_limit_last + hms_change
-            elif curr_soc < soc_normal_max:
+            elif curr_soc < soc_max_limit:
                 # Akku nicht voll und keine Abweichung vom Sollwert: stufenlos regeln
                 # um Überschwingen/Oszillationen nahe der Vollladung zu verhindern.
                 if solar_p >= hms_limit_last - 100:
@@ -786,7 +800,7 @@ def main():
                 # Während aktiver manueller Einspeisung darf die Batterie maximal ihre eigene PV-Leistung abgeben,
                 # um ein Entladen der Batterie-Zellen ins Netz zu verhindern.
                 is_target = pv_current
-            elif curr_soc >= (soc_normal_max - 3.0) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
+            elif curr_soc >= (soc_max_limit - 3.0) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                 if drosseln or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                     # Wenn die Hoymiles gedrosselt sind ODER die Batterie
                     # die Ladung verweigert (BMS voll/gesperrt), darf die Batterie nur maximal ihre eigene
