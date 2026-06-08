@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v1.8.4
+SunEnergy XT Controller v1.8.5
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -165,6 +165,33 @@ def ha_switch(entity_id: str, turn_on: bool) -> bool:
         return r.status_code in (200, 201)
     except Exception as e:
         log.error("HA SWITCH %s: %s", entity_id, e)
+        return False
+
+def ha_push_sensor(entity_id: str, value: float, unit: str = "W", device_class: str = "power", friendly_name: str = "") -> bool:
+    """Schreibt einen berechneten Wert als virtuellen HA-Sensor (POST /api/states).
+    Kein input_number nötig — HA akzeptiert beliebige entity_ids über die REST API.
+    Der Sensor bleibt bis zum nächsten HA-Neustart erhalten."""
+    if DRY_RUN:
+        return True
+    try:
+        payload = {
+            "state": str(round(value, 1)),
+            "attributes": {
+                "unit_of_measurement": unit,
+                "device_class": device_class,
+                "state_class": "measurement",
+                "friendly_name": friendly_name or entity_id,
+            }
+        }
+        r = requests.post(
+            f"{HA_URL}/api/states/{entity_id}",
+            headers={"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=5,
+        )
+        return r.status_code in (200, 201)
+    except Exception as e:
+        log.debug("ha_push_sensor %s: %s", entity_id, e)
         return False
 
 # ---------------------------------------------------------------------------
@@ -612,6 +639,12 @@ def main():
                     "hms_1600_lim": 1600,
                 })
 
+                # v1.8.5: Berechnete Werte als virtuelle HA-Sensoren pushen
+                ha_push_sensor("sensor.sunenergy_hausverbrauch",  haus_p,      "W", "power",  "Hausverbrauch (Controller)")
+                ha_push_sensor("sensor.sunenergy_grid_p",         grid_p_raw,  "W", "power",  "Netz aktuell (Controller)")
+                ha_push_sensor("sensor.sunenergy_solar_p",        solar_p,     "W", "power",  "Solar gesamt (Controller)")
+                ha_push_sensor("sensor.sunenergy_battery_ac",     battery_ac_est, "W", "power", "Batterie AC (Controller)")
+
                 state["grid_p_filtered"] = grid_p_raw
                 state["last_gs"]         = gs_new
                 save_state(state)
@@ -798,6 +831,12 @@ def main():
                 "hms_2000_lim": round(limit_2000, 0),
                 "hms_1600_lim": round(limit_1600, 0),
             })
+
+            # v1.8.5: Berechnete Werte als virtuelle HA-Sensoren pushen
+            ha_push_sensor("sensor.sunenergy_hausverbrauch",  haus_p,      "W", "power",  "Hausverbrauch (Controller)")
+            ha_push_sensor("sensor.sunenergy_grid_p",         grid_p_raw,  "W", "power",  "Netz aktuell (Controller)")
+            ha_push_sensor("sensor.sunenergy_solar_p",        solar_p,     "W", "power",  "Solar gesamt (Controller)")
+            ha_push_sensor("sensor.sunenergy_battery_ac",     battery_ac_est, "W", "power", "Batterie AC (Controller)")
 
             # last_hms_2000/1600_lim werden jetzt nur noch bei echten Schreibbefehlen aktualisiert (drift-safe)
 
