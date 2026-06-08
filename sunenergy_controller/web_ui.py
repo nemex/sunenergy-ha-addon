@@ -214,7 +214,13 @@ const powerChart = makeChart('chart-power', [
 ], 'Watt');
 
 function updateCards(state, csv) {
-  const mode = state.active_mode || 'night';
+  let mode = state.active_mode || 'night';
+  // soc_full: wenn aktiv geregelt UND Akku voll (>= soc_normal_max), zeige "SOC VOLL"
+  const socNow = parseFloat(csv.soc !== undefined ? csv.soc : (state.soc || 0));
+  const socMax = parseFloat(state.soc_normal_max || 95);
+  if (mode === 'active' && socNow >= socMax) {
+    mode = 'soc_full';
+  }
   const el = document.getElementById('c-mode');
   el.textContent = { active: 'AKTIV REGELND', soc_full: 'SOC VOLL (IS)', night: 'NACHT', calibration: 'ZWANGSLADUNG', feed_in: 'EINSPEISUNG AKTIV', feed_in_standby: 'EINSPEISUNG STANDBY' }[mode] || mode.toUpperCase();
   el.className = 'mode ' + mode;
@@ -357,6 +363,10 @@ class UIHandler(BaseHTTPRequestHandler):
 
         if self.path == "/meter":
             power = get_shelly_power(shelly_ip)
+            # Hinweis: Der Shelly Pro 3EM liefert hier nur total_act_power.
+            # Phasen-Ströme/-Aufteilung sind NICHT bekannt — daher bewusst 0.0
+            # (= unbekannt) statt erfundener Werte. Leistung wird gleichmäßig
+            # auf 3 Phasen verteilt nur für die Anzeige.
             meter_data = {
                 "id": 0,
                 "total_act_power": round(power, 1),
@@ -378,23 +388,13 @@ class UIHandler(BaseHTTPRequestHandler):
             self.wfile.write(HTML.encode())
 
         elif self.path == "/state":
-            self._json(load_state())
-
-        elif self.path.startswith("/debug_ha"):
-            import urllib.parse
-            parsed = urllib.parse.urlparse(self.path)
-            query = urllib.parse.parse_qs(parsed.query)
-            entity = query.get("entity", ["sensor.hausverbrauch_aktuell"])[0]
-            ha_url = f"http://supervisor/core/api/states/{entity}"
-            ha_token = os.environ.get("SUPERVISOR_TOKEN", "")
+            st = load_state()
+            # soc_normal_max aus Optionen mitgeben, damit das Frontend "SOC voll" erkennt
             try:
-                r = requests.get(ha_url, headers={"Authorization": f"Bearer {ha_token}"}, timeout=5)
-                if r.status_code == 200:
-                    self._json(r.json())
-                else:
-                    self._json({"error": f"HA returned status {r.status_code}", "text": r.text})
-            except Exception as e:
-                self._json({"error": str(e)})
+                st["soc_normal_max"] = float(opts.get("soc_normal_max", 95))
+            except Exception:
+                st["soc_normal_max"] = 95
+            self._json(st)
 
         elif self.path == "/api":
             rows = get_csv_data(100)

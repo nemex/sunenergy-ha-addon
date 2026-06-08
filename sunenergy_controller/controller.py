@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v1.8.6
+SunEnergy XT Controller v1.8.7
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -76,6 +76,26 @@ CSV_FIELDS = [
     "hms_2000_lim", "hms_1600_lim"
 ]
 
+CSV_MAX_BYTES = 2 * 1024 * 1024   # 2 MB
+CSV_KEEP_LINES = 2000             # Datenzeilen, die beim Trimmen erhalten bleiben
+
+def trim_csv(path: str, keep_lines: int = CSV_KEEP_LINES):
+    """Kürzt die CSV auf die letzten keep_lines Datenzeilen (Header bleibt erhalten),
+    sobald sie zu groß wird. Verhindert unbegrenztes Wachstum / RAM-Bloat."""
+    try:
+        with open(path, "r", newline="") as f:
+            lines = f.readlines()
+        if len(lines) <= keep_lines + 1:
+            return
+        header = lines[0]
+        tail = lines[-keep_lines:]
+        with open(path, "w", newline="") as f:
+            f.write(header)
+            f.writelines(tail)
+        log.info("CSV gekürzt auf letzte %d Zeilen (war zu groß).", keep_lines)
+    except Exception as e:
+        log.debug("trim_csv Fehler: %s", e)
+
 def csv_log(row: dict):
     try:
         write_header = not os.path.exists(CSV_PATH)
@@ -94,6 +114,9 @@ def csv_log(row: dict):
             if write_header:
                 w.writeheader()
             w.writerow(row)
+        # Nach dem Schreiben: nur wenn Datei zu groß, kürzen (billiger getsize-Check)
+        if os.path.getsize(CSV_PATH) > CSV_MAX_BYTES:
+            trim_csv(CSV_PATH)
     except Exception as e:
         log.debug("CSV log Fehler: %s", e)
 
@@ -102,7 +125,9 @@ def csv_log(row: dict):
 # ---------------------------------------------------------------------------
 HA_URL   = "http://supervisor/core"
 HA_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
-DRY_RUN  = False
+# Sicherer Default: Bis main() die Option geladen hat, wird NICHTS geschrieben.
+# Wird in main() aus den Optionen überschrieben.
+DRY_RUN  = True
 
 def ha_get_state(entity_id: str, default=None):
     try:
@@ -273,11 +298,11 @@ def calc_hms_limits(
     limit_1600 = 0.0
 
     if hms_2000_online:
-        limit_2000 = min(int(hms_limit_target * ratio_2000), max_2000)
+        limit_2000 = min(round(hms_limit_target * ratio_2000), max_2000)
         limit_2000 = max(0.0, limit_2000)
 
     if hms_1600_online:
-        limit_1600 = min(int(hms_limit_target * ratio_1600), max_1600)
+        limit_1600 = min(round(hms_limit_target * ratio_1600), max_1600)
         limit_1600 = max(0.0, limit_1600)
 
     return limit_2000, limit_1600
@@ -289,7 +314,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.0 startet...")
+    log.info("SunEnergy XT Controller v1.8.7 startet...")
     opts  = load_options()
     state = load_state()
 
@@ -359,12 +384,13 @@ def main():
 
             # ------------------------------------------------------------------
             # 1. Messwerte lesen
-            # ------------------------------------------------------------------            # 1. Messwerte lesen
+            # ------------------------------------------------------------------
             grid_val = ha_get_state(grid_sensor)
             if grid_val not in (None, "unknown", "unavailable"):
                 grid_p_raw = float(grid_val)
             else:
                 grid_p_raw = float(state.get("grid_p_filtered", 0.0))
+                log.warning("Grid-Sensor (%s) offline — verwende letzten Wert %.0fW", grid_sensor, grid_p_raw)
 
             soc_val = ha_get_state(soc_sensor)
             if soc_val not in (None, "unknown", "unavailable"):
@@ -372,8 +398,7 @@ def main():
                 state["soc"] = curr_soc
             else:
                 curr_soc = float(state.get("soc", 0.0))
-
-            # (Hausverbrauch wird weiter unten lokal und verzögerungsfrei berechnet)
+                log.warning("SOC-Sensor (%s) offline — verwende letzten Wert %.0f%%", soc_sensor, curr_soc)
 
             # Hysteresis für niedrigen SOC (Entladeschutz)
             low_soc_active = state.get("low_soc_active", False)
@@ -388,12 +413,14 @@ def main():
                 solar_p_2000 = abs(float(solar_2000_val))
             else:
                 solar_p_2000 = float(state.get("solar_p_2000_last", 0.0))
+                log.debug("HMS-2000 Power-Sensor offline — verwende letzten Wert %.0fW", solar_p_2000)
 
             solar_1600_val = ha_get_state(hms_1600_power_sensor)
             if solar_1600_val not in (None, "unknown", "unavailable"):
                 solar_p_1600 = abs(float(solar_1600_val))
             else:
                 solar_p_1600 = float(state.get("solar_p_1600_last", 0.0))
+                log.debug("HMS-1600 Power-Sensor offline — verwende letzten Wert %.0fW", solar_p_1600)
             
             # Robustes Checken: Wenn Leistung > 10W, ist er online. Ansonsten aus HA lesen.
             hms_2000_online = (ha_get_state(hms_2000_reachable_sensor, "off") == "on") or (solar_p_2000 > 10.0)
@@ -417,10 +444,20 @@ def main():
             # 2. Sicherheits-Stopp
             # ------------------------------------------------------------------
             if not watchdog_ok:
-                log.warning("Watchdog Fehler! Sicherheits-Stopp.")
+                log.warning("Watchdog Fehler! Grid-Sensor offline — Sicherheits-Stopp (IS=10, MM=1).")
                 ha_switch(mm_switch, True)
                 ha_set_number(gs_entity, 0)
-                sunenergy_write(sunenergy_ip, {"IS": 2400, "MM": 1, "GS": 0})
+                # Grid-Sensor tot: aktive Nulleinspeisung nicht mehr moeglich.
+                # MM=1 -> Geraet regelt selbst. IS=10 stoppt die Entladung konservativ
+                # (vermeidet zugleich den Firmware-IS=0-Spike). Sicherheit vor Eigenverbrauch.
+                sunenergy_write(sunenergy_ip, {"IS": 10, "MM": 1, "GS": 0})
+                # Device-State-Cache leeren: nach Erholung schreibt der naechste Tick
+                # alle Werte garantiert neu (kein faelschliches Ueberspringen).
+                state["last_device_gs"] = None
+                state["last_device_mm"] = None
+                state["last_device_is"] = None
+                state["last_gs_written"] = None
+                save_state(state)
                 time.sleep(TICK_S)
                 continue
 
