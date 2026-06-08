@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "1.8.8"
+version: "1.8.9"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -17,7 +17,6 @@ boot: auto
 homeassistant_api: true
 hassio_api: true
 host_network: false
-init: false
 ports:
   8765/tcp: 8765
 ports_description:

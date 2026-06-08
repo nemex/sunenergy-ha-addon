@@ -1,8 +1,6 @@
-ARG BUILD_FROM
-FROM $BUILD_FROM
+FROM python:3.11-alpine
 
-# bash wird für 'wait -n' in run.sh benötigt (im HA-Base-Image meist vorhanden,
-# zur Sicherheit hier explizit installiert).
+# bash wird für 'wait -n' in run.sh benötigt.
 RUN apk add --no-cache bash \
     && pip3 install --no-cache-dir requests
 
