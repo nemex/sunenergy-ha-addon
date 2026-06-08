@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v1.8.5
+SunEnergy XT Controller v1.8.6
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -440,8 +440,16 @@ def main():
             state["pv_last"] = pv_current
 
             # Berechne den Hausverbrauch lokal und verzögerungsfrei (ohne den trägen Shelly 1PM)
-            # battery_ac_est ist positiv bei Entladung (OP) und negativ bei Ladung (-BP)
-            battery_ac_est = op_current if op_current > 5.0 else -pb_current
+            # Entladung: OP ist der echte AC-Ausgang (direkt vom Gerät)
+            # Ladung:    BP (DC Batterieleistung) enthält AUCH den PV-DC-Anteil.
+            #            Echter AC-Bezug aus dem Haus = (BP − PV) / Wirkungsgrad
+            #            Wirkungsgrad Wechselrichter/Ladegerät ≈ 0.9
+            SE_CHARGER_EFF = 0.9
+            if op_current > 5.0:
+                battery_ac_est = op_current                                    # Entladung: positiv
+            else:
+                dc_from_ac = max(0.0, pb_current - pv_current)                 # DC-Anteil der aus AC kommt
+                battery_ac_est = -(dc_from_ac / SE_CHARGER_EFF)               # Ladung: negativ (AC-Bezug)
             haus_p = max(0.0, grid_p_raw + solar_p + battery_ac_est)
 
             # ------------------------------------------------------------------
