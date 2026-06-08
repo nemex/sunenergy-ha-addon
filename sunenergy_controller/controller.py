@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v1.9.0
+SunEnergy XT Controller v1.9.1
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -18,7 +18,7 @@ import logging
 import os
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -314,7 +314,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v1.9.0 startet...")
+    log.info("SunEnergy XT Controller v1.9.1 startet...")
     opts  = load_options()
     state = load_state()
 
@@ -564,10 +564,20 @@ def main():
             # ------------------------------------------------------------------
             tage_seit = (time.time() - state["last_calibration_ts"]) / 86400
             
+            # Kalibrierungs-Fälligkeit prüfen (Ziel: 10:00 Uhr des Ziel-Tages)
+            try:
+                last_cal_dt = datetime.fromtimestamp(state["last_calibration_ts"])
+                target_dt = last_cal_dt + timedelta(days=calib_days)
+                target_10am = target_dt.replace(hour=10, minute=0, second=0, microsecond=0)
+                calibration_due = datetime.now() >= target_10am
+            except Exception as e:
+                log.error("Fehler bei Kalibrierungszeit-Berechnung: %s", e)
+                calibration_due = tage_seit > calib_days
+
             # Kalibrierungs-Ladelimit bestimmen: 100% wenn fällig (erlaubt solares Laden), sonst soc_normal_max
-            target_sa = 100 if tage_seit > calib_days else soc_normal_max
+            target_sa = 100 if calibration_due else soc_normal_max
             if state.get("last_written_sa") != target_sa:
-                log.info("Setze Ladelimit SA auf %d%% (Kalibrierung fällig: %s)", target_sa, "Ja" if tage_seit > calib_days else "Nein")
+                log.info("Setze Ladelimit SA auf %d%% (Kalibrierung fällig: %s)", target_sa, "Ja" if calibration_due else "Nein")
                 ha_set_number(sa_entity, target_sa)
                 sunenergy_write(sunenergy_ip, {"SA": int(target_sa)})
                 state["last_written_sa"] = target_sa
@@ -577,7 +587,7 @@ def main():
             soc_max_limit = float(target_sa)
 
             zwangsladung_trigger = (
-                tage_seit > calib_days
+                calibration_due
                 and not sun_above
                 and curr_soc < 100
                 and state["active_mode"] != "calibration"
