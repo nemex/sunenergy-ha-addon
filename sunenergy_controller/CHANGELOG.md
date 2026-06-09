@@ -2,10 +2,12 @@
 
 ## v1.9.2
 - **Ingress-Support**: Web-UI direkt in der HA-Sidebar (auch remote via Nabu Casa).
-- **Shelly-Direkt-Fallback**: Holt Grid-Daten bei HA-API-Störungen direkt vom Shelly.
-- **Hardware-Schonung**: Throttled State-Saving schont die SD-Karte/SSD.
+- **Shelly-Direkt-Fallback**: Holt Grid-Daten bei HA-API-Störungen direkt vom Shelly (vermeidet Fehl-Safety-Stopps).
+- **Zwangsladung Spam-Schutz**: Schreibt GS- und MM-Werte nur bei Eintritt/Änderung (schont den Geräte-Flash des SunEnergyXT).
+- **Hardware-Schonung**: Throttled State-Saving schont die SD-Karte/SSD durch selteneres Schreiben des Zustands.
 - **Sauberer Shutdown**: Übergibt Steuerung bei Addon-Stopp an die Geräte-Selbstregelung.
 - **Persistent HTTP-Sessions**: Reduziert Latenz durch Keep-Alive-Verbindungen.
+- **Stabilitäts- & Web-Fixes**: Supervisor-Watchdog für `/state`, Threading-Webserver (kein Blockieren bei Shelly-Timeout), `/log/delete` auf POST beschränkt (Schutz vor Browser-Prefetching).
 
 ## v1.9.1
 - **Morgendliche Kalibrierung**: Kalibrierung wird am Fälligkeitstag ab 10:00 Uhr freigegeben, um die Sonnenstunden maximal zu nutzen.
