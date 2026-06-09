@@ -1,0 +1,33 @@
+# Changelog
+
+## v1.9.2
+- **Ingress-Support**: Web-UI direkt in der HA-Sidebar (auch remote via Nabu Casa).
+- **Shelly-Direkt-Fallback**: Holt Grid-Daten bei HA-API-Störungen direkt vom Shelly.
+- **Hardware-Schonung**: Throttled State-Saving schont die SD-Karte/SSD.
+- **Sauberer Shutdown**: Übergibt Steuerung bei Addon-Stopp an die Geräte-Selbstregelung.
+- **Persistent HTTP-Sessions**: Reduziert Latenz durch Keep-Alive-Verbindungen.
+
+## v1.9.1
+- **Morgendliche Kalibrierung**: Kalibrierung wird am Fälligkeitstag ab 10:00 Uhr freigegeben, um die Sonnenstunden maximal zu nutzen.
+
+## v1.9.0
+- **Solare Kalibrierung**: Erhöht das Ladelimit tagsüber auf 100 % für kostenloses Laden mit PV-Überschuss. Netzladung dient nur noch als Nacht-Backup.
+
+## v1.8.9
+- **API-Fix**: Wechsel zurück zu `python:3.11-alpine` löst den *401 Unauthorized* Fehler der HA-API.
+
+## v1.8.8
+- **Boot-Fix**: Deaktivierung des Init-Systems löst die s6-overlay PID-1 Endlosschleife.
+
+## v1.8.7
+- **Inverter-Schutz**: Sanfter Anstieg (+1000W pro Tick) verhindert Firmware-Spikes beim Entdrosseln.
+- **Stabilitäts-Fix**: run.sh überwacht beide Prozesse (`wait -n`) für sauberen Container-Neustart.
+
+## v1.8.6
+- **Verbrauchs-Fix**: Korrektur der Hausverbrauchs-Berechnung während der Akku-Ladung.
+
+## v1.8.5
+- **Virtuelle HA-Sensoren**: Pusht berechnete Werte alle 5s direkt als native HA-Entitäten.
+
+## v1.8.4
+- **Bugfixes**: Behebt Probleme beim Initial-Write, Kalibrierungs-Direkt-Write, Moduswechsel-Reset und setzt HMS-Baseline-Boden auf 300W.
