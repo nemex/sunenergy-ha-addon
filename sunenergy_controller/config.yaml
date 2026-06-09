@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "1.9.1"
+version: "1.9.2"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -17,10 +17,17 @@ boot: auto
 homeassistant_api: true
 hassio_api: true
 host_network: false
+# v1.9.2: Web UI direkt in der HA-Sidebar (auch remote via Nabu Casa, ohne Port-Freigabe)
+ingress: true
+ingress_port: 8765
+panel_icon: mdi:solar-power-variant
+panel_title: SunEnergy XT
+# v1.9.2: Supervisor startet das Add-on neu, wenn die Web UI nicht mehr antwortet
+watchdog: "http://[HOST]:[PORT:8765]/state"
 ports:
   8765/tcp: 8765
 ports_description:
-  8765/tcp: Web UI
+  8765/tcp: Web UI (direkter Zugriff, optional — Ingress ist aktiv)
 options:
   shelly_ip: "192.168.178.98"
   sunenergy_ip: "192.168.178.94"

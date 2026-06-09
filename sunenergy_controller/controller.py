@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v1.9.1
+SunEnergy XT Controller v1.9.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -8,14 +8,16 @@ Regelkonzept:
 - GS = OP + grid_p  → Akku entlädt/lädt je nach Bedarf (bei JEDEM SOC)
 - IS                → begrenzt DC-Carport wenn zu viel produziert wird
 - HMS               → drosselt Hoymiles wenn zu viel produziert wird
-- Nachts            → MM=AN, Gerät regelt selbst bis SO (10%)
+- Nachts            → MM=0, aktive GS-Regelung der Entladung (bis low-SOC-Stopp)
 - Zwangsladung      → alle calibration_days Tage auf 100%
+- Shutdown/Watchdog → Übergabe an Geräte-Selbstregelung (MM=1)
 """
 
 import json
 import csv
 import logging
 import os
+import signal
 import time
 import requests
 from datetime import datetime, timezone, timedelta
@@ -129,13 +131,40 @@ HA_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 # Wird in main() aus den Optionen überschrieben.
 DRY_RUN  = True
 
+# v1.9.2: Persistente HTTP-Sessions (Keep-Alive statt TCP-Handshake pro Request).
+# HA_SESSION trägt den Supervisor-Token, DEV_SESSION ist bewusst tokenfrei
+# (Gerät/Shelly dürfen den HA-Token niemals sehen).
+HA_SESSION = requests.Session()
+HA_SESSION.headers.update({"Authorization": f"Bearer {HA_TOKEN}"})
+DEV_SESSION = requests.Session()
+
+# v1.9.2: Sauberer Shutdown via SIGTERM/SIGINT (run.sh leitet weiter)
+RUNNING = True
+
+def _handle_term(signum, frame):
+    global RUNNING
+    log.info("Signal %s empfangen — beende nach aktuellem Tick...", signum)
+    RUNNING = False
+
+def sleep_tick(seconds: float):
+    """Unterbrechbarer Sleep: reagiert binnen ~0.2s auf SIGTERM."""
+    end = time.monotonic() + max(0.0, seconds)
+    while RUNNING and time.monotonic() < end:
+        time.sleep(0.2)
+
+# v1.9.2: State nur jeden n-ten Tick auf Disk schreiben (Flash-Schonung).
+# Modus-Übergänge speichern weiterhin sofort via save_state().
+_SAVE_COUNTER = {"n": 0}
+
+def save_state_throttled(state: dict, every: int = 6):
+    _SAVE_COUNTER["n"] += 1
+    if _SAVE_COUNTER["n"] >= every:
+        _SAVE_COUNTER["n"] = 0
+        save_state(state)
+
 def ha_get_state(entity_id: str, default=None):
     try:
-        r = requests.get(
-            f"{HA_URL}/api/states/{entity_id}",
-            headers={"Authorization": f"Bearer {HA_TOKEN}"},
-            timeout=5,
-        )
+        r = HA_SESSION.get(f"{HA_URL}/api/states/{entity_id}", timeout=5)
         if r.status_code == 200:
             state = r.json().get("state")
             if state not in ("unknown", "unavailable", None):
@@ -146,11 +175,7 @@ def ha_get_state(entity_id: str, default=None):
 
 def ha_get_full(entity_id: str):
     try:
-        r = requests.get(
-            f"{HA_URL}/api/states/{entity_id}",
-            headers={"Authorization": f"Bearer {HA_TOKEN}"},
-            timeout=5,
-        )
+        r = HA_SESSION.get(f"{HA_URL}/api/states/{entity_id}", timeout=5)
         if r.status_code == 200:
             return r.json()
     except Exception:
@@ -162,9 +187,8 @@ def ha_set_number(entity_id: str, value: float) -> bool:
         log.info("🔍 [DRY-RUN] WÜRDE setzen: %s = %s", entity_id, round(value, 1))
         return True
     try:
-        r = requests.post(
+        r = HA_SESSION.post(
             f"{HA_URL}/api/services/number/set_value",
-            headers={"Authorization": f"Bearer {HA_TOKEN}"},
             json={"entity_id": entity_id, "value": round(value, 1)},
             timeout=5,
         )
@@ -181,9 +205,8 @@ def ha_switch(entity_id: str, turn_on: bool) -> bool:
         return True
     action = "turn_on" if turn_on else "turn_off"
     try:
-        r = requests.post(
+        r = HA_SESSION.post(
             f"{HA_URL}/api/services/switch/{action}",
-            headers={"Authorization": f"Bearer {HA_TOKEN}"},
             json={"entity_id": entity_id},
             timeout=5,
         )
@@ -208,9 +231,8 @@ def ha_push_sensor(entity_id: str, value: float, unit: str = "W", device_class: 
                 "friendly_name": friendly_name or entity_id,
             }
         }
-        r = requests.post(
+        r = HA_SESSION.post(
             f"{HA_URL}/api/states/{entity_id}",
-            headers={"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"},
             json=payload,
             timeout=5,
         )
@@ -227,7 +249,7 @@ def sunenergy_write(ip: str, payload: dict) -> bool:
         log.info("🔍 [DRY-RUN] WÜRDE SunEnergyXT schreiben: %s", payload)
         return True
     try:
-        r = requests.post(
+        r = DEV_SESSION.post(
             f"http://{ip}/write",
             json={"state": payload},
             timeout=5,
@@ -240,12 +262,29 @@ def sunenergy_write(ip: str, payload: dict) -> bool:
 def sunenergy_read(ip: str) -> dict:
     """Liest den aktuellen Status vom SunEnergyXT."""
     try:
-        r = requests.get(f"http://{ip}/read", timeout=5)
+        r = DEV_SESSION.get(f"http://{ip}/read", timeout=5)
         if r.status_code == 200:
             return r.json().get("state", {}).get("reported", {})
     except Exception as e:
         log.error("SunEnergyXT READ Fehler: %s", e)
     return {}
+
+# ---------------------------------------------------------------------------
+# Shelly Pro 3EM Direkt-Fallback (v1.9.2)
+# ---------------------------------------------------------------------------
+def shelly_direct_power(ip: str):
+    """Grid-Leistung direkt vom Shelly Pro 3EM lesen (RPC, ohne HA).
+    Fallback wenn die HA-API stale ist (z.B. HA Core Neustart) — verhindert
+    unnötige Safety-Stopps, obwohl der Zähler gesund ist."""
+    try:
+        r = DEV_SESSION.get(f"http://{ip}/rpc/EM.GetStatus?id=0", timeout=3)
+        if r.status_code == 200:
+            val = r.json().get("total_act_power")
+            if val is not None:
+                return float(val)
+    except Exception as e:
+        log.debug("Shelly Direkt-Fallback Fehler: %s", e)
+    return None
 
 # ---------------------------------------------------------------------------
 # Sonnenstand
@@ -314,7 +353,9 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v1.9.1 startet...")
+    log.info("SunEnergy XT Controller v1.9.2 startet...")
+    signal.signal(signal.SIGTERM, _handle_term)
+    signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
     state = load_state()
 
@@ -344,6 +385,7 @@ def main():
     soc_min         = float(opts["soc_min"])            # 10%
     calib_days      = float(opts["calibration_days"])  # 15
     sunenergy_ip    = opts.get("sunenergy_ip", "192.168.178.94")
+    shelly_ip       = opts.get("shelly_ip", "192.168.178.98")
 
     # SA auf Normalwert setzen beim Start
     ha_set_number(sa_entity, soc_normal_max)
@@ -378,7 +420,7 @@ def main():
     pv_current = float(state.get("pv_last", 0.0))
     pb_current = 0.0
 
-    while True:
+    while RUNNING:
         try:
             tick_start = time.monotonic()
 
@@ -441,10 +483,17 @@ def main():
                 watchdog_ok = False
 
             # ------------------------------------------------------------------
-            # 2. Sicherheits-Stopp
+            # 2. Sicherheits-Stopp (v1.9.2: erst Shelly-Direkt-Fallback versuchen)
             # ------------------------------------------------------------------
             if not watchdog_ok:
-                log.warning("Watchdog Fehler! Grid-Sensor offline — Sicherheits-Stopp (IS=10, MM=1).")
+                direct_p = shelly_direct_power(shelly_ip)
+                if direct_p is not None:
+                    grid_p_raw = direct_p
+                    watchdog_ok = True
+                    log.warning("HA-API/Grid-Sensor stale — Grid direkt vom Shelly gelesen: %.0fW", direct_p)
+
+            if not watchdog_ok:
+                log.warning("Watchdog Fehler! Grid-Sensor UND Shelly-Direktzugriff offline — Sicherheits-Stopp (IS=10, MM=1).")
                 ha_switch(mm_switch, True)
                 ha_set_number(gs_entity, 0)
                 # Grid-Sensor tot: aktive Nulleinspeisung nicht mehr moeglich.
@@ -458,7 +507,7 @@ def main():
                 state["last_device_is"] = None
                 state["last_gs_written"] = None
                 save_state(state)
-                time.sleep(TICK_S)
+                sleep_tick(TICK_S)
                 continue
 
             # ------------------------------------------------------------------
@@ -535,9 +584,8 @@ def main():
                 if accumulated >= manual_feed_in_target:
                     log.info("🔋 Manuelle Einspeisung Ziel von %.2f kWh erreicht! Schalte ab...", manual_feed_in_target)
                     if not DRY_RUN:
-                        requests.post(
+                        HA_SESSION.post(
                             f"{HA_URL}/api/services/input_boolean/turn_off",
-                            headers={"Authorization": f"Bearer {HA_TOKEN}"},
                             json={"entity_id": manual_feed_in_switch},
                             timeout=5,
                         )
@@ -599,14 +647,19 @@ def main():
 
             if state["active_mode"] == "calibration" and curr_soc < 100:
                 log.info("Zwangsladung läuft... SOC=%.1f%%", curr_soc)
-                ha_set_number(sa_entity, 100)
-                ha_switch(mm_switch, False)
-                ha_set_number(gs_entity, -2400)
-                # Fix #1: GS auch direkt ans Gerät schreiben (nicht nur HA)
-                sunenergy_write(sunenergy_ip, {"GS": -2400, "MM": 0})
-                state["last_device_gs"] = -2400
-                state["last_device_mm"] = 0
-                time.sleep(TICK_S)
+                # v1.9.2: Spam-Schutz — nur beim Eintritt/nach Drift schreiben,
+                # nicht jeden Tick (HA + Geräte-Flash schonen)
+                if state.get("last_device_gs") != -2400 or state.get("last_device_mm") != 0:
+                    ha_set_number(sa_entity, 100)
+                    ha_switch(mm_switch, False)
+                    ha_set_number(gs_entity, -2400)
+                    # Fix #1: GS auch direkt ans Gerät schreiben (nicht nur HA)
+                    sunenergy_write(sunenergy_ip, {"GS": -2400, "MM": 0})
+                    state["last_device_gs"] = -2400
+                    state["last_device_mm"] = 0
+                    state["last_gs_written"] = -2400
+                    save_state(state)
+                sleep_tick(TICK_S)
                 continue
 
             if state["active_mode"] == "calibration" and curr_soc >= 100:
@@ -623,11 +676,11 @@ def main():
                 state["last_device_mm"] = None
                 state["last_device_is"] = None
                 save_state(state)
-                time.sleep(TICK_S)
+                sleep_tick(TICK_S)
                 continue
 
             # ------------------------------------------------------------------
-            # 6. Nachtmodus — Gerät regelt selbst via MM=1 ( materialschonend )
+            # 6. Nachtmodus — aktive GS-Regelung der Entladung (MM=0)
             # ------------------------------------------------------------------
             if not sun_above:
                 if state["active_mode"] != "night":
@@ -638,8 +691,9 @@ def main():
                     if current_mm_state != "off":
                         ha_switch(mm_switch, False)
                     
-                    # Hoymiles auf Maximum setzen
-                    ha_set_number(hms_2000_entity, 2000)
+                    # Hoymiles auf Maximum setzen (v1.9.2: beide mit Online-Check)
+                    if hms_2000_online:
+                        ha_set_number(hms_2000_entity, 2000)
                     if hms_1600_online:
                         ha_set_number(hms_1600_entity, 1600)
                     
@@ -716,8 +770,8 @@ def main():
 
                 state["grid_p_filtered"] = grid_p_raw
                 state["last_gs"]         = gs_new
-                save_state(state)
-                time.sleep(TICK_S)
+                save_state_throttled(state)
+                sleep_tick(TICK_S)
                 continue
 
             # ------------------------------------------------------------------
@@ -915,13 +969,32 @@ def main():
             state["last_gs"]         = gs_new
             state["solar_p_2000_last"] = solar_p_2000
             state["solar_p_1600_last"] = solar_p_1600
-            save_state(state)
+            save_state_throttled(state)
 
         except Exception as e:
             log.error("Fehler im Regelzyklus: %s", e, exc_info=True)
 
         elapsed = time.monotonic() - tick_start
-        time.sleep(max(0, TICK_S - elapsed))
+        sleep_tick(TICK_S - elapsed)
+
+    # ------------------------------------------------------------------
+    # v1.9.2: Sauberer Shutdown — Übergabe an Geräte-Selbstregelung.
+    # MM=1: das Gerät regelt die Nulleinspeisung selbst weiter, statt mit
+    # einem eingefrorenen GS-Sollwert stehen zu bleiben.
+    # ------------------------------------------------------------------
+    log.info("Shutdown — übergebe an Geräte-Selbstregelung (MM=1, GS=0)...")
+    try:
+        ha_switch(mm_switch, True)
+        ha_set_number(gs_entity, 0)
+        sunenergy_write(sunenergy_ip, {"MM": 1, "GS": 0})
+        state["last_device_gs"] = None
+        state["last_device_mm"] = None
+        state["last_device_is"] = None
+        state["last_gs_written"] = None
+        save_state(state)
+    except Exception as e:
+        log.error("Fehler beim Shutdown-Safe-State: %s", e)
+    log.info("Controller beendet.")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ import os
 import time
 import requests
 from pathlib import Path
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 STATE_PATH = "/data/controller_state.json"
 OPTIONS_PATH = "/data/options.json"
@@ -176,7 +176,7 @@ HTML = """<!DOCTYPE html>
 
 <div class="footer">
   <span id="ts">—</span>
-  <a href="/log" class="btn">⬇ CSV Download</a>
+  <a href="log" class="btn">⬇ CSV Download</a>
   <button class="btn" style="margin-left:8px;border-color:#ff3d57;color:#ff3d57" onclick="deleteLog()">🗑 Log löschen</button>
 </div>
 
@@ -317,8 +317,9 @@ function updateCharts(rows) {
 }
 
 async function deleteLog() {
+  if (!confirm('CSV-Log wirklich löschen?')) return;
   try {
-    const r = await fetch('/log/delete');
+    const r = await fetch('log/delete', { method: 'POST' });
     const d = await r.json();
     if (d.status === 'ok') alert('Log gelöscht!');
     else alert('Fehler: ' + d.message);
@@ -327,13 +328,14 @@ async function deleteLog() {
 
 async function refresh() {
   try {
-    const stateR = await fetch('/state').then(r => r.json());
+    // v1.9.2: relative Pfade — funktionieren direkt (Port 8765) UND via HA-Ingress
+    const stateR = await fetch('state').then(r => r.json());
     // Immer state anzeigen, auch ohne CSV
     updateCards(stateR, {});
     document.getElementById('ts').textContent = 'Letzte Aktualisierung: ' + new Date().toLocaleTimeString('de-DE');
     
     try {
-      const apiR = await fetch('/api').then(r => r.json());
+      const apiR = await fetch('api').then(r => r.json());
       if (apiR.rows && apiR.rows.length > 0) {
         updateCards(stateR, apiR.rows[apiR.rows.length - 1]);
         updateCharts(apiR.rows);
@@ -415,6 +417,18 @@ class UIHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b"Noch keine Logdaten")
 
         elif self.path == "/log/delete":
+            # v1.9.2: Zustandsändernde Aktion nur noch via POST (siehe do_POST).
+            # GET liefert 405, damit Browser-Prefetch/Link-Preview nichts löscht.
+            self.send_response(405)
+            self.send_header("Allow", "POST")
+            self.end_headers()
+            self.wfile.write(b"Use POST")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == "/log/delete":
             try:
                 if os.path.exists(CSV_PATH):
                     os.remove(CSV_PATH)
@@ -434,6 +448,8 @@ class UIHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", 8765), UIHandler)
+    # ThreadingHTTPServer: ein hängender /meter-Poll (Shelly-Timeout) blockiert
+    # nicht mehr das Dashboard — und umgekehrt.
+    server = ThreadingHTTPServer(("0.0.0.0", 8765), UIHandler)
     print("Web UI läuft auf http://0.0.0.0:8765")
     server.serve_forever()
