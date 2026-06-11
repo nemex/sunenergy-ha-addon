@@ -827,9 +827,11 @@ def main():
                     hms_change = grid_error * 0.5
                     hms_change = max(-400.0, min(400.0, hms_change))
                     hms_limit_new = hms_limit_baseline + hms_change
-            elif grid_error > 50:
-                # Bezug: Hoymiles freigeben (mehr erzeugen lassen)
-                hms_change = grid_error * 0.5
+            elif grid_error > 50 or (battery_ac_est > 20.0 and hms_limit_last < 3600.0):
+                # Bezug oder Batterie-Entladung bei gedrosselten Hoymiles:
+                # Hoymiles freigeben (mehr erzeugen lassen), um Batterie-Entladung zu minimieren.
+                effective_deficit = grid_error + max(0.0, battery_ac_est)
+                hms_change = effective_deficit * 0.5
                 hms_change = max(-400.0, min(800.0, hms_change))
                 hms_limit_new = hms_limit_last + hms_change
             elif curr_soc < soc_max_limit:

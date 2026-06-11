@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.9.3
+- **Optimierung Hoymiles-Freigabe**: Bezieht die aktive Batterie-Entladung als virtuellen Bedarf in die Hoymiles-Drosselregelung ein. Verhindert, dass die Hoymiles bei aktivem Akkubetrieb künstlich gedrosselt bleiben, und schont so die Batteriekapazität.
+
 ## v1.9.2
 - **Ingress-Support**: Web-UI direkt in der HA-Sidebar (auch remote via Nabu Casa).
 - **Shelly-Direkt-Fallback**: Holt Grid-Daten bei HA-API-Störungen direkt vom Shelly (vermeidet Fehl-Safety-Stopps).
