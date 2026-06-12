@@ -810,6 +810,10 @@ def main():
             # Bei aktiver manueller Einspeisung Hoymiles voll öffnen
             if is_actively_feeding_in:
                 hms_limit_new = 3600.0
+            elif curr_soc < (soc_max_limit - 3.0) and gs_new_rounded > -2350:
+                # Akku nicht voll und lädt nicht am Limit (IS): Hoymiles voll öffnen,
+                # damit jegliche Solarleistung zum Laden des Akkus genutzt werden kann.
+                hms_limit_new = 3600.0
             elif grid_error < -50:
                 # Priorisierung: Akku-Entladung reduzieren vor Hoymiles-Drosselung
                 # Der Akku kann seine Entladung reduzieren, wenn der Sollwert positiv ist

@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.9.4
+- **Priorisierung Batterieladung**: Wenn die Batterie leer ist und geladen werden kann, werden die Hoymiles-Wechselrichter voll geöffnet (3600 W). Dies maximiert die Solarstrom-Erzeugung zum Laden der Batterie und verhindert künstliches Drosseln am Morgen oder bei wechselhaftem Wetter.
+
 ## v1.9.3
 - **Optimierung Hoymiles-Freigabe**: Bezieht die aktive Batterie-Entladung als virtuellen Bedarf in die Hoymiles-Drosselregelung ein. Verhindert, dass die Hoymiles bei aktivem Akkubetrieb künstlich gedrosselt bleiben, und schont so die Batteriekapazität.
 
