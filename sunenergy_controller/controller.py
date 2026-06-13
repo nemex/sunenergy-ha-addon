@@ -873,9 +873,9 @@ def main():
             if low_soc_active:
                 is_target = 10
             elif is_actively_feeding_in:
-                # Während aktiver manueller Einspeisung darf die Batterie maximal ihre eigene PV-Leistung abgeben,
-                # um ein Entladen der Batterie-Zellen ins Netz zu verhindern.
-                is_target = pv_current
+                # Während aktiver manueller Einspeisung geben wir das IS-Limit voll frei (2400W),
+                # damit die DC-PV-Module der Batterie mit 100% laufen können.
+                is_target = 2400
             elif curr_soc >= (soc_max_limit - 3.0) or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                 if drosseln or ((gs_new_rounded < -200) and (pb_current < 150.0)):
                     # Wenn die Hoymiles gedrosselt sind ODER die Batterie

@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.9.7
+- **Fix Manuelle Einspeisung**: Verhindert das Drosseln der DC-PV-Module (Carport) am SunEnergy XT auf Minimalwerte (z. B. 30 W / 1 %) während der manuellen Einspeisung. Setzt das IS-Limit während dieser Phase dauerhaft auf 2400 W (100 %).
+
 ## v1.9.6
 - **Konfigurations-Update**: Standard-Zielmenge für die manuelle Einspeisung (`manual_feed_in_target`) von 0,5 kWh auf 1,0 kWh erhöht.
 
