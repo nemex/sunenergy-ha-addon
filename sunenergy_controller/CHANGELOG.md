@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.9.6
+- **Konfigurations-Update**: Standard-Zielmenge für die manuelle Einspeisung (`manual_feed_in_target`) von 0,5 kWh auf 1,0 kWh erhöht.
+
 ## v1.9.5
 - **Stabilitäts-Fix Sonnenstand**: Cacht den letzten bekannten Sonnenstand (aus `sun.sun`). Verhindert, dass kurzzeitige Verbindungsabbrüche oder Timeouts der Home Assistant API das Add-on fälschlicherweise mitten am Tag in den Nachtmodus (mit Deaktivierung von MM) versetzen.
 
