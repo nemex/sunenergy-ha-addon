@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.9.5
+- **Stabilitäts-Fix Sonnenstand**: Cacht den letzten bekannten Sonnenstand (aus `sun.sun`). Verhindert, dass kurzzeitige Verbindungsabbrüche oder Timeouts der Home Assistant API das Add-on fälschlicherweise mitten am Tag in den Nachtmodus (mit Deaktivierung von MM) versetzen.
+
 ## v1.9.4
 - **Priorisierung Batterieladung**: Wenn die Batterie leer ist und geladen werden kann, werden die Hoymiles-Wechselrichter voll geöffnet (3600 W). Dies maximiert die Solarstrom-Erzeugung zum Laden der Batterie und verhindert künstliches Drosseln am Morgen oder bei wechselhaftem Wetter.
 

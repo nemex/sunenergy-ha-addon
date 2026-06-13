@@ -289,11 +289,17 @@ def shelly_direct_power(ip: str):
 # ---------------------------------------------------------------------------
 # Sonnenstand
 # ---------------------------------------------------------------------------
+LAST_SUN_STATE = "below_horizon"
+
 def get_sun_state() -> dict:
+    global LAST_SUN_STATE
     data = ha_get_full("sun.sun")
     if data:
+        state_str = data.get("state", "below_horizon")
+        LAST_SUN_STATE = state_str
         return data
-    return {"state": "below_horizon"}
+    return {"state": LAST_SUN_STATE}
+
 
 # ---------------------------------------------------------------------------
 # HMS Limits berechnen
