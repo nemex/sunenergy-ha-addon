@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "1.9.8"
+version: "1.9.9"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS

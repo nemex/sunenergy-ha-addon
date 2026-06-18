@@ -7,6 +7,7 @@ RUN apk add --no-cache bash \
 WORKDIR /app
 COPY controller.py /app/
 COPY web_ui.py /app/
+COPY analyse.html /app/
 
 COPY run.sh /run.sh
 RUN chmod +x /run.sh

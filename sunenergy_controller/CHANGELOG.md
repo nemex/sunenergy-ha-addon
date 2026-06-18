@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.9.9
+- **Fix Dockerfile**: Kopieren von `analyse.html` in den Docker-Container hinzugefügt, um den Fehler "Analyse-Datei nicht gefunden" zu beheben.
+
 ## v1.9.8
 - **Analyse-Dashboard Integration**: Das Premium-Analyse-Dashboard wurde direkt in die Weboberfläche eingebaut und ist über den Button "Systemanalyse" im Footer erreichbar. Die Logdaten werden vollautomatisch geladen.
 - **Unbegrenztes Logging**: Das automatische Kürzen des CSV-Logs nach 2 MB wurde deaktiviert, um den gesamten Verlauf dauerhaft zu speichern.
