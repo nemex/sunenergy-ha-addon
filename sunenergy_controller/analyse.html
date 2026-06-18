@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SUNENERGY XT System Analytics</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lucide@0.400.0/dist/umd/lucide.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.24.0/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 10px; }
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #f0a500; cursor: pointer; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.3); margin-top: -6px; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; cursor: pointer; background: #1e2d3d; border-radius: 3px; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-in { animation: fadeIn 0.4s ease-out forwards; }
+        .recharts-responsive-container { min-width: 0; min-height: 0; }
+        .gauge-bar { transition: stroke-dashoffset 0.5s ease-out; }
+    </style>
+</head>
+<body class="bg-[#090e17] text-slate-100 min-h-screen">
+    <div id="root"></div>
+    <script type="text/babel" data-presets="react">
+        const { useState, useMemo, useRef, useEffect } = React;
+        const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, ComposedChart, Line, LineChart } = window.Recharts || {};
+
+        const COLORS = ['#f0a500', '#00c2ff', '#10B981', '#f43f5e', '#818CF8', '#EC4899', '#A78BFA', '#34D399', '#F472B6', '#FBBF24', '#3B82F6', '#22C55E'];
+        const MONTH_NAMES = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+        const DOW_NAMES = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+        const WINDOW_SIZE_HIGHRES = 120; // 10 Minuten bei 5s Intervall
+        const WINDOW_SIZE_DAILY = 48;    // 8 Stunden bei 10m Intervall
+        const POLL_INTERVAL = 5;         // Regelintervall in Sekunden
+
+        // --- Ikonen-Komponente ---
+        const Icon = ({ name, size = 18, className = "" }) => {
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
+            return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
+        };
+
+        const SunEnergyLogo = () => (
+            <div className="flex items-center select-none">
+                <span className="text-amber-500 font-black tracking-tighter flex items-center" style={{ lineHeight: '1.2' }}>
+                    <span className="text-2xl md:text-3xl">SUNENERGY</span>
+                    <span className="ml-1.5 text-2xl md:text-3xl italic text-slate-100">XT</span>
+                </span>
+            </div>
+        );
+
+        // --- Stat-Karte ---
+        const StatCard = ({ title, value, iconName, iconColor, trend, secondaryTitle, secondaryValue, highlight = false, badge = null }) => (
+            <div className={`bg-[#111822] border-[#1e2d3d] p-5 rounded-2xl shadow-sm border ${highlight ? 'border-amber-500/30 bg-amber-500/5' : ''} transition-all hover:shadow-md hover:-translate-y-0.5 flex flex-col`} style={{ minHeight: '150px' }}>
+                <div className="flex items-start justify-between mb-3">
+                    <div className={`w-fit p-2 rounded-xl flex items-center justify-center ${highlight ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-800 text-slate-300'}`}>
+                        <Icon name={iconName} size={18} className={iconColor} />
+                    </div>
+                    {badge && <span className="text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">{badge}</span>}
+                </div>
+                <div className="flex-1">
+                    <h3 className="text-slate-500 text-[9px] font-bold uppercase tracking-wider mb-0.5">{title}</h3>
+                    <p className="text-lg font-black tracking-tight text-slate-100" style={{ lineHeight: '1.1' }}>{value}</p>
+                </div>
+                {secondaryTitle ? (
+                    <div className="mt-2 pt-2 border-t border-slate-800 leading-tight">
+                        <h4 className="text-slate-500 text-[8px] font-bold uppercase tracking-wider mb-0.5">{secondaryTitle}</h4>
+                        <p className="text-xs font-bold text-slate-300">{secondaryValue}</p>
+                    </div>
+                ) : trend ? (
+                    <div className="mt-2 text-[8px] font-bold border-t border-slate-800 pt-2 text-slate-500">{trend}</div>
+                ) : null}
+            </div>
+        );
+
+        // --- Tooltip-Komponente ---
+        const CustomTooltip = ({ active, payload, label, unit = 'kWh' }) => {
+            if (!active || !payload || payload.length === 0) return null;
+            return (
+                <div className="p-3 rounded-2xl shadow-xl text-xs bg-[#111822] text-slate-200 border border-[#1e2d3d]">
+                    <p className="font-bold mb-2 border-b border-slate-800 pb-1.5">{label}</p>
+                    {payload.map((p, i) => (
+                        <div key={i} className="flex items-center gap-2 py-0.5">
+                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }}></div>
+                            <span className="text-slate-400">{p.name}:</span>
+                            <span className="font-bold">{typeof p.value === 'number' ? p.value.toFixed(2) : p.value} {unit}</span>
+                        </div>
+                    ))}
+                </div>
+            );
+        };
+
+        // --- Hauptanwendung ---
+        const App = () => {
+            const [rawData, setRawData] = useState(null);
+            const [fileType, setFileType] = useState(null); // 'highres' | 'daily'
+            const [scrollIndex, setScrollIndex] = useState(0);
+            const [error, setError] = useState(null);
+            const [fileName, setFileName] = useState("");
+            const [isExporting, setIsExporting] = useState(false);
+            const [showSettings, setShowSettings] = useState(false);
+            const [isDragging, setIsDragging] = useState(false);
+            const [activeTab, setActiveTab] = useState('overview'); // overview | solar | precision | battery | smartplug | table
+            const [isLoading, setIsLoading] = useState(false);
+            
+            // Einstellungen
+            const [energyPrice, setEnergyPrice] = useState(0.35);
+            const [systemCost, setSystemCost] = useState(1500);
+            const [feedInTariff, setFeedInTariff] = useState(0.082);
+            
+            const fileInputRef = useRef(null);
+            const dashboardRef = useRef(null);
+
+            // Parser-Logik für CSV-Text
+            const parseCSVData = (text, name) => {
+                setFileName(name);
+                const lines = text.split(/\r?\n/);
+                if (lines.length < 2) throw new Error("Die Datei ist leer.");
+
+                // BOM entfernen falls vorhanden
+                const firstLine = lines[0].replace(/^\uFEFF/, '').trim();
+                const headers = firstLine.split(',').map(h => h.trim());
+
+                // Dateityp ermitteln
+                let parsedFileType = null;
+                if (headers.includes("ts") && headers.includes("grid_p")) {
+                    parsedFileType = "highres";
+                } else if (headers.includes("category") || (headers.includes("Netz aktuell") || headers.includes("Netz Ø"))) {
+                    parsedFileType = "daily";
+                } else {
+                    throw new Error("Dateiformat nicht erkannt. Die Spaltenköpfe entsprechen weder den Regler-Logs ('ts, grid_p') noch den Tagesberichten ('category, Netz ...').");
+                }
+
+                const parseCSVLine = (line) => {
+                    const result = []; let cur = '', inQuotes = false;
+                    for (let char of line) {
+                        if (char === '"') inQuotes = !inQuotes;
+                        else if (char === ',' && !inQuotes) { result.push(cur.trim()); cur = ''; }
+                        else cur += char;
+                    }
+                    result.push(cur.trim());
+                    return result;
+                };
+
+                const parseNum = (val) => {
+                    if (val == null || val === '') return 0;
+                    const s = String(val).replace(',', '.');
+                    const n = parseFloat(s);
+                    return isNaN(n) ? 0 : n;
+                };
+
+                const processedRows = [];
+
+                if (parsedFileType === "highres") {
+                    // High-Res Controller Log parsen
+                    const tsIdx = headers.indexOf("ts");
+                    const modeIdx = headers.indexOf("mode");
+                    const socIdx = headers.indexOf("soc");
+                    const gridIdx = headers.indexOf("grid_p");
+                    const hausIdx = headers.indexOf("haus_p");
+                    const solarIdx = headers.indexOf("solar_p");
+                    const gsIdx = headers.indexOf("gs");
+                    const opIdx = headers.indexOf("op");
+                    const pvIdx = headers.indexOf("pv");
+                    const targetIdx = headers.indexOf("is_target");
+                    const hms2000Idx = headers.indexOf("hms_2000");
+                    const hms1600Idx = headers.indexOf("hms_1600");
+
+                    for (let i = 1; i < lines.length; i++) {
+                        const rawLine = lines[i].trim(); if (!rawLine) continue;
+                        const cols = parseCSVLine(rawLine); if (cols.length < headers.length - 2) continue;
+
+                        const dateStr = cols[tsIdx];
+                        const timestamp = new Date(dateStr.replace(' ', 'T'));
+                        if (isNaN(timestamp.getTime())) continue;
+
+                        const gridVal = parseNum(cols[gridIdx]);
+                        const opVal = parseNum(cols[opIdx]);
+                        const pvVal = parseNum(cols[pvIdx]);
+
+                        processedRows.push({
+                            ts: dateStr,
+                            timestamp,
+                            mode: cols[modeIdx] || 'inactive',
+                            soc: parseNum(cols[socIdx]),
+                            grid_p: gridVal,
+                            haus_p: parseNum(cols[hausIdx]),
+                            solar_p: parseNum(cols[solarIdx]), // Hoymiles Summe
+                            gs: parseNum(cols[gsIdx]),
+                            op: opVal,
+                            pv: pvVal,
+                            pb: pvVal - opVal, // Netto Batterieladeleistung
+                            is_target: parseNum(cols[targetIdx]),
+                            hms_2000: hms2000Idx !== -1 ? parseNum(cols[hms2000Idx]) : 0,
+                            hms_1600: hms1600Idx !== -1 ? parseNum(cols[hms1600Idx]) : 0,
+                        });
+                    }
+                } else {
+                    // Daily Smart-Plug Log parsen (z.B. 7rl5v8g4.csv)
+                    const catIdx = headers.indexOf("category");
+                    const netzAktuellIdx = headers.indexOf("Netz aktuell");
+                    const netzAvgIdx = headers.indexOf("Netz Ø") !== -1 ? headers.indexOf("Netz Ø") : headers.indexOf("Netz aktuell") + 1;
+                    const seIstIdx = headers.indexOf("SunEnergy Ist");
+                    const seSollIdx = headers.indexOf("SunEnergy Soll");
+                    const hoymilesIdx = headers.indexOf("Hoymiles");
+                    const seAcIdx = headers.indexOf("SunEnergy AC");
+                    const hausIdx = headers.indexOf("Hausverbrauch");
+                    const socIdx = headers.indexOf("Batterie SOC");
+
+                    // Dynamische Erkennung aller Smart Plugs ab Spalte 9 (bzw. nach Batterie SOC)
+                    const smartPlugKeys = headers.slice(Math.max(catIdx + 1, socIdx + 1));
+
+                    // Wir zählen, wie oft ein bestimmter Tag vorkommt, um das Zeitintervall pro Zeile zu bestimmen
+                    const dayCounts = {};
+                    for (let i = 1; i < lines.length; i++) {
+                        const rawLine = lines[i].trim(); if (!rawLine) continue;
+                        const cols = parseCSVLine(rawLine); if (cols.length < 2) continue;
+                        const dateStr = cols[0];
+                        dayCounts[dateStr] = (dayCounts[dateStr] || 0) + 1;
+                    }
+
+                    for (let i = 1; i < lines.length; i++) {
+                        const rawLine = lines[i].trim(); if (!rawLine) continue;
+                        const cols = parseCSVLine(rawLine); if (cols.length < 5) continue;
+
+                        const dateStr = cols[catIdx];
+                        // Parsen des Wochentags/Datums "Thu Jun 04 2026"
+                        const parsedDate = new Date(dateStr);
+                        if (isNaN(parsedDate.getTime())) continue;
+
+                        // Um einen Pseudo-Zeitstempel über den Tag hinweg zu simulieren:
+                        const rowsForThisDay = dayCounts[dateStr] || 24;
+                        const indexForThisDay = processedRows.filter(r => r.category === dateStr).length;
+                        const totalMinutes = 24 * 60;
+                        const minuteOffset = (indexForThisDay / rowsForThisDay) * totalMinutes;
+                        const timestamp = new Date(parsedDate.getTime());
+                        timestamp.setMinutes(timestamp.getMinutes() + minuteOffset);
+
+                        const seIst = parseNum(cols[seIstIdx]);
+                        const seAc = parseNum(cols[seAcIdx]) || parseNum(cols[seSollIdx]);
+                        const gridAvg = parseNum(cols[netzAvgIdx]);
+
+                        // Dynamische Smart-Plugs auslesen
+                        const plugs = {};
+                        smartPlugKeys.forEach(key => {
+                            const colIdx = headers.indexOf(key);
+                            plugs[key] = colIdx !== -1 ? parseNum(cols[colIdx]) : 0;
+                        });
+
+                        processedRows.push({
+                            category: dateStr,
+                            timestamp,
+                            grid_p: gridAvg, // Durchschnittliche Netzleistung im Intervall
+                            solar_p: parseNum(cols[hoymilesIdx]), // Hoymiles
+                            se_ist: seIst,
+                            op: seAc, // AC-Ausgang
+                            haus_p: parseNum(cols[hausIdx]),
+                            soc: parseNum(cols[socIdx]),
+                            plugs,
+                            rowsForThisDay,
+                            durationHours: 24 / rowsForThisDay,
+                        });
+                    }
+                }
+
+                if (processedRows.length === 0) throw new Error("Keine gültigen Zeilen im CSV gefunden.");
+                processedRows.sort((a, b) => a.timestamp - b.timestamp);
+                
+                setFileType(parsedFileType);
+                setRawData(processedRows);
+                setError(null);
+                setScrollIndex(0);
+            };
+
+            // Dateiprozessor für manuelle Uploads
+            const processFile = (file) => {
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        parseCSVData(event.target.result, file.name);
+                    } catch (err) {
+                        setError(err.message);
+                        setRawData(null);
+                        setFileType(null);
+                    }
+                };
+                reader.readAsText(file, 'UTF-8');
+            };
+
+            // Automatischer Download des Logs vom Controller auf demselben Server
+            useEffect(() => {
+                setIsLoading(true);
+                fetch('log')
+                    .then(response => {
+                        if (!response.ok) throw new Error("Keine Logdatei auf dem Controller gefunden oder Fehler beim Laden.");
+                        return response.text();
+                    })
+                    .then(text => {
+                        parseCSVData(text, "controller_log.csv");
+                    })
+                    .catch(err => {
+                        console.warn("Automatisches Laden fehlgeschlagen:", err);
+                        // Falls das Format fehlerhaft ist, Fehler anzeigen
+                        if (err.message.includes("Dateiformat") || err.message.includes("leer")) {
+                            setError(err.message);
+                        }
+                    })
+                    .finally(() => {
+                        setIsLoading(false);
+                    });
+            }, []);
+
+            // Downsampling für High-Res Diagramme (Verringerung der Datenmenge zur Browser-Schonung)
+            const downsampledData = useMemo(() => {
+                if (!rawData || fileType !== "highres") return rawData;
+                
+                // Gruppieren in 5-Minuten-Intervalle (60 Datenpunkte bei 5s)
+                const result = [];
+                const intervalMs = 5 * 60 * 1000;
+                let currentBucket = [];
+                let currentBucketTime = null;
+
+                rawData.forEach(row => {
+                    const t = row.timestamp.getTime();
+                    const bucketTime = Math.floor(t / intervalMs) * intervalMs;
+                    
+                    if (currentBucketTime === null) {
+                        currentBucketTime = bucketTime;
+                    }
+
+                    if (bucketTime !== currentBucketTime) {
+                        // Bucket aggregieren
+                        const count = currentBucket.length;
+                        if (count > 0) {
+                            const sum = (k) => currentBucket.reduce((acc, c) => acc + c[k], 0);
+                            const avg = (k) => sum(k) / count;
+                            
+                            const first = currentBucket[0];
+                            result.push({
+                                ts: first.ts.split(" ")[1].substring(0, 5), // Nur HH:MM
+                                datum: first.ts.split(" ")[0],
+                                timestamp: new Date(currentBucketTime),
+                                mode: first.mode,
+                                soc: avg("soc"),
+                                grid_p: avg("grid_p"),
+                                haus_p: avg("haus_p"),
+                                solar_p: avg("solar_p"),
+                                gs: avg("gs"),
+                                op: avg("op"),
+                                pv: avg("pv"),
+                                pb: avg("pb"),
+                                is_target: avg("is_target"),
+                                hms_2000: avg("hms_2000"),
+                                hms_1600: avg("hms_1600")
+                            });
+                        }
+                        currentBucket = [row];
+                        currentBucketTime = bucketTime;
+                    } else {
+                        currentBucket.push(row);
+                    }
+                });
+
+                // Letzten Eimer hinzufügen
+                if (currentBucket.length > 0) {
+                    const count = currentBucket.length;
+                    const avg = (k) => currentBucket.reduce((acc, c) => acc + c[k], 0) / count;
+                    const first = currentBucket[0];
+                    result.push({
+                        ts: first.ts.split(" ")[1].substring(0, 5),
+                        datum: first.ts.split(" ")[0],
+                        timestamp: new Date(currentBucketTime),
+                        mode: first.mode,
+                        soc: avg("soc"),
+                        grid_p: avg("grid_p"),
+                        haus_p: avg("haus_p"),
+                        solar_p: avg("solar_p"),
+                        gs: avg("gs"),
+                        op: avg("op"),
+                        pv: avg("pv"),
+                        pb: avg("pb"),
+                        is_target: avg("is_target")
+                    });
+                }
+                return result;
+            }, [rawData, fileType]);
+
+            // Diagrammdaten ermitteln
+            const chartData = useMemo(() => {
+                if (!rawData) return [];
+                const src = fileType === "highres" ? downsampledData : rawData;
+                const windowSize = fileType === "highres" ? WINDOW_SIZE_HIGHRES : WINDOW_SIZE_DAILY;
+                if (src.length <= windowSize) return src;
+                return src.slice(scrollIndex, scrollIndex + windowSize);
+            }, [rawData, downsampledData, fileType, scrollIndex]);
+
+            const sourceLength = rawData ? (fileType === "highres" ? downsampledData.length : rawData.length) : 0;
+            const windowSize = fileType === "highres" ? WINDOW_SIZE_HIGHRES : WINDOW_SIZE_DAILY;
+            const showSlider = rawData && sourceLength > windowSize;
+
+            // Statistiken berechnen
+            const stats = useMemo(() => {
+                if (!rawData || rawData.length === 0) return null;
+
+                if (fileType === "highres") {
+                    // Berechnung für hochauflösende Sekundendaten (Integration W -> Wh)
+                    let totalWhSolar = 0; // SunEnergy PV + Hoymiles
+                    let totalWhHoymiles = 0;
+                    let totalWhSunEnergyPV = 0;
+                    let totalWhSunEnergyAC = 0;
+                    let totalWhCons = 0;
+                    let totalWhImp = 0;
+                    let totalWhExp = 0;
+                    let totalWhCharge = 0;
+                    let totalWhDischarge = 0;
+
+                    // Präzisionszähler für Nulleinspeisung
+                    let activePointsCount = 0;
+                    let pointsWithin20W = 0;
+                    let totalAbsoluteError = 0;
+
+                    // Schleife über alle Rohdaten (wegen der Zeitdifferenzen)
+                    for (let i = 1; i < rawData.length; i++) {
+                        const prev = rawData[i - 1];
+                        const curr = rawData[i];
+                        const dtSeconds = (curr.timestamp - prev.timestamp) / 1000;
+                        if (dtSeconds <= 0 || dtSeconds > 600) continue; // Ausreißer oder Pausen ignorieren
+
+                        const dtHours = dtSeconds / 3600;
+
+                        // Leistungen integrieren
+                        totalWhHoymiles += curr.solar_p * dtHours;
+                        totalWhSunEnergyPV += curr.pv * dtHours;
+                        totalWhSunEnergyAC += curr.op * dtHours;
+                        totalWhCons += curr.haus_p * dtHours;
+
+                        if (curr.grid_p > 0) {
+                            totalWhImp += curr.grid_p * dtHours;
+                        } else {
+                            totalWhExp += -curr.grid_p * dtHours;
+                        }
+
+                        if (curr.pb > 0) {
+                            totalWhCharge += curr.pb * dtHours;
+                        } else {
+                            totalWhDischarge += -curr.pb * dtHours;
+                        }
+
+                        // Regelungspräzision im aktiven oder Nacht-Modus (nur wenn Regelung aktiv steuern kann, d.h. Akku nicht leer)
+                        const isRegulating = (curr.mode === "active" || curr.mode === "night") && (curr.soc > 10.5 || curr.op > 2);
+                        if (isRegulating) {
+                            activePointsCount++;
+                            totalAbsoluteError += Math.abs(curr.grid_p);
+                            if (Math.abs(curr.grid_p) <= 20) {
+                                pointsWithin20W++;
+                            }
+                        }
+                    }
+
+                    totalWhSolar = totalWhHoymiles + totalWhSunEnergyPV;
+                    const cleanConsumedWh = totalWhImp > totalWhCons ? 0 : totalWhCons - totalWhImp;
+
+                    const savings = (cleanConsumedWh / 1000) * energyPrice;
+                    const feedInEarnings = (totalWhExp / 1000) * feedInTariff;
+                    const totalEarnings = savings + feedInEarnings;
+                    const roiPercent = systemCost > 0 ? (totalEarnings / systemCost) * 100 : 0;
+                    
+                    const autarkie = totalWhCons > 0 ? (cleanConsumedWh / totalWhCons) * 100 : 0;
+                    const eigenverbrauchPct = totalWhSolar > 0 ? (cleanConsumedWh / totalWhSolar) * 100 : 0;
+                    
+                    // Wirkungsgrad-Prüfung auf Plausibilität (Inkompletter Lade/Entladezyklus führt sonst zu Extremwerten)
+                    const storageEffRaw = totalWhCharge > 0.05 ? (totalWhDischarge / totalWhCharge) * 100 : 0;
+                    const storageEff = (storageEffRaw >= 40 && storageEffRaw <= 110) ? storageEffRaw.toFixed(1) + "%" : "N/A (unvollst. Zyklus)";
+
+                    return {
+                        totalSolarKwh: (totalWhSolar / 1000).toFixed(2),
+                        totalHoymilesKwh: (totalWhHoymiles / 1000).toFixed(2),
+                        totalSunEnergyKwh: (totalWhSunEnergyAC / 1000).toFixed(2),
+                        totalConsKwh: (totalWhCons / 1000).toFixed(2),
+                        totalImpKwh: (totalWhImp / 1000).toFixed(2),
+                        totalExpKwh: (totalWhExp / 1000).toFixed(2),
+                        totalChargeKwh: (totalWhCharge / 1000).toFixed(2),
+                        totalDischargeKwh: (totalWhDischarge / 1000).toFixed(2),
+                        savings: savings.toFixed(2),
+                        feedInEarnings: feedInEarnings.toFixed(2),
+                        totalEarnings: totalEarnings.toFixed(2),
+                        roiPercent: roiPercent.toFixed(1),
+                        autarkie: autarkie.toFixed(1),
+                        eigenverbrauchPct: eigenverbrauchPct.toFixed(1),
+                        storageEff: storageEff,
+                        co2: ((totalWhSolar / 1000) * 0.363).toFixed(1),
+                        
+                        // Regelungsspezifisch
+                        activePointsCount,
+                        precisionPercent: activePointsCount > 0 ? ((pointsWithin20W / activePointsCount) * 100).toFixed(1) : "0.0",
+                        avgDeviation: activePointsCount > 0 ? (totalAbsoluteError / activePointsCount).toFixed(1) : "0.0"
+                    };
+                } else {
+                    // Berechnung für tages- bzw. stundenbasierte Smart-Plug-Logs
+                    let totalWhSolar = 0;
+                    let totalWhCons = 0;
+                    let totalWhImp = 0;
+                    let totalWhExp = 0;
+
+                    rawData.forEach(row => {
+                        const h = row.durationHours;
+                        totalWhSolar += row.solar_p * h; // Hoymiles
+                        totalWhCons += row.haus_p * h;
+                        
+                        if (row.grid_p > 0) {
+                            totalWhImp += row.grid_p * h;
+                        } else {
+                            totalWhExp += -row.grid_p * h;
+                        }
+                    });
+
+                    const cleanConsumedWh = totalWhImp > totalWhCons ? 0 : totalWhCons - totalWhImp;
+                    const savings = (cleanConsumedWh / 1000) * energyPrice;
+                    const feedInEarnings = (totalWhExp / 1000) * feedInTariff;
+                    const totalEarnings = savings + feedInEarnings;
+                    const roiPercent = systemCost > 0 ? (totalEarnings / systemCost) * 100 : 0;
+                    
+                    const autarkie = totalWhCons > 0 ? (cleanConsumedWh / totalWhCons) * 100 : 0;
+
+                    return {
+                        totalSolarKwh: (totalWhSolar / 1000).toFixed(2),
+                        totalConsKwh: (totalWhCons / 1000).toFixed(2),
+                        totalImpKwh: (totalWhImp / 1000).toFixed(2),
+                        totalExpKwh: (totalWhExp / 1000).toFixed(2),
+                        savings: savings.toFixed(2),
+                        feedInEarnings: feedInEarnings.toFixed(2),
+                        totalEarnings: totalEarnings.toFixed(2),
+                        roiPercent: roiPercent.toFixed(1),
+                        autarkie: autarkie.toFixed(1),
+                        eigenverbrauchPct: totalWhSolar > 0 ? (cleanConsumedWh / totalWhSolar * 100).toFixed(1) : '0.0',
+                        co2: ((totalWhSolar / 1000) * 0.363).toFixed(1),
+                    };
+                }
+            }, [rawData, fileType, energyPrice, systemCost, feedInTariff]);
+
+            // Smart Plugs Analyse (nur für 'daily' Typen relevant)
+            const plugStats = useMemo(() => {
+                if (!rawData || fileType !== "daily") return null;
+
+                // Alle verfügbaren Smart Plug Schlüssel finden
+                const sampleRow = rawData[0];
+                if (!sampleRow || !sampleRow.plugs) return null;
+                const plugKeys = Object.keys(sampleRow.plugs);
+
+                const plugConsKwh = {};
+                let totalWhCons = 0;
+
+                rawData.forEach(row => {
+                    const h = row.durationHours;
+                    totalWhCons += row.haus_p * h;
+                    plugKeys.forEach(key => {
+                        const val = row.plugs[key] || 0;
+                        plugConsKwh[key] = (plugConsKwh[key] || 0) + (val * h / 1000);
+                    });
+                });
+
+                const totalConsKwh = totalWhCons / 1000;
+
+                const plugList = Object.entries(plugConsKwh).map(([name, kwh]) => ({
+                    name,
+                    kwh,
+                    pct: totalConsKwh > 0 ? ((kwh / totalConsKwh) * 100).toFixed(1) : '0.0'
+                })).sort((a, b) => b.kwh - a.kwh);
+
+                const totalPlugKwh = plugList.reduce((acc, c) => acc + c.kwh, 0);
+
+                return {
+                    plugs: plugList,
+                    totalPlugKwh: totalPlugKwh.toFixed(2),
+                    totalConsKwh: totalConsKwh.toFixed(2),
+                    plugPct: totalConsKwh > 0 ? ((totalPlugKwh / totalConsKwh) * 100).toFixed(1) : '0.0',
+                    restKwh: Math.max(0, totalConsKwh - totalPlugKwh).toFixed(2),
+                };
+            }, [rawData, fileType]);
+
+            // Screenshot Export
+            const takeScreenshot = async () => {
+                if (!dashboardRef.current || typeof html2canvas === 'undefined') return;
+                setIsExporting(true);
+                try {
+                    const canvas = await html2canvas(dashboardRef.current, {
+                        scale: 2, useCORS: true,
+                        backgroundColor: "#090e17",
+                        ignoreElements: (el) => el.classList.contains('no-export')
+                    });
+                    const link = document.createElement('a');
+                    link.download = `SunEnergyXT_Analysis_${new Date().toISOString().split('T')[0]}.jpg`;
+                    link.href = canvas.toDataURL('image/jpeg', 0.95);
+                    link.click();
+                } catch (err) { console.error(err); } finally { setIsExporting(false); }
+            };
+
+            const cardBg = 'bg-[#111822] border-[#1e2d3d]';
+            const tooltipStyle = { borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3)', backgroundColor: '#111822', color: '#f1f5f9' };
+
+            // --- Ladeanzeige ---
+            if (isLoading) {
+                return (
+                    <div className="bg-[#090e17] min-h-screen flex flex-col items-center justify-center p-6 text-center animate-in">
+                        <div className="relative mb-6">
+                            <div className="w-16 h-16 border-4 border-amber-500/20 border-t-amber-500 rounded-full animate-spin"></div>
+                            <Icon name="zap" size={24} className="text-amber-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 animate-pulse" />
+                        </div>
+                        <h2 className="text-lg font-bold text-slate-100 mb-2">Lade Solardaten vom Controller...</h2>
+                        <p className="text-xs text-slate-400 max-w-xs">Die Logdatei wird direkt geladen und analysiert. Dies kann bei großen Dateien einige Sekunden dauern.</p>
+                    </div>
+                );
+            }
+
+            // --- Landing & Datei-Upload ---
+            if (!rawData) {
+                return (
+                    <div className="bg-[#090e17] min-h-screen flex items-center justify-center p-6 transition-colors duration-300">
+                        <div className="bg-[#111822] border-[#1e2d3d] max-w-xl w-full rounded-3xl shadow-xl p-8 border text-center animate-in">
+                            <div className="mb-6 flex justify-center">
+                                <div className="bg-slate-800/40 px-6 py-4 rounded-2xl border border-slate-700">
+                                    <SunEnergyLogo />
+                                </div>
+                            </div>
+                            <h1 className="text-2xl font-bold mb-2 text-slate-100">SunEnergy XT System Analytics</h1>
+                            <p className="text-slate-400 mb-8 text-sm">Laden Sie Ihre Regler-Logs (`controller_log.csv`) oder Tages-Smart-Plug-Logs (`7rl5v8g4.csv`) hoch.</p>
+
+                            <div onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                                onDragLeave={() => setIsDragging(false)}
+                                onDrop={(e) => { e.preventDefault(); setIsDragging(false); const f = e.dataTransfer.files[0]; if (f) processFile(f); }}
+                                onClick={() => fileInputRef.current.click()}
+                                className={`border-2 border-dashed rounded-2xl p-10 cursor-pointer transition-all ${isDragging ? 'border-amber-500 bg-amber-500/10 shadow-inner' : 'border-slate-700 hover:border-amber-500 hover:bg-slate-800/50'}`}>
+                                <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={(e) => processFile(e.target.files[0])} />
+                                <Icon name="arrow-down-circle" size={48} className={`mx-auto mb-4 transition-all text-slate-500 ${isDragging ? 'text-amber-500 scale-110' : ''}`} />
+                                <p className="font-bold text-slate-300">CSV-Datei hierher ziehen oder auswählen</p>
+                            </div>
+
+                            <div className="mt-10 pt-8 border-t border-slate-800 text-left">
+                                <h2 className="text-sm font-black uppercase tracking-widest mb-4 flex items-center gap-2 text-amber-500">
+                                    <Icon name="info" size={16} /> Unterstützte Datenquellen
+                                </h2>
+                                <div className="space-y-4">
+                                    <div className="p-3 bg-slate-800/20 border border-slate-800 rounded-xl">
+                                        <h3 className="text-xs font-bold text-slate-200 flex items-center gap-1.5"><Icon name="activity" size={12} className="text-blue-400" /> Regler-Logs (5s-Intervall)</h3>
+                                        <p className="text-[11px] text-slate-400 mt-1">Auswertung der Nulleinspeisungs-Präzision, Ladezyklen des Akkus, SoC-Tiefgang und Hoymiles-Limits.</p>
+                                    </div>
+                                    <div className="p-3 bg-slate-800/20 border border-slate-800 rounded-xl">
+                                        <h3 className="text-xs font-bold text-slate-200 flex items-center gap-1.5"><Icon name="plug" size={12} className="text-amber-400" /> Tagesberichte (z.B. mit Smart Plugs)</h3>
+                                        <p className="text-[11px] text-slate-400 mt-1">Auswertung aller angeschlossenen Geräte (Heizung, Pool, IT-Server, Waschmaschine) mit prozentualer Verbrauchsverteilung.</p>
+                                    </div>
+                                </div>
+                            </div>
+                            {error && <div className="mt-6 p-4 rounded-xl flex items-center gap-2 text-sm bg-rose-950/20 text-rose-400 border border-rose-900/60 animate-in">
+                                <Icon name="alert-circle" size={16} /> {error}
+                            </div>}
+                        </div>
+                    </div>
+                );
+            }
+
+            // Tabs definieren
+            const tabs = [
+                { id: 'overview', label: 'Übersicht', icon: 'layout-dashboard' },
+                { id: 'solar', label: 'Solarfluss', icon: 'sun' },
+                ...(fileType === 'highres' ? [
+                    { id: 'precision', label: 'Regler-Präzision', icon: 'activity' },
+                    { id: 'battery', label: 'Batterie', icon: 'battery-charging' }
+                ] : []),
+                ...(fileType === 'daily' ? [
+                    { id: 'smartplug', label: 'Smart Plugs', icon: 'plug' }
+                ] : []),
+                { id: 'table', label: 'Tabelle', icon: 'table' },
+            ];
+
+            return (
+                <div ref={dashboardRef} className="min-h-screen p-4 md:p-8 font-sans overflow-x-hidden bg-[#090e17] text-slate-100">
+                    <div className="max-w-[1700px] mx-auto">
+                        
+                        {/* Header */}
+                        <header className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div>
+                                <div className="flex items-center gap-4">
+                                    <SunEnergyLogo />
+                                    <div className="h-8 w-px hidden md:block bg-slate-800" />
+                                    <h1 className="text-xl font-black tracking-tighter uppercase select-none text-slate-300">
+                                        SYSTEM <span className="italic">ANALYTICS</span>
+                                    </h1>
+                                </div>
+                                <p className="mt-1 flex items-center gap-2 truncate text-xs text-slate-500">
+                                    <Icon name="file-text" size={12} /> {fileName}
+                                    <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                                        {fileType === 'highres' ? 'Regler-Log (5s)' : 'Tagesbericht (10m)'} · {rawData.length} Einträge
+                                    </span>
+                                </p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 no-export">
+                                <a href="." className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold bg-[#111822] border border-[#1e2d3d] text-slate-300 hover:border-amber-500 hover:text-amber-500 transition-all">
+                                    <Icon name="arrow-left" size={15} /> Live-Dashboard
+                                </a>
+                                <button onClick={takeScreenshot} disabled={isExporting} className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 transition-colors">
+                                    <Icon name="camera" size={15} /> Export (Bild)
+                                </button>
+                                <button onClick={() => setShowSettings(!showSettings)} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all ${showSettings ? 'bg-amber-500 border-amber-500 text-[#090e17]' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'}`}>
+                                    <Icon name="sliders-horizontal" size={15} /> Einstellungen
+                                </button>
+                                <button onClick={() => setRawData(null)} className="p-2.5 rounded-xl border bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 transition-colors"><Icon name="x" size={16} /></button>
+                            </div>
+                        </header>
+
+                        {/* Einstellungen */}
+                        {showSettings && (
+                            <div className="mb-6 p-6 rounded-3xl shadow-lg border bg-[#111822] border-amber-500/20 no-export animate-in">
+                                <h3 className="text-sm font-black uppercase tracking-widest mb-5 flex items-center gap-2 text-amber-500">
+                                    <Icon name="sliders-horizontal" size={16} /> ROI- & Tarifeinstellungen
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                                    <div className="space-y-3">
+                                        <label className="text-xs font-black uppercase tracking-wider flex items-center gap-2 text-slate-300">
+                                            <Icon name="zap" size={14} className="text-amber-500" /> Strompreis (€/kWh)
+                                        </label>
+                                        <input type="range" min="0.10" max="0.80" step="0.01" value={energyPrice} onChange={e => setEnergyPrice(parseFloat(e.target.value))} className="w-full" />
+                                        <div className="p-3 rounded-xl border border-slate-800 bg-[#090e17] font-bold text-sm text-amber-500">{energyPrice.toFixed(2)} €/kWh</div>
+                                    </div>
+                                    <div className="space-y-3">
+                                        <label className="text-xs font-black uppercase tracking-wider flex items-center gap-2 text-slate-300">
+                                            <Icon name="trending-up" size={14} className="text-emerald-500" /> Einspeisevergütung (€/kWh)
+                                        </label>
+                                        <input type="range" min="0.00" max="0.20" step="0.001" value={feedInTariff} onChange={e => setFeedInTariff(parseFloat(e.target.value))} className="w-full" />
+                                        <div className="p-3 rounded-xl border border-slate-800 bg-[#090e17] font-bold text-sm text-emerald-500">{feedInTariff.toFixed(3)} €/kWh</div>
+                                    </div>
+                                    <div className="space-y-3">
+                                        <label className="text-xs font-black uppercase tracking-wider flex items-center gap-2 text-slate-300">
+                                            <Icon name="wallet" size={14} className="text-blue-500" /> Anschaffungskosten (€)
+                                        </label>
+                                        <input type="number" value={systemCost} onChange={e => setSystemCost(parseInt(e.target.value) || 0)} className="w-full p-3 border border-slate-800 bg-[#090e17] text-slate-100 rounded-xl font-bold focus:ring-2 focus:ring-amber-500 outline-none" />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {stats && (
+                            <>
+                                {/* Stat-Karten */}
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4 mb-6">
+                                    <StatCard title="Ersparnis (Gesamt)" value={`${stats.totalEarnings} €`} iconName="euro" highlight={true}
+                                        secondaryTitle="Amortisationsfortschritt" secondaryValue={`${stats.roiPercent}% bei ${systemCost} € Kosten`} />
+                                    
+                                    <StatCard title="Solarerzeugung" value={`${stats.totalSolarKwh} kWh`} iconName="sun" iconColor="text-amber-500"
+                                        secondaryTitle="Davon eingespeist" secondaryValue={`${stats.totalExpKwh} kWh (${stats.feedInEarnings} €)`} />
+                                    
+                                    {fileType === 'highres' ? (
+                                        <StatCard title="SunEnergy AC" value={`${stats.totalSunEnergyKwh} kWh`} iconName="zap" iconColor="text-blue-500"
+                                            secondaryTitle="Hoymiles AC" secondaryValue={`${stats.totalHoymilesKwh} kWh`} />
+                                    ) : (
+                                        <StatCard title="Hausverbrauch" value={`${stats.totalConsKwh} kWh`} iconName="home" iconColor="text-blue-500"
+                                            secondaryTitle="Eigenverbrauchsquote" secondaryValue={`${stats.eigenverbrauchPct}%`} />
+                                    )}
+
+                                    <StatCard title="Autarkiequote" value={`${stats.autarkie}%`} iconName="shield" iconColor="text-emerald-500"
+                                        secondaryTitle="CO₂ eingespart" secondaryValue={`${stats.co2} kg`} />
+
+                                    {fileType === 'highres' ? (
+                                        <>
+                                            <StatCard title="Regler-Präzision" value={`${stats.precisionPercent}%`} iconName="activity" iconColor="text-purple-500"
+                                                secondaryTitle="Ø Abweichung" secondaryValue={`${stats.avgDeviation} W`} />
+                                            <StatCard title="Akku-Ladeleistung" value={`${stats.totalChargeKwh} kWh`} iconName="battery-charging" iconColor="text-emerald-400"
+                                                secondaryTitle="Wirkungsgrad (AC/DC)" secondaryValue={stats.storageEff} />
+                                        </>
+                                    ) : (
+                                        <>
+                                            <StatCard title="Smart Plug Verbrauch" value={plugStats ? `${plugStats.totalPlugKwh} kWh` : "0.00 kWh"} iconName="plug" iconColor="text-indigo-400"
+                                                secondaryTitle="Geräteanteil" secondaryValue={plugStats ? `${plugStats.plugPct}%` : "0%"} />
+                                            <StatCard title="Netzbezug" value={`${stats.totalImpKwh} kWh`} iconName="arrow-down-circle" iconColor="text-rose-500"
+                                                secondaryTitle="Kosten Netzbezug" secondaryValue={`${(parseFloat(stats.totalImpKwh) * energyPrice).toFixed(2)} €`} />
+                                        </>
+                                    )}
+                                </div>
+
+                                {/* Tab-Navigation */}
+                                <div className="flex overflow-x-auto custom-scrollbar gap-1 p-1 rounded-2xl border bg-[#111822] border-slate-800 mb-6 no-export">
+                                    {tabs.map(tab => (
+                                        <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                                            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${activeTab === tab.id ? 'bg-amber-500 text-[#090e17]' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'}`}>
+                                            <Icon name={tab.icon} size={14} /> {tab.label}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* Slider (für High-Res/Tagesverläufe) */}
+                                {showSlider && (
+                                    <div className="mb-5 px-4 py-3 rounded-2xl border bg-[#111822] border-slate-800 flex items-center gap-4 no-export">
+                                        <Icon name="calendar-range" size={16} className="text-slate-500" />
+                                        <input type="range" min="0" max={Math.max(0, sourceLength - windowSize)} value={scrollIndex}
+                                            onChange={e => setScrollIndex(parseInt(e.target.value))} className="flex-1 accent-amber-500" />
+                                        <span className="text-[10px] font-bold px-3 py-1.5 rounded-lg min-w-[200px] text-center bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                                            {fileType === 'highres' 
+                                                ? `${chartData[0]?.ts || "?"} — ${chartData[chartData.length-1]?.ts || "?"}`
+                                                : `${chartData[0]?.category || "?"} — ${chartData[chartData.length-1]?.category || "?"}`
+                                            }
+                                        </span>
+                                    </div>
+                                )}
+
+                                {/* ===== TAB: ÜBERSICHT ===== */}
+                                {activeTab === 'overview' && (
+                                    <div className="space-y-6 animate-in">
+                                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                            {/* Haupt-Energiefluss-Diagramm */}
+                                            <div className={`${cardBg} lg:col-span-2 p-6 rounded-2xl shadow-sm border flex flex-col`}>
+                                                <h2 className="text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2 text-slate-300">
+                                                    <Icon name="activity" size={16} className="text-blue-500" /> Energiefluss (Leistung über Zeit)
+                                                </h2>
+                                                <div className="h-[380px]">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <AreaChart data={chartData}>
+                                                            <defs>
+                                                                 <linearGradient id="gGen" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f0a500" stopOpacity={0.35}/><stop offset="95%" stopColor="#f0a500" stopOpacity={0}/></linearGradient>
+                                                                 <linearGradient id="gCons" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#00c2ff" stopOpacity={0.3}/><stop offset="95%" stopColor="#00c2ff" stopOpacity={0}/></linearGradient>
+                                                                 <linearGradient id="gImp" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f43f5e" stopOpacity={0.15}/><stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/></linearGradient>
+                                                            </defs>
+                                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e2d3d" />
+                                                            <XAxis dataKey={fileType === 'highres' ? "ts" : "category"} fontSize={10} stroke="#4a5568" tickMargin={10} />
+                                                            <YAxis fontSize={10} stroke="#4a5568" unit=" W" tickMargin={8} />
+                                                            <Tooltip content={<CustomTooltip unit="W" />} />
+                                                            <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
+                                                            <Area type="monotone" name="Hoymiles PV" dataKey="solar_p" stroke="#f0a500" fill="url(#gGen)" strokeWidth={2.5} isAnimationActive={false} />
+                                                            <Area type="monotone" name="Hausverbrauch" dataKey="haus_p" stroke="#00c2ff" fill="url(#gCons)" strokeWidth={2.5} isAnimationActive={false} />
+                                                            <Area type="monotone" name="Netzleistung" dataKey="grid_p" stroke="#f43f5e" fill="url(#gImp)" strokeDasharray="5 5" strokeWidth={2} isAnimationActive={false} />
+                                                            {fileType === 'highres' && <Area type="monotone" name="SunEnergy AC Out" dataKey="op" stroke="#10B981" strokeWidth={2} fill="transparent" isAnimationActive={false} />}
+                                                        </AreaChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                            </div>
+
+                                            {/* Batterie/Status-Verlauf */}
+                                            <div className={`${cardBg} p-6 rounded-2xl shadow-sm border flex flex-col`}>
+                                                <h2 className="text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2 text-slate-300">
+                                                    <Icon name="battery" size={16} className="text-emerald-500" /> Batterie-Ladezustand (SoC)
+                                                </h2>
+                                                <div className="h-[220px]">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <LineChart data={chartData}>
+                                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e2d3d" />
+                                                            <XAxis dataKey={fileType === 'highres' ? "ts" : "category"} fontSize={9} stroke="#4a5568" />
+                                                            <YAxis fontSize={9} stroke="#4a5568" unit="%" domain={[0, 100]} />
+                                                            <Tooltip formatter={(v) => [`${v.toFixed(1)}%`]} />
+                                                            <Line type="monotone" name="SOC" dataKey="soc" stroke="#10B981" strokeWidth={3} dot={false} isAnimationActive={false} />
+                                                        </LineChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                                <div className="mt-4 pt-4 border-t border-slate-800 space-y-3">
+                                                    <div className="flex justify-between items-center text-xs text-slate-400">
+                                                        <span>Maximale Akku-Ladung</span>
+                                                        <span className="font-bold text-slate-100">{Math.max(...chartData.map(d => d.soc || 0)).toFixed(0)}%</span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-xs text-slate-400">
+                                                        <span>Minimale Akku-Ladung</span>
+                                                        <span className="font-bold text-slate-100">{Math.min(...chartData.map(d => d.soc || 100)).toFixed(0)}%</span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-xs text-slate-400">
+                                                        <span>Durchschnittlicher SoC</span>
+                                                        <span className="font-bold text-slate-100">{(chartData.reduce((acc, c) => acc + c.soc, 0) / chartData.length).toFixed(1)}%</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ===== TAB: SOLARFLUSS ===== */}
+                                {activeTab === 'solar' && (
+                                    <div className="space-y-6 animate-in">
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                            {/* Solarerzeugung gestapelt */}
+                                            <div className={`${cardBg} p-6 rounded-2xl shadow-sm border`}>
+                                                <h2 className="text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2 text-slate-300">
+                                                    <Icon name="sun" size={16} className="text-amber-500" /> Solarerzeugungs-Quellen
+                                                </h2>
+                                                <div className="h-[300px]">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <BarChart data={chartData}>
+                                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e2d3d" />
+                                                            <XAxis dataKey={fileType === 'highres' ? "ts" : "category"} fontSize={10} stroke="#4a5568" />
+                                                            <YAxis fontSize={10} stroke="#4a5568" unit=" W" />
+                                                            <Tooltip content={<CustomTooltip unit="W" />} />
+                                                            <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
+                                                            <Bar name="Hoymiles (Direkt-Solar)" dataKey="solar_p" stackId="s" fill="#f0a500" isAnimationActive={false} />
+                                                            {fileType === 'highres' && <Bar name="SunEnergy XT PV (Akku-Solar)" dataKey="pv" stackId="s" fill="#00c2ff" isAnimationActive={false} />}
+                                                        </BarChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                            </div>
+
+                                            {/* Hausverbrauch deckung */}
+                                            <div className={`${cardBg} p-6 rounded-2xl shadow-sm border`}>
+                                                <h2 className="text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2 text-slate-300">
+                                                    <Icon name="home" size={16} className="text-blue-500" /> Deckung Hausverbrauch
+                                                </h2>
+                                                <div className="h-[300px]">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <BarChart data={chartData}>
+                                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e2d3d" />
+                                                            <XAxis dataKey={fileType === 'highres' ? "ts" : "category"} fontSize={10} stroke="#4a5568" />
+                                                            <YAxis fontSize={10} stroke="#4a5568" unit=" W" />
+                                                            <Tooltip content={<CustomTooltip unit="W" />} />
+                                                            <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
+                                                            <Bar name="Hoymiles AC" dataKey="solar_p" stackId="h" fill="#f0a500" isAnimationActive={false} />
+                                                            <Bar name="SunEnergy AC Out" dataKey="op" stackId="h" fill="#10B981" isAnimationActive={false} />
+                                                            <Bar name="Netzbezug" dataKey={(d) => d.grid_p > 0 ? d.grid_p : 0} stackId="h" fill="#f43f5e" radius={[4,4,0,0]} isAnimationActive={false} />
+                                                        </BarChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ===== TAB: REGLER-PRÄZISION (nur High-Res) ===== */}
+                                {activeTab === 'precision' && fileType === 'highres' && (
+                                    <div className="space-y-6 animate-in">
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            {/* Großer Präzisionszähler */}
+                                            <div className={`${cardBg} p-6 rounded-2xl shadow-sm border flex flex-col justify-between`}>
+                                                <div>
+                                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-1.5"><Icon name="activity" size={14} className="text-purple-500" /> Nulleinspeisungs-Score</h3>
+                                                    <p className="text-5xl font-black text-slate-100">{stats.precisionPercent}%</p>
+                                                    <p className="text-[11px] text-slate-400 mt-2">der Regelzeit lag der Netzbezug/die Einspeisung innerhalb von ±20 W. Perfekte Nulleinspeisung.</p>
+                                                </div>
+                                                <div className="mt-6">
+                                                    <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+                                                        <div className="h-full bg-purple-500" style={{ width: `${stats.precisionPercent}%` }} />
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className={`${cardBg} p-6 rounded-2xl shadow-sm border flex flex-col justify-between`}>
+                                                <div>
+                                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-1.5"><Icon name="sliders-horizontal" size={14} className="text-amber-500" /> Durchschnitts-Offset</h3>
+                                                    <p className="text-5xl font-black text-amber-500">{stats.avgDeviation} W</p>
+                                                    <p className="text-[11px] text-slate-400 mt-2">mittlere absolute Abweichung von der Nulleinspeisung. Je niedriger dieser Wert, desto flüssiger regelt das Skript.</p>
+                                                </div>
+                                                <div className="text-xs text-slate-400 mt-4 italic">
+                                                    Regelintervalle: alle {POLL_INTERVAL}s (Shelly Pro 3EM)
+                                                </div>
+                                            </div>
+
+                                            <div className={`${cardBg} p-6 rounded-2xl shadow-sm border flex flex-col justify-between`}>
+                                                <div>
+                                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-1.5"><Icon name="zap" size={14} className="text-emerald-500" /> Regelungspunkte</h3>
+                                                    <p className="text-5xl font-black text-emerald-400">{stats.activePointsCount}</p>
+                                                    <p className="text-[11px] text-slate-400 mt-2">aktive Reglerzyklen in diesem CSV-Auswertungszeitraum.</p>
+                                                </div>
+                                                <div className="text-[11px] text-slate-400 mt-4">
+                                                    Controller-Modus: <span className="text-emerald-500 font-bold">active</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Regelkurve Fluktuation */}
+                                        <div className={`${cardBg} p-6 rounded-2xl border`}>
+                                            <h2 className="text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2 text-slate-300">
+                                                <Icon name="git-commit" size={16} className="text-purple-500" /> Fluktuation um den Nullpunkt
+                                            </h2>
+                                            <div className="h-[280px]">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <ComposedChart data={chartData}>
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#1e2d3d" />
+                                                        <XAxis dataKey="ts" fontSize={10} stroke="#4a5568" />
+                                                        <YAxis fontSize={10} stroke="#4a5568" unit=" W" />
+                                                        <Tooltip content={<CustomTooltip unit="W" />} />
+                                                        <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
+                                                        <Bar name="Netzleistung (Regelung)" dataKey="grid_p" fill="#f43f5e" isAnimationActive={false}>
+                                                            {chartData.map((entry, index) => {
+                                                                const isPrecise = Math.abs(entry.grid_p) <= 20;
+                                                                return <Cell key={`cell-${index}`} fill={isPrecise ? '#10B981' : '#f43f5e'} opacity={0.6} />;
+                                                            })}
+                                                        </Bar>
+                                                        <Line name="Sollwert (gs)" dataKey="gs" stroke="#f0a500" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                                                        <Line name="Ausgangsleistung (op)" dataKey="op" stroke="#00c2ff" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                                                    </ComposedChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ===== TAB: BATTERIE-ANALYSE (nur High-Res) ===== */}
+                                {activeTab === 'battery' && fileType === 'highres' && (
+                                    <div className="space-y-6 animate-in">
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                            {/* Batterieleistung Verlauf */}
+                                            <div className={`${cardBg} p-6 rounded-2xl border`}>
+                                                <h2 className="text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2 text-slate-300">
+                                                    <Icon name="battery-charging" size={16} className="text-emerald-400" /> Batterie-Ladeleistung & SOC
+                                                </h2>
+                                                <div className="h-[300px]">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <ComposedChart data={chartData}>
+                                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e2d3d" />
+                                                            <XAxis dataKey="ts" stroke="#4a5568" fontSize={10} />
+                                                            <YAxis yAxisId="left" stroke="#4a5568" unit=" W" fontSize={10} />
+                                                            <YAxis yAxisId="right" orientation="right" stroke="#4a5568" unit="%" domain={[0, 100]} fontSize={10} />
+                                                            <Tooltip content={<CustomTooltip unit="W" />} />
+                                                            <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
+                                                            <Bar yAxisId="left" name="Laden (W)" dataKey={(d) => d.pb > 0 ? d.pb : 0} fill="#10B981" opacity={0.6} isAnimationActive={false} />
+                                                            <Bar yAxisId="left" name="Entladen (W)" dataKey={(d) => d.pb < 0 ? -d.pb : 0} fill="#f0a500" opacity={0.6} isAnimationActive={false} />
+                                                            <Line yAxisId="right" type="monotone" name="SOC (%)" dataKey="soc" stroke="#00c2ff" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                                                        </ComposedChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                            </div>
+
+                                            {/* Wirkungsgrad & Zyklen */}
+                                            <div className={`${cardBg} p-6 rounded-2xl border flex flex-col justify-between`}>
+                                                <div>
+                                                    <h2 className="text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2 text-slate-300">
+                                                        <Icon name="trending-up" size={16} className="text-blue-400" /> Speicherwirkungsgrad & Verluste
+                                                    </h2>
+                                                    <p className="text-xs text-slate-400 mb-6">
+                                                        Der Wirkungsgrad ergibt sich aus dem Verhältnis der entnommenen AC-Leistung zur geladenen DC-Leistung (inkl. Umwandlungsverlusten des Inverters).
+                                                    </p>
+                                                    <div className="space-y-4">
+                                                        <div className="flex justify-between items-center p-3 rounded-xl bg-slate-800/30 border border-slate-800">
+                                                            <span className="text-xs text-slate-400">Gesamte Ladeenergie (DC)</span>
+                                                            <span className="font-bold text-slate-100">{stats.totalChargeKwh} kWh</span>
+                                                        </div>
+                                                        <div className="flex justify-between items-center p-3 rounded-xl bg-slate-800/30 border border-slate-800">
+                                                            <span className="text-xs text-slate-400">Gesamte Entladeenergie (AC)</span>
+                                                            <span className="font-bold text-slate-100">{stats.totalDischargeKwh} kWh</span>
+                                                        </div>
+                                                        <div className="flex justify-between items-center p-3 rounded-xl bg-slate-800/30 border border-slate-800">
+                                                            <span className="text-xs text-slate-400">Verluste (Wärme/Umwandlung)</span>
+                                                            <span className="font-bold text-rose-400">{(parseFloat(stats.totalChargeKwh) - parseFloat(stats.totalDischargeKwh)).toFixed(2)} kWh</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="pt-6 border-t border-slate-800">
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-xs text-slate-300 font-bold">Wirkungsgrad (AC / DC)</span>
+                                                        <span className="text-lg font-black text-emerald-400">{stats.storageEff}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ===== TAB: SMART PLUGS (nur Daily) ===== */}
+                                {activeTab === 'smartplug' && fileType === 'daily' && plugStats && (
+                                    <div className="space-y-6 animate-in">
+                                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                            {/* Liste der Verbraucher */}
+                                            <div className={`${cardBg} lg:col-span-2 p-6 rounded-2xl border flex flex-col`}>
+                                                <h2 className="text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2 text-slate-300">
+                                                    <Icon name="list" size={16} className="text-indigo-400" /> Verbraucher-Rangliste (Smart Plugs)
+                                                </h2>
+                                                <div className="space-y-4 overflow-y-auto custom-scrollbar pr-2 flex-1" style={{ maxHeight: '420px' }}>
+                                                    {plugStats.plugs.map((plug, idx) => (
+                                                        <div key={plug.name} className="space-y-1">
+                                                            <div className="flex justify-between text-xs">
+                                                                <span className="font-bold text-slate-200 flex items-center gap-2">
+                                                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></div>
+                                                                    {plug.name}
+                                                                </span>
+                                                                <span className="font-bold text-slate-100">{plug.kwh.toFixed(2)} kWh <span className="font-normal text-[10px] text-slate-500">({plug.pct}%)</span></span>
+                                                            </div>
+                                                            <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+                                                                <div className="h-full rounded-full" style={{ width: `${plug.pct}%`, backgroundColor: COLORS[idx % COLORS.length] }}></div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Verbrauchsverteilung Donut */}
+                                            <div className={`${cardBg} p-6 rounded-2xl border flex flex-col`}>
+                                                <h2 className="text-sm font-bold uppercase tracking-wider mb-2 text-slate-300">Verteilungsverhältnis</h2>
+                                                <p className="text-[10px] text-slate-500 mb-6">Anteil aller Smart Plugs am Hausverbrauch im Auswertungszeitraum.</p>
+                                                <div className="h-[200px]">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <PieChart>
+                                                            <Pie
+                                                                data={[
+                                                                    { name: 'Smart Plugs', value: parseFloat(plugStats.totalPlugKwh) },
+                                                                    { name: 'Übriger Haushalt', value: parseFloat(plugStats.restKwh) }
+                                                                ]}
+                                                                cx="50%" cy="50%" innerRadius={55} outerRadius={80} paddingAngle={6} dataKey="value" isAnimationActive={false}>
+                                                                <Cell fill="#818CF8" cornerRadius={4} />
+                                                                <Cell fill="#1e2d3d" cornerRadius={4} />
+                                                            </Pie>
+                                                            <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${v.toFixed(2)} kWh`]} />
+                                                        </PieChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                                <div className="mt-4 pt-4 border-t border-slate-800 space-y-2.5">
+                                                    <div className="flex justify-between items-center text-xs">
+                                                        <span className="flex items-center gap-2 text-slate-400">
+                                                            <div className="w-2 h-2 rounded-full bg-indigo-500"></div>Smart Plugs Gesamt
+                                                        </span>
+                                                        <span className="font-bold text-slate-100">{plugStats.totalPlugKwh} kWh ({plugStats.plugPct}%)</span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center text-xs">
+                                                        <span className="flex items-center gap-2 text-slate-400">
+                                                            <div className="w-2 h-2 rounded-full bg-[#1e2d3d]"></div>Grundlast / Sonstige
+                                                        </span>
+                                                        <span className="font-bold text-slate-100">{plugStats.restKwh} kWh ({(100 - parseFloat(plugStats.plugPct)).toFixed(1)}%)</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Smart Plugs im Zeitverlauf */}
+                                        <div className={`${cardBg} p-6 rounded-2xl border`}>
+                                            <h2 className="text-sm font-bold uppercase tracking-wider mb-6 flex items-center gap-2 text-slate-300">
+                                                <Icon name="plug" size={16} className="text-indigo-400" /> Einzelverbräuche über den Tag
+                                            </h2>
+                                            <div className="h-[300px]">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <AreaChart data={chartData}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e2d3d" />
+                                                        <XAxis dataKey="category" fontSize={10} stroke="#4a5568" />
+                                                        <YAxis fontSize={10} stroke="#4a5568" unit=" W" />
+                                                        <Tooltip content={<CustomTooltip unit="W" />} />
+                                                        <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
+                                                        {plugStats.plugs.slice(0, 5).map((plug, idx) => (
+                                                            <Area key={plug.name} type="monotone" name={plug.name} dataKey={`plugs.${plug.name}`} stackId="plugs" fill={COLORS[idx % COLORS.length]} stroke={COLORS[idx % COLORS.length]} strokeWidth={1} opacity={0.6} isAnimationActive={false} />
+                                                        ))}
+                                                    </AreaChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ===== TAB: TABELLE ===== */}
+                                {activeTab === 'table' && (
+                                    <div className={`${cardBg} p-6 rounded-2xl shadow-sm border animate-in`}>
+                                        <div className="flex items-center justify-between mb-6">
+                                            <h2 className="text-sm font-bold uppercase tracking-wider flex items-center gap-2 text-slate-300">
+                                                <Icon name="table" size={16} className="text-slate-500" /> Detaildaten
+                                            </h2>
+                                            <span className="text-xs px-3 py-1 rounded-lg font-bold bg-slate-800 text-slate-400 border border-slate-700">{chartData.length} Einträge im Viewport</span>
+                                        </div>
+                                        <div className="overflow-x-auto custom-scrollbar max-h-[520px]">
+                                            <table className="w-full text-left text-xs whitespace-nowrap">
+                                                <thead className="sticky top-0 z-10 bg-[#111822] text-slate-400 border-b border-slate-850">
+                                                    {fileType === 'highres' ? (
+                                                        <tr>
+                                                            {['Zeitstempel','Mode','SoC (%)','Netzleistung (W)','Hausverbrauch (W)','Hoymiles PV (W)','Inverter Sollwert (W)','SunEnergy AC Out (W)','SunEnergy PV (W)','Akku Ladeleistung (W)'].map(h => (
+                                                                <th key={h} className="pb-3 pr-4 font-bold uppercase tracking-wider text-[9px]">{h}</th>
+                                                            ))}
+                                                        </tr>
+                                                    ) : (
+                                                        <tr>
+                                                            {['Datum','Netz Ø (W)','Hoymiles PV (W)','SunEnergy AC Out (W)','Hausverbrauch (W)','Batterie SoC (%)'].map(h => (
+                                                                <th key={h} className="pb-3 pr-4 font-bold uppercase tracking-wider text-[9px]">{h}</th>
+                                                            ))}
+                                                        </tr>
+                                                    )}
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-800/40">
+                                                    {chartData.slice().reverse().map((d, idx) => (
+                                                        <tr key={idx} className="transition-colors hover:bg-slate-800/30">
+                                                            {fileType === 'highres' ? (
+                                                                <>
+                                                                    <td className="py-2.5 pr-4 font-semibold text-slate-400">{d.ts}</td>
+                                                                    <td className="py-2.5 pr-4"><span className={`px-2 py-0.5 rounded text-[10px] font-bold ${d.mode === 'active' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}`}>{d.mode}</span></td>
+                                                                    <td className="py-2.5 pr-4 text-blue-400 font-bold">{d.soc.toFixed(1)}%</td>
+                                                                    <td className={`py-2.5 pr-4 font-bold ${Math.abs(d.grid_p) <= 20 ? 'text-emerald-500' : 'text-rose-500'}`}>{d.grid_p.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-slate-200">{d.haus_p.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-amber-500">{d.solar_p.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-slate-500">{d.gs}</td>
+                                                                    <td className="py-2.5 pr-4 text-emerald-400">{d.op.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-blue-400">{d.pv.toFixed(1)}</td>
+                                                                    <td className={`py-2.5 pr-4 font-bold ${d.pb > 0 ? 'text-emerald-500' : 'text-amber-500'}`}>{d.pb.toFixed(1)}</td>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <td className="py-2.5 pr-4 font-semibold text-slate-400">{d.category}</td>
+                                                                    <td className={`py-2.5 pr-4 font-bold ${d.grid_p > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>{d.grid_p.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-amber-500 font-bold">{d.solar_p.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-emerald-400 font-bold">{d.op.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-slate-200">{d.haus_p.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-blue-400">{d.soc.toFixed(1)}%</td>
+                                                                </>
+                                                            )}
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Footer */}
+                                <footer className="mt-8 pt-6 border-t border-slate-800 text-center text-[10px] text-slate-600">
+                                    SUNENERGY XT Analytics · Alle Daten verbleiben lokal in Ihrem Browser · Keine Datenübertragung
+                                </footer>
+                            </>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const rootElement = document.getElementById('root');
+        const root = ReactDOM.createRoot(rootElement);
+        root.render(<App />);
+    </script>
+</body>
+</html>

@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local backup/custom folders
+sunenergy_controller/Claude versionsvorschlag/
+sunenergy_controller/Log/

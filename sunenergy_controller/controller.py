@@ -117,8 +117,8 @@ def csv_log(row: dict):
                 w.writeheader()
             w.writerow(row)
         # Nach dem Schreiben: nur wenn Datei zu groß, kürzen (billiger getsize-Check)
-        if os.path.getsize(CSV_PATH) > CSV_MAX_BYTES:
-            trim_csv(CSV_PATH)
+        # if os.path.getsize(CSV_PATH) > CSV_MAX_BYTES:
+        #     trim_csv(CSV_PATH)
     except Exception as e:
         log.debug("CSV log Fehler: %s", e)
 

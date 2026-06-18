@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.9.8
+- **Analyse-Dashboard Integration**: Das Premium-Analyse-Dashboard wurde direkt in die Weboberfläche eingebaut und ist über den Button "Systemanalyse" im Footer erreichbar. Die Logdaten werden vollautomatisch geladen.
+- **Unbegrenztes Logging**: Das automatische Kürzen des CSV-Logs nach 2 MB wurde deaktiviert, um den gesamten Verlauf dauerhaft zu speichern.
+
 ## v1.9.7
 - **Fix Manuelle Einspeisung**: Verhindert das Drosseln der DC-PV-Module (Carport) am SunEnergy XT auf Minimalwerte (z. B. 30 W / 1 %) während der manuellen Einspeisung. Setzt das IS-Limit während dieser Phase dauerhaft auf 2400 W (100 %).
 

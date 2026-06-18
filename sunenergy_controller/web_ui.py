@@ -176,8 +176,11 @@ HTML = """<!DOCTYPE html>
 
 <div class="footer">
   <span id="ts">—</span>
-  <a href="log" class="btn">⬇ CSV Download</a>
-  <button class="btn" style="margin-left:8px;border-color:#ff3d57;color:#ff3d57" onclick="deleteLog()">🗑 Log löschen</button>
+  <div>
+    <a href="analyse" class="btn" style="border-color:var(--green);color:var(--green)">📊 Systemanalyse</a>
+    <a href="log" class="btn" style="margin-left:8px">⬇ CSV Download</a>
+    <button class="btn" style="margin-left:8px;border-color:#ff3d57;color:#ff3d57" onclick="deleteLog()">🗑 Log löschen</button>
+  </div>
 </div>
 
 <script>
@@ -382,6 +385,20 @@ class UIHandler(BaseHTTPRequestHandler):
                 "a_freq": 50.0, "b_freq": 50.0, "c_freq": 50.0,
             }
             self._json(meter_data)
+
+        elif self.path == "/analyse" or self.path == "/analysis":
+            html_path = Path(__file__).parent / "analyse.html"
+            if html_path.exists():
+                with open(html_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(content.encode("utf-8"))
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Analyse-Datei nicht gefunden")
 
         elif self.path == "/":
             self.send_response(200)
