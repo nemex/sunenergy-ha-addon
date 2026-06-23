@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.0.0
+- **Nulleinspeisung-Bypass für morgen**: Neuer Schalter `input_boolean.sunenergy_bypass_tomorrow` ermöglicht es, die Nulleinspeisung am nächsten Kalendertag (von 0:00 bis 24:00 Uhr) komplett auszusetzen, um die maximale Erzeugung bei perfektem Solarwetter zu testen. Hoymiles und Carport-Module laufen dabei zu 100 % ungedrosselt. Am Folgetag kehrt das System automatisch wieder zur Nulleinspeisung zurück.
+- **Web-UI Erweiterung**: Unterstützung des Bypass-Modus auf dem Live-Dashboard mit passenden Statusmeldungen und optischer Kennzeichnung.
+
 ## v1.9.9
 - **Fix Dockerfile**: Kopieren von `analyse.html` in den Docker-Container hinzugefügt, um den Fehler "Analyse-Datei nicht gefunden" zu beheben.
 

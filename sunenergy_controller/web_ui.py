@@ -90,6 +90,7 @@ HTML = """<!DOCTYPE html>
   .mode.night { background: rgba(74,85,104,0.3); color: var(--muted); border: 1px solid var(--muted); }
   .mode.feed_in { background: rgba(0,194,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
   .mode.feed_in_standby { background: rgba(240,165,0,0.15); color: var(--accent); border: 1px solid var(--accent); }
+  .mode.bypass { background: rgba(236,72,153,0.15); color: #ec4899; border: 1px solid #ec4899; }
   .soc-bar { height: 5px; background: var(--border); border-radius: 3px; margin-top: 6px; overflow: hidden; }
   .soc-fill { height: 100%; background: var(--green); border-radius: 3px; transition: width 1s; }
   .chart-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 16px; margin-bottom: 20px; }
@@ -225,7 +226,7 @@ function updateCards(state, csv) {
     mode = 'soc_full';
   }
   const el = document.getElementById('c-mode');
-  el.textContent = { active: 'AKTIV REGELND', soc_full: 'SOC VOLL (IS)', night: 'NACHT', calibration: 'ZWANGSLADUNG', feed_in: 'EINSPEISUNG AKTIV', feed_in_standby: 'EINSPEISUNG STANDBY' }[mode] || mode.toUpperCase();
+  el.textContent = { active: 'AKTIV REGELND', soc_full: 'SOC VOLL (IS)', night: 'NACHT', calibration: 'ZWANGSLADUNG', feed_in: 'EINSPEISUNG AKTIV', feed_in_standby: 'EINSPEISUNG STANDBY', bypass: 'BYPASS AKTIV' }[mode] || mode.toUpperCase();
   el.className = 'mode ' + mode;
 
   const grid = parseFloat(csv.grid_p || state.grid_p_filtered || 0);
@@ -261,6 +262,11 @@ function updateCards(state, csv) {
     seReason = 'Nacht';
     h2000Reason = 'Nacht';
     h1600Reason = 'Nacht';
+  } else if (currentMode === 'bypass') {
+    statusText = '🟢 Bypass aktiv — ungedrosselt (' + Math.round(currentGrid) + 'W Einspeisung)';
+    seReason = '✅ Bypass (100%)';
+    h2000Reason = '✅ Bypass (100%)';
+    h1600Reason = '✅ Bypass (100%)';
   } else if (currentGrid < -25) {
     statusText = '🟡 Gedrosselt — Überschuss (' + Math.round(currentGrid) + 'W Einspeisung)';
     seReason = seLim < 2400 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';

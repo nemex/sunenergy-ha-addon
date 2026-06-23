@@ -607,6 +607,44 @@ def main():
                     state["manual_feed_in_accumulated_kwh"] = 0.0
                     log.info("🔋 Manuelle Einspeisung gestoppt.")
 
+            # ------------------------------------------------------------------
+            # 3c. Bypass Nulleinspeisung morgen prüfen
+            # ------------------------------------------------------------------
+            bypass_tomorrow_switch = opts.get("bypass_tomorrow_switch", "input_boolean.sunenergy_bypass_tomorrow")
+            bypass_active = False
+            if bypass_tomorrow_switch:
+                bypass_switch_state = ha_get_state(bypass_tomorrow_switch, "off")
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                bypass_date = state.get("bypass_date")
+                
+                if bypass_switch_state == "on":
+                    if not bypass_date:
+                        tomorrow_dt = datetime.now() + timedelta(days=1)
+                        bypass_date = tomorrow_dt.strftime("%Y-%m-%d")
+                        state["bypass_date"] = bypass_date
+                        log.info("📅 Nulleinspeisung-Bypass für morgen (%s) eingeplant.", bypass_date)
+                        save_state(state)
+                else:
+                    if bypass_date:
+                        log.info("📅 Nulleinspeisung-Bypass Planung verworfen.")
+                        state["bypass_date"] = None
+                        bypass_date = None
+                        save_state(state)
+                
+                if bypass_date:
+                    if today_str == bypass_date:
+                        bypass_active = True
+                    elif today_str > bypass_date:
+                        log.info("📅 Nulleinspeisung-Bypass für %s abgelaufen. Zurücksetzen...", bypass_date)
+                        if not DRY_RUN:
+                            HA_SESSION.post(
+                                f"{HA_URL}/api/services/input_boolean/turn_off",
+                                json={"entity_id": bypass_tomorrow_switch},
+                                timeout=5,
+                            )
+                        state["bypass_date"] = None
+                        save_state(state)
+
 
             # ------------------------------------------------------------------
             # 4. Sonnenstand
@@ -783,7 +821,9 @@ def main():
             # ------------------------------------------------------------------
             # 7. Tagregelung — universell für jeden SOC mit Spam-Schutz
             # ------------------------------------------------------------------
-            if feed_in_active:
+            if bypass_active:
+                state["active_mode"] = "bypass"
+            elif feed_in_active:
                 state["active_mode"] = "feed_in" if is_actively_feeding_in else "feed_in_standby"
             else:
                 state["active_mode"] = "active"
@@ -791,12 +831,22 @@ def main():
             # Netz-Fehler bezüglich des Soll-Netzwertes (0W bzw. -500W bei manueller Einspeisung)
             grid_error = grid_p_raw - grid_target
 
-            # GS Formel: gedämpft → gs_last + grid_error * 0.5
-            gs_last = float(state.get("last_gs", 0))
-            gs_new = gs_last + grid_error * 0.5
-            if low_soc_active:
-                gs_new = min(0.0, gs_new)
-            gs_new = max(-2400, min(2400, gs_new))
+            if bypass_active:
+                # Bypass-Modus: Nulleinspeisung ausgesetzt.
+                # Keine Drosselung der Wechselrichter.
+                if curr_soc >= (soc_max_limit - 3.0):
+                    # Akku voll: Carport PV komplett auf AC durchleiten (verhindert Drosselung der Module)
+                    gs_new = pv_current
+                else:
+                    # Akku lädt: Nur Hausverbrauch abdecken, keine gezielte Einspeisung ins Netz aus der Batterie
+                    gs_new = max(-2400, min(2400, haus_p - solar_p))
+            else:
+                # GS Formel: gedämpft → gs_last + grid_error * 0.5
+                gs_last = float(state.get("last_gs", 0))
+                gs_new = gs_last + grid_error * 0.5
+                if low_soc_active:
+                    gs_new = min(0.0, gs_new)
+                gs_new = max(-2400, min(2400, gs_new))
 
             # MM AUS — wir regeln (nur schalten, wenn nicht bereits aus)
             current_mm_state = ha_get_state(mm_switch, "on")
@@ -813,8 +863,10 @@ def main():
             hms_limit_last = float(state.get("last_hms_limit", 3600.0))
             hms_change = 0.0
 
-            # Bei aktiver manueller Einspeisung Hoymiles voll öffnen
-            if is_actively_feeding_in:
+            # Bei aktiver manueller Einspeisung oder Bypass Hoymiles voll öffnen
+            if bypass_active:
+                hms_limit_new = 3600.0
+            elif is_actively_feeding_in:
                 hms_limit_new = 3600.0
             elif curr_soc < (soc_max_limit - 3.0) and gs_new_rounded > -2350:
                 # Akku nicht voll und lädt nicht am Limit (IS): Hoymiles voll öffnen,
@@ -872,6 +924,9 @@ def main():
             # IS Limit der Batterie anpassen
             if low_soc_active:
                 is_target = 10
+            elif bypass_active:
+                # Im Bypass-Modus geben wir das IS-Limit voll frei (2400W), damit die DC-PV-Module der Batterie mit 100% laufen können.
+                is_target = 2400
             elif is_actively_feeding_in:
                 # Während aktiver manueller Einspeisung geben wir das IS-Limit voll frei (2400W),
                 # damit die DC-PV-Module der Batterie mit 100% laufen können.
