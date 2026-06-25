@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.1.8 startet...")
+    log.info("SunEnergy XT Controller v2.1.9 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1418,7 +1418,9 @@ def main():
             elif curr_soc >= (soc_max_limit - 3.0) or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
                 if drosseln or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))
-                    is_target_l1 = min(pv_current, restbedarf)
+                    # v2.1.9: Mindestlimit is_floor verhindert IS-Sägezahn (Drosselung max. bis max(200, restbedarf))
+                    is_floor = max(200, restbedarf)
+                    is_target_l1 = max(is_floor, min(pv_current, restbedarf))
                 else:
                     is_target_l1 = 2400
             else:
@@ -1437,7 +1439,9 @@ def main():
             elif curr_soc_l2 >= (soc_max_limit - 3.0) or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
                 if drosseln or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))
-                    is_target_l2 = min(pv_l2, restbedarf)
+                    # v2.1.9: Mindestlimit is_floor verhindert IS-Sägezahn
+                    is_floor = max(200, restbedarf)
+                    is_target_l2 = max(is_floor, min(pv_l2, restbedarf))
                 else:
                     is_target_l2 = 2400
             else:
