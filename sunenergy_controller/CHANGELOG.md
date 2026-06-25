@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.2.5
+- **L2-Entladeleistung im Hausverbrauch berücksichtigt**: Erlaubt das Konfigurieren von `op_l2_sensor` (z.B. für einen Shelly Pro 1PM), um die AC-Entladeleistung von L2 direkt aus Home Assistant einzulesen. Dies korrigiert die Hausverbrauchsberechnung bei Installationen mit zwei Speichereinheiten, wenn die Entladeleistung von L2 nicht über die SunEnergy-API gemeldet wird.
+
 ## v2.2.4
 - **Vollsymmetrischer AC-AC-Transfer**: Macht die Ausgleichslogik komplett richtungsneutral. Wenn L2 zukünftig PV-Module erhält, kann der Transfer auch in die Gegenrichtung (L2 -> L1) erfolgen, basierend auf dem Vorzeichen von `soc_diff`.
 - **Symmetrische IS-Grenzwerterhöhung (Fix 1)**: Hebt das IS-Limit des jeweiligen Quellspeichers während des Transfers dynamisch an, um DC-Drosselung bei aktivem AC-AC-Transfer zu verhindern.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.2.4
+SunEnergy XT Controller v2.2.5
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.2.4 startet...")
+    log.info("SunEnergy XT Controller v2.2.5 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -401,6 +401,7 @@ def main():
     gs_entity_l2    = opts.get("gs_entity_l2", "")
     mm_switch_l2    = opts.get("mm_switch_l2", "")
     sa_entity_l2    = opts.get("sa_entity_l2", "")
+    op_l2_sensor    = opts.get("op_l2_sensor", "")
     has_l2          = bool(sunenergy_ip_l2)
     
     # Neue konfigurierbare Sensoren
@@ -706,6 +707,15 @@ def main():
                     state["consecutive_polls_l2"] = 0
                     log.warning("SunEnergyXT L2 API nicht erreichbar, verwende letzte Werte (OP=%.1fW, PV=%.1fW, BP=%.1fW)", 
                                 op_l2, pv_l2, pb_l2)
+
+                # v2.2.5: Optionale Entladeleistung von L2 via HA-Sensor überschreiben, falls konfiguriert
+                if op_l2_sensor:
+                    op_l2_val = ha_get_state(op_l2_sensor)
+                    if op_l2_val is not None:
+                        try:
+                            op_l2 = float(op_l2_val)
+                        except ValueError:
+                            log.error("Konnte L2-Leistungssensor %s nicht als float parsen: %s", op_l2_sensor, op_l2_val)
             else:
                 state["l2_polling_ok"] = True
 
