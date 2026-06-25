@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.1.1
+- **MM-Selbstheilung**: Erzwingt kontinuierlich den korrekten Betriebsmodus (`MM=1` für nativ, `MM=0` für Fallback) bei Abweichungen, um gegenseitiges AC-Laden/Entladen (Cross-Charging) bei Kommunikationsstörungen oder Neustarts zu verhindern.
+
 ## v2.1.0
 - **Natives PID-Polling**: Ermöglicht die Selbstregelung der Speicher über den Add-on-Proxy (MD-Zählerbindung & MM=1).
 - **Prozess-sicheres State-Saving**: Atomares Schreiben der State-Updates verhindert Datenverlust zwischen Controller und Proxy-Server.
