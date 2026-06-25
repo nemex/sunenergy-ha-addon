@@ -1418,9 +1418,16 @@ def main():
             elif curr_soc >= (soc_max_limit - 3.0) or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
                 if drosseln or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))
-                    # v2.1.9: Mindestlimit is_floor verhindert IS-Sägezahn (Drosselung max. bis max(200, restbedarf))
+                    # v2.1.9: L2-Ladefähigkeit einbeziehen, um L1s AC-Ausgabe für L2-Ladung freizugeben (Deadlock-Schutz)
+                    l2_headroom = 0.0
+                    if has_l2 and curr_soc_l2 < soc_max_limit:
+                        fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc_l2) / 5.0))
+                        l2_headroom = 2400.0 * fade_out
+                    
+                    is_target_l1 = min(pv_current, restbedarf + l2_headroom)
+                    # Mindestlimit is_floor verhindert IS-Sägezahn (Drosselung max. bis max(200, restbedarf))
                     is_floor = max(200, restbedarf)
-                    is_target_l1 = max(is_floor, min(pv_current, restbedarf))
+                    is_target_l1 = max(is_floor, is_target_l1)
                 else:
                     is_target_l1 = 2400
             else:
@@ -1439,9 +1446,16 @@ def main():
             elif curr_soc_l2 >= (soc_max_limit - 3.0) or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
                 if drosseln or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))
-                    # v2.1.9: Mindestlimit is_floor verhindert IS-Sägezahn
+                    # v2.1.9: L1-Ladefähigkeit einbeziehen, um L2s AC-Ausgabe für L1-Ladung freizugeben (symmetrischer Deadlock-Schutz)
+                    l1_headroom = 0.0
+                    if curr_soc < soc_max_limit:
+                        fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc) / 5.0))
+                        l1_headroom = 2400.0 * fade_out
+                    
+                    is_target_l2 = min(pv_l2, restbedarf + l1_headroom)
+                    # Mindestlimit is_floor verhindert IS-Sägezahn
                     is_floor = max(200, restbedarf)
-                    is_target_l2 = max(is_floor, min(pv_l2, restbedarf))
+                    is_target_l2 = max(is_floor, is_target_l2)
                 else:
                     is_target_l2 = 2400
             else:
@@ -1475,8 +1489,13 @@ def main():
                 if soc_max_curr > 80.0 and abs(soc_diff) > 5.0:
                     if soc_diff > 0.0 and pv_current > haus_p and curr_soc_l2 < soc_max_limit and curr_soc > soc_min:
                         # Berechne Roh-Transferleistung
-                        k_p = 15.0
-                        p_transfer_raw = (soc_diff - 5.0) * k_p
+                        if curr_soc >= soc_max_limit:
+                            # v2.1.9: Transfer-Boost bei vollem L1 -> Nutze vollen PV-Überschuss zum Laden von L2
+                            p_transfer_raw = pv_current - haus_p
+                        else:
+                            # L1 lädt noch -> Proportionale Regelung
+                            k_p = 15.0
+                            p_transfer_raw = (soc_diff - 5.0) * k_p
                         
                         # stufenloses Abregeln (Fade-Out), wenn L2 sich 95% nähert
                         fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc_l2) / 5.0))
