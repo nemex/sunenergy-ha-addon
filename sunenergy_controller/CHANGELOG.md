@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.1.7
+- **Version Bump**: Stellt durch einen sauberen Versions-Bump auf v2.1.7 sicher, dass Home Assistant das Update korrekt erkennt und baut, und korrigiert den im Start-Log angezeigten Versionsstring.
+
 ## v2.1.6
 - **Kreuzladungs-Rampdown-Fix**: Ändert die Richtungs-Koordination im Proxy so, dass bei erkannter AC-AC Kreuzladung sowohl die entladende Batterie (sieht künstlichen Export) als auch die ladende Batterie (sieht künstlichen Import) gleichzeitig heruntergeregelt werden. Dies unterbricht Oszillationen und beendet die Kreuzladung sofort und stabil.
 
