@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.1.1
+SunEnergy XT Controller v2.1.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -376,7 +376,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.1.1 startet...")
+    log.info("SunEnergy XT Controller v2.1.2 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -389,6 +389,7 @@ def main():
         log.info("Aktiver Modus - Controller schreibt in HA")
 
     # Konfiguration
+    shelly_ip       = opts["shelly_ip"]
     grid_sensor     = opts["grid_sensor"]
     soc_sensor      = opts["soc_sensor"]
     gs_entity       = opts["gs_entity"]

@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.1.2
+- **Fix NameError**: Behebt einen Absturz (`NameError: name 'shelly_ip' is not defined`) im Regelzyklus, der auftrat, wenn der Home Assistant Grid-Sensor offline ging und auf den Shelly-Direkt-Fallback zugegriffen wurde.
+
 ## v2.1.1
 - **MM-Selbstheilung**: Erzwingt kontinuierlich den korrekten Betriebsmodus (`MM=1` für nativ, `MM=0` für Fallback) bei Abweichungen, um gegenseitiges AC-Laden/Entladen (Cross-Charging) bei Kommunikationsstörungen oder Neustarts zu verhindern.
 
