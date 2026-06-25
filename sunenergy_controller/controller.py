@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.2.3
+SunEnergy XT Controller v2.2.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.2.3 startet...")
+    log.info("SunEnergy XT Controller v2.2.4 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1469,8 +1469,14 @@ def main():
             # Fix 1 — IS-Anpassung bei aktivem Transfer:
             if p_transfer > 10.0:
                 restbedarf = max(0, int(haus_p - solar_p))
-                is_floor = max(200, restbedarf + int(p_transfer))
-                is_target_l1 = max(is_floor, is_target_l1)
+                if curr_soc > curr_soc_l2:
+                    # L1 ist Quelle -> IS L1 anheben
+                    is_floor = max(200, restbedarf + int(p_transfer))
+                    is_target_l1 = max(is_floor, is_target_l1)
+                else:
+                    # L2 ist Quelle -> IS L2 anheben
+                    is_floor = max(200, restbedarf + int(p_transfer))
+                    is_target_l2 = max(is_floor, is_target_l2)
 
             # Runden und Grenzen L1
             is_target_l1 = max(10, min(2400, round(is_target_l1 / 10) * 10))
@@ -1490,28 +1496,43 @@ def main():
                 soc_diff = curr_soc - curr_soc_l2
                 
                 if soc_max_curr > 80.0 and abs(soc_diff) > 5.0:
-                    if soc_diff > 0.0 and pv_current > gs_l1_rounded and curr_soc_l2 < soc_max_limit and curr_soc > soc_min:
+                    if soc_diff > 0.0:
+                        # L1 is fuller -> Transfer L1 -> L2
+                        src_is_l1 = True
+                        soc_src, soc_dest = curr_soc, curr_soc_l2
+                        pv_src, gs_src_rounded = pv_current, gs_l1_rounded
+                        is_target_src, gs_src = is_target_l1, gs_l1
+                        gs_dest = gs_l2
+                    else:
+                        # L2 is fuller -> Transfer L2 -> L1
+                        src_is_l1 = False
+                        soc_src, soc_dest = curr_soc_l2, curr_soc
+                        pv_src, gs_src_rounded = pv_l2, gs_l2_rounded
+                        is_target_src, gs_src = is_target_l2, gs_l2
+                        gs_dest = gs_l1
+                    
+                    if pv_src > gs_src_rounded and soc_dest < soc_max_limit and soc_src > soc_min:
                         # Berechne Roh-Transferleistung
-                        if curr_soc >= (soc_max_limit - 3.0):
-                            # v2.1.9: Transfer-Boost bei vollem L1 -> Nutze vollen PV-Überschuss zum Laden von L2
-                            p_transfer_raw = pv_current - gs_l1_rounded
+                        if soc_src >= (soc_max_limit - 3.0):
+                            # Transfer-Boost bei vollem Quellspeicher
+                            p_transfer_raw = pv_src - gs_src_rounded
                         else:
-                            # L1 lädt noch -> Proportionale Regelung
+                            # Quelle lädt noch -> Proportionale Regelung
                             k_p = 15.0
-                            p_transfer_raw = (soc_diff - 5.0) * k_p
+                            p_transfer_raw = (abs(soc_diff) - 5.0) * k_p
                         
-                        # stufenloses Abregeln (Fade-Out), wenn L2 sich 95% nähert
-                        fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc_l2) / 5.0))
+                        # stufenloses Abregeln (Fade-Out), wenn dest sich 95% nähert
+                        fade_out = max(0.0, min(1.0, (soc_max_limit - soc_dest) / 5.0))
                         p_transfer_raw *= fade_out
                         
-                        # Gedeckelt auf den solaren Überschuss von L1
-                        solar_excess = pv_current - gs_l1_rounded
+                        # Gedeckelt auf den lokalen solaren Überschuss der Quelle
+                        solar_excess = pv_src - gs_src_rounded
                         
                         # Begrenzung auf die freien AC-Kapazitäten beider Geräte
-                        max_possible_l1_increase = max(0.0, is_target_l1 - gs_l1)
-                        max_possible_l2_charge = max(0.0, 2400.0 + gs_l2)
+                        max_possible_src_increase = max(0.0, is_target_src - gs_src)
+                        max_possible_dest_charge = max(0.0, 2400.0 + gs_dest)
                         
-                        p_transfer_target = min(p_transfer_raw, solar_excess, max_possible_l1_increase, max_possible_l2_charge)
+                        p_transfer_target = min(p_transfer_raw, solar_excess, max_possible_src_increase, max_possible_dest_charge)
                         p_transfer_target = max(0.0, p_transfer_target)
                         
                         # Slew-Rate Limit beim Hochfahren, sofortiges Runterfahren bei Wolken
@@ -1524,10 +1545,17 @@ def main():
                         state["last_p_transfer"] = p_transfer
                         
                         if p_transfer > 10.0:
-                            gs_l1 += p_transfer
-                            gs_l2 -= p_transfer
-                            log.info("SOC-Angleichung aktiv: Transferiere %.1fW von L1 zu L2 (SOC L1: %.1f%%, L2: %.1f%%, solarer Überschuss L1: %.1fW, IS_L1: %dW)",
-                                     p_transfer, curr_soc, curr_soc_l2, pv_current, is_target_l1)
+                            if src_is_l1:
+                                gs_l1 += p_transfer
+                                gs_l2 -= p_transfer
+                            else:
+                                gs_l2 += p_transfer
+                                gs_l1 -= p_transfer
+                            log.info("SOC-Angleichung aktiv: Transferiere %.1fW von %s zu %s (SOC L1: %.1f%%, L2: %.1f%%, solarer Überschuss L1: %.1fW, L2: %.1fW, IS_L1: %dW, IS_L2: %dW)",
+                                     p_transfer, 
+                                     "L1" if src_is_l1 else "L2", 
+                                     "L2" if src_is_l1 else "L1",
+                                     curr_soc, curr_soc_l2, pv_current, pv_l2, is_target_l1, is_target_l2)
                     else:
                         state["last_p_transfer"] = 0.0
                 else:

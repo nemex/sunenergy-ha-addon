@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.2.4
+- **Vollsymmetrischer AC-AC-Transfer**: Macht die Ausgleichslogik komplett richtungsneutral. Wenn L2 zukünftig PV-Module erhält, kann der Transfer auch in die Gegenrichtung (L2 -> L1) erfolgen, basierend auf dem Vorzeichen von `soc_diff`.
+- **Symmetrische IS-Grenzwerterhöhung (Fix 1)**: Hebt das IS-Limit des jeweiligen Quellspeichers während des Transfers dynamisch an, um DC-Drosselung bei aktivem AC-AC-Transfer zu verhindern.
+
 ## v2.2.3
 - **Lastverschiebung zur Vermeidung von SOC-Drift**: Erlaubt den AC-AC-Transfer auch dann, wenn L1 einen lokalen PV-Überschuss relativ zu seiner AC-Einspeisung (`pv_current > gs_l1_rounded`) hat, anstatt auf globalen Überschuss (`pv_current > haus_p`) zu prüfen. Das verhindert, dass L1 bei hohem Hausverbrauch weiter geladen wird, während L2 entlädt.
 
