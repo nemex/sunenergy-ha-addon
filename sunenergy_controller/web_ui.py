@@ -30,6 +30,17 @@ def load_state() -> dict:
         pass
     return {}
 
+def save_state_safely(updates: dict):
+    try:
+        st = load_state()
+        st.update(updates)
+        temp_path = STATE_PATH + ".tmp"
+        with open(temp_path, "w") as f:
+            json.dump(st, f)
+        os.replace(temp_path, STATE_PATH)
+    except Exception:
+        pass
+
 def load_options() -> dict:
     try:
         if Path(OPTIONS_PATH).exists():
@@ -442,6 +453,63 @@ setInterval(refresh, 5000);
 </html>"""
 
 
+def get_split_power(requester_ip, real_grid_power, opts) -> float:
+    mode = opts.get("proxy_split_mode", "soc")
+    if mode == "off":
+        return real_grid_power
+        
+    state = load_state()
+    ip_l1 = opts.get("sunenergy_ip", "192.168.178.94")
+    ip_l2 = opts.get("sunenergy_ip_l2", "")
+    has_l2 = bool(ip_l2)
+    
+    if not has_l2:
+        return real_grid_power
+
+    if requester_ip not in (ip_l1, ip_l2):
+        return real_grid_power
+        
+    online_l1 = state.get("l1_polling_ok", True)
+    online_l2 = state.get("l2_polling_ok", True)
+    
+    if online_l1 and not online_l2:
+        return real_grid_power if requester_ip == ip_l1 else 0.0
+    if online_l2 and not online_l1:
+        return real_grid_power if requester_ip == ip_l2 else 0.0
+    if not online_l1 and not online_l2:
+        return real_grid_power
+        
+    if mode == "static":
+        return real_grid_power * 0.5
+        
+    soc_l1 = float(state.get("soc", 50.0))
+    soc_l2 = float(state.get("soc_l2", 50.0))
+    soc_min = float(opts.get("soc_min", 10.0))
+    soc_max = float(opts.get("soc_normal_max", 95.0))
+    
+    if real_grid_power > 0:
+        usable_l1 = max(0.0, soc_l1 - soc_min)
+        usable_l2 = max(0.0, soc_l2 - soc_min)
+        total = usable_l1 + usable_l2
+        if total <= 0:
+            return real_grid_power
+        anteil_l1 = usable_l1 / total
+        anteil_l2 = usable_l2 / total
+    else:
+        headroom_l1 = max(0.0, soc_max - soc_l1)
+        headroom_l2 = max(0.0, soc_max - soc_l2)
+        total = headroom_l1 + headroom_l2
+        if total <= 0:
+            return real_grid_power
+        anteil_l1 = headroom_l1 / total
+        anteil_l2 = headroom_l2 / total
+        
+    if requester_ip == ip_l1:
+        return real_grid_power * anteil_l1
+    else:
+        return real_grid_power * anteil_l2
+
+
 class UIHandler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -452,10 +520,26 @@ class UIHandler(BaseHTTPRequestHandler):
 
         if self.path == "/meter":
             power = get_shelly_power(shelly_ip)
-            # Hinweis: Der Shelly Pro 3EM liefert hier nur total_act_power.
-            # Phasen-Ströme/-Aufteilung sind NICHT bekannt — daher bewusst 0.0
-            # (= unbekannt) statt erfundener Werte. Leistung wird gleichmäßig
-            # auf 3 Phasen verteilt nur für die Anzeige.
+            
+            client_ip = self.client_address[0]
+            ip_l1 = opts.get("sunenergy_ip", "192.168.178.94")
+            ip_l2 = opts.get("sunenergy_ip_l2", "")
+            
+            st = load_state()
+            updates = {}
+            if client_ip == ip_l1:
+                updates["last_poll_l1_ts"] = time.time()
+                updates["consecutive_polls_l1"] = st.get("consecutive_polls_l1", 0) + 1
+            elif ip_l2 and client_ip == ip_l2:
+                updates["last_poll_l2_ts"] = time.time()
+                updates["consecutive_polls_l2"] = st.get("consecutive_polls_l2", 0) + 1
+                
+            if updates:
+                save_state_safely(updates)
+                
+            if opts.get("use_native_pid", False):
+                power = get_split_power(client_ip, power, opts)
+
             meter_data = {
                 "id": 0,
                 "total_act_power": round(power, 1),
