@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.1.6
+SunEnergy XT Controller v2.1.10
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.1.9 startet...")
+    log.info("SunEnergy XT Controller v2.1.10 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -724,9 +724,11 @@ def main():
             state["pb_l2"] = pb_l2
 
             # AC-AC Kreuzladungs-Erkennung und direktes Speichern für schnelles Proxy-Breakout
+            # Deaktiviert während der gewollten SOC-Angleichung (p_transfer > 10W)
             ac_charge_l1 = max(0.0, iw_current - pv_current)
             ac_charge_l2 = max(0.0, iw_l2 - pv_l2)
-            if (ac_charge_l1 > 100.0 and op_l2 > 100.0) or (ac_charge_l2 > 100.0 and op_current > 100.0):
+            is_transfer_active = float(state.get("last_p_transfer", 0.0)) > 10.0
+            if not is_transfer_active and ((ac_charge_l1 > 100.0 and op_l2 > 100.0) or (ac_charge_l2 > 100.0 and op_current > 100.0)):
                 log.warning("⚠️ AC-AC Kreuzladung erkannt (L1_AC_charge=%.0fW, L2_AC_charge=%.0fW, L1_OP=%.0fW, L2_OP=%.0fW)! Erzwinge sofortiges State-Saving...",
                             ac_charge_l1, ac_charge_l2, op_current, op_l2)
                 save_state(state)

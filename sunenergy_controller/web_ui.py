@@ -519,6 +519,7 @@ def get_split_power(requester_ip, real_grid_power, opts) -> float:
     soc_max = float(opts.get("soc_normal_max", 95.0))
     
     # Kreuzladungs-Erkennung & Richtungs-Koordination (Breakout)
+    # Deaktiviert während der gewollten SOC-Angleichung (p_transfer > 10W)
     op_l1 = float(state.get("op_l1", 0.0))
     pv_l1 = float(state.get("pv_l1", 0.0))
     iw_l1 = float(state.get("iw_l1", 0.0))
@@ -529,20 +530,22 @@ def get_split_power(requester_ip, real_grid_power, opts) -> float:
     iw_l2 = float(state.get("iw_l2", 0.0))
     ac_charge_l2 = max(0.0, iw_l2 - pv_l2)
     
-    if op_l1 > 100.0 and ac_charge_l2 > 100.0:
-        # L1 entlädt, L2 lädt. L1 muss Export (negativ) sehen, um das Entladen zu reduzieren.
-        # L2 muss Import (positiv) sehen, um das Laden zu reduzieren.
-        if requester_ip == ip_l1:
-            return min(-200.0, real_grid_power)
-        else:
-            return max(200.0, real_grid_power)
-    elif op_l2 > 100.0 and ac_charge_l1 > 100.0:
-        # L2 entlädt, L1 lädt. L2 muss Export (negativ) sehen, um das Entladen zu reduzieren.
-        # L1 muss Import (positiv) sehen, um das Laden zu reduzieren.
-        if requester_ip == ip_l2:
-            return min(-200.0, real_grid_power)
-        else:
-            return max(200.0, real_grid_power)
+    is_transfer_active = float(state.get("last_p_transfer", 0.0)) > 10.0
+    if not is_transfer_active:
+        if op_l1 > 100.0 and ac_charge_l2 > 100.0:
+            # L1 entlädt, L2 lädt. L1 muss Export (negativ) sehen, um das Entladen zu reduzieren.
+            # L2 muss Import (positiv) sehen, um das Laden zu reduzieren.
+            if requester_ip == ip_l1:
+                return min(-200.0, real_grid_power)
+            else:
+                return max(200.0, real_grid_power)
+        elif op_l2 > 100.0 and ac_charge_l1 > 100.0:
+            # L2 entlädt, L1 lädt. L2 muss Export (negativ) sehen, um das Entladen zu reduzieren.
+            # L1 muss Import (positiv) sehen, um das Laden zu reduzieren.
+            if requester_ip == ip_l2:
+                return min(-200.0, real_grid_power)
+            else:
+                return max(200.0, real_grid_power)
     elif real_grid_power > 0:
         usable_l1 = max(0.0, soc_l1 - soc_min)
         usable_l2 = max(0.0, soc_l2 - soc_min)
