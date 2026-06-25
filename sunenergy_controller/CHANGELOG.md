@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.1.5
+- **Permanente native PV-Drosselung**: Begrenzt das IS-Limit für PV-ausgestattete Batterien (`pv_power > 50W`) im nativen Modus permanent vorausschauend auf `max(10, haus_p - solar_p)` zur Beseitigung von DC-Einspeiseüberschüssen. Batterien ohne PV (wie L2) bleiben voll geöffnet für AC-Laden.
+- **State-Trennung (Race-Condition-Fix)**: Führt eine separate `/data/proxy_state.json` für Proxy-Polls ein, wodurch Schreibkonflikte und Verzögerungen beim Zustandsaustausch vollständig behoben werden.
+- **Konfliktfreies Splitting**: Nutzt neue, vom Controller gesetzte `discharge_active_l1/l2` Flags im Proxy-Splitting, sodass PV-gedrosselte Batterien aktiv bleiben, leere Batterien jedoch sauber ausgegrenzt werden.
+- **Low-Latency Shelly-Direktabfrage**: Liest die Netzleistung im nativen Modus standardmäßig direkt vom Shelly Pro 3EM aus, um Verzögerungen durch HA-Sensoren zu vermeiden.
+- **Echtzeit-Dynamik & Shelly-Schutz**: Reduziert Shelly-Abfragen durch 500ms-Cache im Proxy auf ein sicheres Niveau bei gleichzeitig hoher PID-Reaktionsgeschwindigkeit.
+
 ## v2.1.4
 - **Stabilität im nativen Polling**: Deaktiviert den BMS-Blocker-Detektor (IS-Throttling) im nativen Modus. Dies verhindert, dass sich das Ladesystem (insb. L2) dauerhaft bei IS=10W festfrisst.
 - **BMS-Blocker-Sign-Fix**: Korrigiert den Vorzeichen-Vergleich im manuellen BMS-Blocker, sodass Entladevorgänge (negative BP-Werte) nicht fälschlicherweise als blockiertes Laden interpretiert werden.

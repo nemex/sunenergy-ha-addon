@@ -37,6 +37,7 @@ log = logging.getLogger("sunenergy_controller")
 # ---------------------------------------------------------------------------
 OPTIONS_PATH = "/data/options.json"
 STATE_PATH   = "/data/controller_state.json"
+PROXY_STATE_PATH = "/data/proxy_state.json"
 CSV_PATH     = "/data/controller_log.csv"
 TICK_S       = 5
 
@@ -70,23 +71,17 @@ def load_state() -> dict:
         "pb_l2": 0.0,
     }
 
+def load_proxy_state() -> dict:
+    try:
+        if Path(PROXY_STATE_PATH).exists():
+            with open(PROXY_STATE_PATH) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
 def save_state(state: dict):
     try:
-        disk_state = {}
-        if Path(STATE_PATH).exists():
-            try:
-                with open(STATE_PATH, "r") as f:
-                    disk_state = json.load(f)
-            except Exception:
-                pass
-        
-        # Merge proxy fields from disk if they are newer and we didn't just reset them
-        for k in ["last_poll_l1_ts", "last_poll_l2_ts"]:
-            if state.get(k, 0) != 0 and disk_state.get(k, 0) > state.get(k, 0):
-                state[k] = disk_state[k]
-                pk = "consecutive_polls_l1" if k == "last_poll_l1_ts" else "consecutive_polls_l2"
-                state[pk] = disk_state.get(pk, 0)
-
         temp_path = STATE_PATH + ".tmp"
         with open(temp_path, "w") as f:
             json.dump(state, f)
@@ -177,15 +172,9 @@ def sleep_tick(seconds: float):
     while RUNNING and time.monotonic() < end:
         time.sleep(0.2)
 
-# v1.9.2: State nur jeden n-ten Tick auf Disk schreiben (Flash-Schonung).
-# Modus-Übergänge speichern weiterhin sofort via save_state().
-_SAVE_COUNTER = {"n": 0}
-
+# v2.1.5: Sofortiges Speichern für Echtzeit-Proxy-Aufteilung
 def save_state_throttled(state: dict, every: int = 6):
-    _SAVE_COUNTER["n"] += 1
-    if _SAVE_COUNTER["n"] >= every:
-        _SAVE_COUNTER["n"] = 0
-        save_state(state)
+    save_state(state)
 
 def ha_get_state(entity_id: str, default=None):
     try:
@@ -494,23 +483,31 @@ def main():
         try:
             tick_start = time.monotonic()
 
-            # Merge proxy poll updates from disk state
-            disk_state = load_state()
+            # Merge proxy poll updates from proxy state
+            proxy_state = load_proxy_state()
             for k in ["last_poll_l1_ts", "last_poll_l2_ts", "consecutive_polls_l1", "consecutive_polls_l2"]:
-                if k in disk_state:
-                    state[k] = disk_state[k]
+                if k in proxy_state:
+                    state[k] = proxy_state[k]
 
             is_native = use_native_pid and not state.get("in_fallback_mode", False)
 
             # ------------------------------------------------------------------
             # 1. Messwerte lesen
             # ------------------------------------------------------------------
-            grid_val = ha_get_state(grid_sensor)
-            if grid_val not in (None, "unknown", "unavailable"):
-                grid_p_raw = float(grid_val)
-            else:
-                grid_p_raw = float(state.get("grid_p_filtered", 0.0))
-                log.warning("Grid-Sensor (%s) offline — verwende letzten Wert %.0fW", grid_sensor, grid_p_raw)
+            read_direct = False
+            if use_native_pid:
+                direct_p = shelly_direct_power(shelly_ip)
+                if direct_p is not None:
+                    grid_p_raw = direct_p
+                    read_direct = True
+
+            if not read_direct:
+                grid_val = ha_get_state(grid_sensor)
+                if grid_val not in (None, "unknown", "unavailable"):
+                    grid_p_raw = float(grid_val)
+                else:
+                    grid_p_raw = float(state.get("grid_p_filtered", 0.0))
+                    log.warning("Grid-Sensor (%s) offline — verwende letzten Wert %.0fW", grid_sensor, grid_p_raw)
 
             soc_val = ha_get_state(soc_sensor)
             if soc_val not in (None, "unknown", "unavailable"):
@@ -553,6 +550,10 @@ def main():
             # Globaler Entladeschutz aktiv wenn ALLE aktiven Speicher leer sind
             low_soc_active = low_soc_active_l1 and low_soc_active_l2
             state["low_soc_active"] = low_soc_active
+            
+            # v2.1.5: Entlade-Aktivität für den Proxy signalisieren (Entkopplung von PV-Drossel)
+            state["discharge_active_l1"] = not low_soc_active_l1
+            state["discharge_active_l2"] = not low_soc_active_l2 if has_l2 else False
 
             solar_2000_val = ha_get_state(hms_2000_power_sensor)
             if solar_2000_val not in (None, "unknown", "unavailable"):
@@ -575,16 +576,18 @@ def main():
             solar_p = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
 
             # Watchdog
-            shelly_data = ha_get_full(grid_sensor)
-            if shelly_data:
-                last_upd = shelly_data.get("last_updated", "")
-                try:
-                    upd_ts = datetime.fromisoformat(last_upd.replace("Z", "+00:00")).timestamp()
-                    watchdog_ok = (time.time() - upd_ts) < 60
-                except Exception:
-                    watchdog_ok = False
+            watchdog_ok = False
+            if read_direct:
+                watchdog_ok = True
             else:
-                watchdog_ok = False
+                shelly_data = ha_get_full(grid_sensor)
+                if shelly_data:
+                    last_upd = shelly_data.get("last_updated", "")
+                    try:
+                        upd_ts = datetime.fromisoformat(last_upd.replace("Z", "+00:00")).timestamp()
+                        watchdog_ok = (time.time() - upd_ts) < 60
+                    except Exception:
+                        watchdog_ok = False
 
             # ------------------------------------------------------------------
             # 2. Sicherheits-Stopp (v1.9.2: erst Shelly-Direkt-Fallback versuchen)
@@ -666,6 +669,7 @@ def main():
             op_l2 = 0.0
             pv_l2 = 0.0
             pb_l2 = 0.0
+            iw_l2 = 0.0
             if has_l2:
                 se_data_l2 = sunenergy_read(sunenergy_ip_l2)
                 if se_data_l2:
@@ -1435,6 +1439,9 @@ def main():
                 is_target_l1 = 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l1 = 2400
+            elif is_native and pv_current > 50.0:
+                # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
+                is_target_l1 = max(10, haus_p - solar_p)
             elif curr_soc >= (soc_max_limit - 3.0) or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
                 if drosseln or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))
@@ -1451,6 +1458,9 @@ def main():
                 is_target_l2 = 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l2 = 2400
+            elif is_native and pv_l2 > 50.0:
+                # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
+                is_target_l2 = max(10, haus_p - solar_p)
             elif curr_soc_l2 >= (soc_max_limit - 3.0) or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
                 if drosseln or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))

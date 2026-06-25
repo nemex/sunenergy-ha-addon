@@ -18,6 +18,7 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 STATE_PATH = "/data/controller_state.json"
+PROXY_STATE_PATH = "/data/proxy_state.json"
 OPTIONS_PATH = "/data/options.json"
 CSV_PATH = "/data/controller_log.csv"
 
@@ -30,14 +31,23 @@ def load_state() -> dict:
         pass
     return {}
 
-def save_state_safely(updates: dict):
+def load_proxy_state() -> dict:
     try:
-        st = load_state()
+        if Path(PROXY_STATE_PATH).exists():
+            with open(PROXY_STATE_PATH) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def save_proxy_state(updates: dict):
+    try:
+        st = load_proxy_state()
         st.update(updates)
-        temp_path = STATE_PATH + ".tmp"
+        temp_path = PROXY_STATE_PATH + ".tmp"
         with open(temp_path, "w") as f:
             json.dump(st, f)
-        os.replace(temp_path, STATE_PATH)
+        os.replace(temp_path, PROXY_STATE_PATH)
     except Exception:
         pass
 
@@ -50,14 +60,22 @@ def load_options() -> dict:
         pass
     return {}
 
+_SHELLY_CACHE = {"time": 0.0, "value": 0.0}
+
 def get_shelly_power(shelly_ip: str) -> float:
+    now = time.time()
+    if now - _SHELLY_CACHE["time"] < 0.5:
+        return _SHELLY_CACHE["value"]
     try:
-        r = requests.get(f"http://{shelly_ip}/rpc/EM.GetStatus?id=0", timeout=3)
+        r = requests.get(f"http://{shelly_ip}/rpc/EM.GetStatus?id=0", timeout=2)
         if r.status_code == 200:
-            return float(r.json().get("total_act_power", 0))
+            val = float(r.json().get("total_act_power", 0))
+            _SHELLY_CACHE["time"] = now
+            _SHELLY_CACHE["value"] = val
+            return val
     except Exception:
         pass
-    return 0.0
+    return _SHELLY_CACHE["value"]
 
 def get_csv_data(n=100) -> list:
     """Liest die letzten n Zeilen aus der CSV."""
@@ -472,12 +490,25 @@ def get_split_power(requester_ip, real_grid_power, opts) -> float:
     online_l1 = state.get("l1_polling_ok", True)
     online_l2 = state.get("l2_polling_ok", True)
     
-    if online_l1 and not online_l2:
-        return real_grid_power if requester_ip == ip_l1 else 0.0
-    if online_l2 and not online_l1:
-        return real_grid_power if requester_ip == ip_l2 else 0.0
-    if not online_l1 and not online_l2:
-        return real_grid_power
+    # v2.1.5: Berücksichtige leere Speicher bei Netzbezug (Entkopplung von PV-Drossel)
+    if real_grid_power > 0:
+        active_l1 = online_l1 and state.get("discharge_active_l1", True)
+        active_l2 = online_l2 and state.get("discharge_active_l2", True)
+        
+        if active_l1 and not active_l2:
+            return real_grid_power if requester_ip == ip_l1 else 0.0
+        if active_l2 and not active_l1:
+            return real_grid_power if requester_ip == ip_l2 else 0.0
+        if not active_l1 and not active_l2:
+            return real_grid_power
+    else:
+        # Bei Netzeinspeisung / Laden zählen nur die Online-Zustände
+        if online_l1 and not online_l2:
+            return real_grid_power if requester_ip == ip_l1 else 0.0
+        if online_l2 and not online_l1:
+            return real_grid_power if requester_ip == ip_l2 else 0.0
+        if not online_l1 and not online_l2:
+            return real_grid_power
         
     if mode == "static":
         return real_grid_power * 0.5
@@ -563,17 +594,17 @@ class UIHandler(BaseHTTPRequestHandler):
             ip_l1 = opts.get("sunenergy_ip", "192.168.178.94")
             ip_l2 = opts.get("sunenergy_ip_l2", "")
             
-            st = load_state()
+            proxy_st = load_proxy_state()
             updates = {}
             if client_ip == ip_l1:
                 updates["last_poll_l1_ts"] = time.time()
-                updates["consecutive_polls_l1"] = st.get("consecutive_polls_l1", 0) + 1
+                updates["consecutive_polls_l1"] = proxy_st.get("consecutive_polls_l1", 0) + 1
             elif ip_l2 and client_ip == ip_l2:
                 updates["last_poll_l2_ts"] = time.time()
-                updates["consecutive_polls_l2"] = st.get("consecutive_polls_l2", 0) + 1
+                updates["consecutive_polls_l2"] = proxy_st.get("consecutive_polls_l2", 0) + 1
                 
             if updates:
-                save_state_safely(updates)
+                save_proxy_state(updates)
                 
             if opts.get("use_native_pid", False):
                 power = get_split_power(client_ip, power, opts)
@@ -614,6 +645,8 @@ class UIHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/state":
             st = load_state()
+            pst = load_proxy_state()
+            st.update(pst)
             # soc_normal_max aus Optionen mitgeben, damit das Frontend "SOC voll" erkennt
             try:
                 st["soc_normal_max"] = float(opts.get("soc_normal_max", 95))
