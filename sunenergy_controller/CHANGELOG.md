@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.2.3
+- **Lastverschiebung zur Vermeidung von SOC-Drift**: Erlaubt den AC-AC-Transfer auch dann, wenn L1 einen lokalen PV-Überschuss relativ zu seiner AC-Einspeisung (`pv_current > gs_l1_rounded`) hat, anstatt auf globalen Überschuss (`pv_current > haus_p`) zu prüfen. Das verhindert, dass L1 bei hohem Hausverbrauch weiter geladen wird, während L2 entlädt.
+
 ## v2.2.2
 - **Hoymiles-Freigabe bei L2-Ladebedarf**: Verhindert das Drosseln der Hoymiles-Wechselrichter (HMS), wenn L1 voll (95%) ist, L2 aber noch geladen werden kann. Beide Bedingungen (vollständiges Öffnen und stufenlose Regelung) prüfen nun, ob mindestens eine der Batterien noch nicht voll ist.
 

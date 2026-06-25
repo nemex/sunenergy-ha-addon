@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.2.2
+SunEnergy XT Controller v2.2.3
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.2.2 startet...")
+    log.info("SunEnergy XT Controller v2.2.3 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1490,11 +1490,11 @@ def main():
                 soc_diff = curr_soc - curr_soc_l2
                 
                 if soc_max_curr > 80.0 and abs(soc_diff) > 5.0:
-                    if soc_diff > 0.0 and pv_current > haus_p and curr_soc_l2 < soc_max_limit and curr_soc > soc_min:
+                    if soc_diff > 0.0 and pv_current > gs_l1_rounded and curr_soc_l2 < soc_max_limit and curr_soc > soc_min:
                         # Berechne Roh-Transferleistung
-                        if curr_soc >= soc_max_limit:
+                        if curr_soc >= (soc_max_limit - 3.0):
                             # v2.1.9: Transfer-Boost bei vollem L1 -> Nutze vollen PV-Überschuss zum Laden von L2
-                            p_transfer_raw = pv_current - haus_p
+                            p_transfer_raw = pv_current - gs_l1_rounded
                         else:
                             # L1 lädt noch -> Proportionale Regelung
                             k_p = 15.0
@@ -1505,7 +1505,7 @@ def main():
                         p_transfer_raw *= fade_out
                         
                         # Gedeckelt auf den solaren Überschuss von L1
-                        solar_excess = pv_current - haus_p
+                        solar_excess = pv_current - gs_l1_rounded
                         
                         # Begrenzung auf die freien AC-Kapazitäten beider Geräte
                         max_possible_l1_increase = max(0.0, is_target_l1 - gs_l1)
