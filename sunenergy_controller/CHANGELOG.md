@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.1.6
+- **Kreuzladungs-Rampdown-Fix**: Ändert die Richtungs-Koordination im Proxy so, dass bei erkannter AC-AC Kreuzladung sowohl die entladende Batterie (sieht künstlichen Export) als auch die ladende Batterie (sieht künstlichen Import) gleichzeitig heruntergeregelt werden. Dies unterbricht Oszillationen und beendet die Kreuzladung sofort und stabil.
+
 ## v2.1.5
 - **Permanente native PV-Drosselung**: Begrenzt das IS-Limit für PV-ausgestattete Batterien (`pv_power > 50W`) im nativen Modus permanent vorausschauend auf `max(10, haus_p - solar_p)` zur Beseitigung von DC-Einspeiseüberschüssen. Batterien ohne PV (wie L2) bleiben voll geöffnet für AC-Laden.
 - **State-Trennung (Race-Condition-Fix)**: Führt eine separate `/data/proxy_state.json` für Proxy-Polls ein, wodurch Schreibkonflikte und Verzögerungen beim Zustandsaustausch vollständig behoben werden.

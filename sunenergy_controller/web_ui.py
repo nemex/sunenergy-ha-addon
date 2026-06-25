@@ -529,33 +529,20 @@ def get_split_power(requester_ip, real_grid_power, opts) -> float:
     iw_l2 = float(state.get("iw_l2", 0.0))
     ac_charge_l2 = max(0.0, iw_l2 - pv_l2)
     
-    is_cross_charging = False
-    anteil_l1 = 0.5
-    anteil_l2 = 0.5
-    
     if op_l1 > 100.0 and ac_charge_l2 > 100.0:
-        is_cross_charging = True
-        if real_grid_power > 0:
-            # L1 entlädt, L2 lädt aus dem Netz. Bei Import: L1 bekommt 0, L2 bekommt den gesamten Wert (damit L2 das Laden stoppt)
-            anteil_l1 = 0.0
-            anteil_l2 = 1.0
+        # L1 entlädt, L2 lädt. L1 muss Export (negativ) sehen, um das Entladen zu reduzieren.
+        # L2 muss Import (positiv) sehen, um das Laden zu reduzieren.
+        if requester_ip == ip_l1:
+            return min(-200.0, real_grid_power)
         else:
-            # Bei Export: L1 bekommt den gesamten Wert (damit L1 das Entladen stoppt), L2 bekommt 0
-            anteil_l1 = 1.0
-            anteil_l2 = 0.0
+            return max(200.0, real_grid_power)
     elif op_l2 > 100.0 and ac_charge_l1 > 100.0:
-        is_cross_charging = True
-        if real_grid_power > 0:
-            # L2 entlädt, L1 lädt aus dem Netz. Bei Import: L2 bekommt 0, L1 bekommt den gesamten Wert (damit L1 das Laden stoppt)
-            anteil_l1 = 1.0
-            anteil_l2 = 0.0
+        # L2 entlädt, L1 lädt. L2 muss Export (negativ) sehen, um das Entladen zu reduzieren.
+        # L1 muss Import (positiv) sehen, um das Laden zu reduzieren.
+        if requester_ip == ip_l2:
+            return min(-200.0, real_grid_power)
         else:
-            # Bei Export: L2 bekommt den gesamten Wert (damit L2 das Entladen stoppt), L1 bekommt 0
-            anteil_l1 = 0.0
-            anteil_l2 = 1.0
-            
-    if is_cross_charging:
-        pass
+            return max(200.0, real_grid_power)
     elif real_grid_power > 0:
         usable_l1 = max(0.0, soc_l1 - soc_min)
         usable_l2 = max(0.0, soc_l2 - soc_min)
