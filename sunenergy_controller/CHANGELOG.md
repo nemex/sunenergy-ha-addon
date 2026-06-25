@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.2.2
+- **Hoymiles-Freigabe bei L2-Ladebedarf**: Verhindert das Drosseln der Hoymiles-Wechselrichter (HMS), wenn L1 voll (95%) ist, L2 aber noch geladen werden kann. Beide Bedingungen (vollständiges Öffnen und stufenlose Regelung) prüfen nun, ob mindestens eine der Batterien noch nicht voll ist.
+
 ## v2.2.1
 - **IS-Sägezahn Root-Cause-Fix**: Der Anstiegs-Limiter für das IS-Limit wurde komplett entfernt. Da die Geräte intern bereits sanft hochrampen, ist eine zusätzliche softwareseitige Drosselung des Anstiegs (+1000W/Tick) nicht nötig. Dies behebt den verbleibenden Sägezahn-Effekt bei Drosselung an der Lade-Grenze.
 

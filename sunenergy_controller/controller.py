@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.2.1
+SunEnergy XT Controller v2.2.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.2.1 startet...")
+    log.info("SunEnergy XT Controller v2.2.2 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1354,7 +1354,7 @@ def main():
                 hms_limit_new = 3600.0
             elif is_actively_feeding_in:
                 hms_limit_new = 3600.0
-            elif curr_soc < (soc_max_limit - 3.0) and gs_new_rounded > -2350:
+            elif (curr_soc < (soc_max_limit - 3.0) or (has_l2 and curr_soc_l2 < (soc_max_limit - 3.0))) and gs_new_rounded > -2350:
                 # Akku nicht voll und lädt nicht am Limit (IS): Hoymiles voll öffnen,
                 # damit jegliche Solarleistung zum Laden des Akkus genutzt werden kann.
                 hms_limit_new = 3600.0
@@ -1382,7 +1382,7 @@ def main():
                 hms_change = effective_deficit * 0.5
                 hms_change = max(-400.0, min(800.0, hms_change))
                 hms_limit_new = hms_limit_last + hms_change
-            elif curr_soc < soc_max_limit:
+            elif curr_soc < soc_max_limit or (has_l2 and curr_soc_l2 < soc_max_limit):
                 # Akku nicht voll und keine Abweichung vom Sollwert: stufenlos regeln
                 # um Überschwingen/Oszillationen nahe der Vollladung zu verhindern.
                 if solar_p >= hms_limit_last - 100:
