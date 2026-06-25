@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.2.0
+SunEnergy XT Controller v2.2.1
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.2.0 startet...")
+    log.info("SunEnergy XT Controller v2.2.1 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1474,19 +1474,11 @@ def main():
 
             # Runden und Grenzen L1
             is_target_l1 = max(10, min(2400, round(is_target_l1 / 10) * 10))
-            is_last_l1 = float(state.get("last_is", 2400.0))
-            if is_target_l1 > is_last_l1:
-                is_target_l1 = min(is_target_l1, is_last_l1 + 1000.0)
-                is_target_l1 = max(10, min(2400, round(is_target_l1 / 10) * 10))
             state["last_is"] = is_target_l1
             is_target = is_target_l1 # für Rückwärtskompatibilität
 
             # Runden und Grenzen L2
             is_target_l2 = max(10, min(2400, round(is_target_l2 / 10) * 10))
-            is_last_l2 = float(state.get("last_is_l2", 2400.0))
-            if is_target_l2 > is_last_l2:
-                is_target_l2 = min(is_target_l2, is_last_l2 + 1000.0)
-                is_target_l2 = max(10, min(2400, round(is_target_l2 / 10) * 10))
             state["last_is_l2"] = is_target_l2
 
             # ==================================================================

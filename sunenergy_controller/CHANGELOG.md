@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.2.1
+- **IS-Sägezahn Root-Cause-Fix**: Der Anstiegs-Limiter für das IS-Limit wurde komplett entfernt. Da die Geräte intern bereits sanft hochrampen, ist eine zusätzliche softwareseitige Drosselung des Anstiegs (+1000W/Tick) nicht nötig. Dies behebt den verbleibenden Sägezahn-Effekt bei Drosselung an der Lade-Grenze.
+
 ## v2.2.0
 - **Beseitigung der Doppel-Drosselung**: Verhindert das gleichzeitige Abregeln von Hoymiles (HMS) und L1 DC-PV (Carport-Module via IS) bei aktivem AC-AC-Transfer (Fix 1 & Fix 2).
 - **HMS-Anpassung bei Transfer**: Erlaubt den Hoymiles bei aktivem Transfer, so viel einzuspeisen, wie Hausverbrauch und Transferleistung zusammen benötigen.
