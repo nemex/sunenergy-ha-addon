@@ -709,11 +709,13 @@ def main():
                                 op_l2, pv_l2, pb_l2)
 
                 # v2.2.5: Optionale Entladeleistung von L2 via HA-Sensor überschreiben, falls konfiguriert
+                # Negative Werte des Shelly (Einspeisung/Entladung) werden als positive OP-Leistung interpretiert.
                 if op_l2_sensor:
                     op_l2_val = ha_get_state(op_l2_sensor)
                     if op_l2_val is not None:
                         try:
-                            op_l2 = float(op_l2_val)
+                            val = float(op_l2_val)
+                            op_l2 = -val if val < 0 else 0.0
                         except ValueError:
                             log.error("Konnte L2-Leistungssensor %s nicht als float parsen: %s", op_l2_sensor, op_l2_val)
             else:
