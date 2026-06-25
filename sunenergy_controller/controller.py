@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.1.2
+SunEnergy XT Controller v2.1.3
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -60,6 +60,14 @@ def load_state() -> dict:
         "last_gs": 0.0,
         "soc": 0.0,
         "pv_last": 0.0,
+        "op_l1": 0.0,
+        "pv_l1": 0.0,
+        "iw_l1": 0.0,
+        "pb_l1": 0.0,
+        "op_l2": 0.0,
+        "pv_l2": 0.0,
+        "iw_l2": 0.0,
+        "pb_l2": 0.0,
     }
 
 def save_state(state: dict):
@@ -376,7 +384,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.1.2 startet...")
+    log.info("SunEnergy XT Controller v2.1.3 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -475,10 +483,12 @@ def main():
     op_current = 0.0
     pv_current = float(state.get("pv_last", 0.0))
     pb_current = 0.0
+    iw_current = 0.0
     
     op_l2 = 0.0
     pv_l2 = 0.0
     pb_l2 = 0.0
+    iw_l2 = 0.0
 
     while RUNNING:
         try:
@@ -621,6 +631,7 @@ def main():
                 op_current = float(se_data.get("OP", 0))
                 pv_current = float(se_data.get("PV", 0))
                 pb_current = float(se_data.get("BP", 0))
+                iw_current = float(se_data.get("IW", 0))
                 state["l1_polling_ok"] = True
                 state["last_poll_l1_ts"] = time.time()
                 state["consecutive_polls_l1"] = state.get("consecutive_polls_l1", 0) + 1
@@ -661,6 +672,7 @@ def main():
                     op_l2 = float(se_data_l2.get("OP", 0))
                     pv_l2 = float(se_data_l2.get("PV", 0))
                     pb_l2 = float(se_data_l2.get("BP", 0))
+                    iw_l2 = float(se_data_l2.get("IW", 0))
                     state["pv_last_l2"] = pv_l2
                     state["l2_polling_ok"] = True
                     state["last_poll_l2_ts"] = time.time()
@@ -694,6 +706,25 @@ def main():
 
             # Sofort speichern, falls sich der Online-Status geändert hat
             if state.get("l1_polling_ok", True) != prev_l1_ok or state.get("l2_polling_ok", True) != prev_l2_ok:
+                save_state(state)
+
+            # Speicher-Leistungswerte im Zustand sichern
+            state["op_l1"] = op_current
+            state["pv_l1"] = pv_current
+            state["iw_l1"] = iw_current
+            state["pb_l1"] = pb_current
+            
+            state["op_l2"] = op_l2
+            state["pv_l2"] = pv_l2
+            state["iw_l2"] = iw_l2
+            state["pb_l2"] = pb_l2
+
+            # AC-AC Kreuzladungs-Erkennung und direktes Speichern für schnelles Proxy-Breakout
+            ac_charge_l1 = max(0.0, iw_current - pv_current)
+            ac_charge_l2 = max(0.0, iw_l2 - pv_l2)
+            if (ac_charge_l1 > 100.0 and op_l2 > 100.0) or (ac_charge_l2 > 100.0 and op_current > 100.0):
+                log.warning("⚠️ AC-AC Kreuzladung erkannt (L1_AC_charge=%.0fW, L2_AC_charge=%.0fW, L1_OP=%.0fW, L2_OP=%.0fW)! Erzwinge sofortiges State-Saving...",
+                            ac_charge_l1, ac_charge_l2, op_current, op_l2)
                 save_state(state)
 
             # Berechne den Hausverbrauch lokal und verzögerungsfrei

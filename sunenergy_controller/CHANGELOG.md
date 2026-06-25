@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.1.3
+- **Richtungs-Koordination (Cross-Charging-Schutz)**: Implementiert eine oszillationsfreie, proxy-basierte Steuerung (Zuweisung von 0W / realem Netzwert) bei gegenseitiger AC-AC Kreuzladung von L1 und L2.
+- **Speicher-Telemetrie**: Erweitert den geteilten Zustand um Echtzeit-Leistungswerte (OP, PV, IW) beider Inverter.
+
 ## v2.1.2
 - **Fix NameError**: Behebt einen Absturz (`NameError: name 'shelly_ip' is not defined`) im Regelzyklus, der auftrat, wenn der Home Assistant Grid-Sensor offline ging und auf den Shelly-Direkt-Fallback zugegriffen wurde.
 

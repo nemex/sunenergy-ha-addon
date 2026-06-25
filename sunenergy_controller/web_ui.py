@@ -487,7 +487,45 @@ def get_split_power(requester_ip, real_grid_power, opts) -> float:
     soc_min = float(opts.get("soc_min", 10.0))
     soc_max = float(opts.get("soc_normal_max", 95.0))
     
-    if real_grid_power > 0:
+    # Kreuzladungs-Erkennung & Richtungs-Koordination (Breakout)
+    op_l1 = float(state.get("op_l1", 0.0))
+    pv_l1 = float(state.get("pv_l1", 0.0))
+    iw_l1 = float(state.get("iw_l1", 0.0))
+    ac_charge_l1 = max(0.0, iw_l1 - pv_l1)
+    
+    op_l2 = float(state.get("op_l2", 0.0))
+    pv_l2 = float(state.get("pv_l2", 0.0))
+    iw_l2 = float(state.get("iw_l2", 0.0))
+    ac_charge_l2 = max(0.0, iw_l2 - pv_l2)
+    
+    is_cross_charging = False
+    anteil_l1 = 0.5
+    anteil_l2 = 0.5
+    
+    if op_l1 > 100.0 and ac_charge_l2 > 100.0:
+        is_cross_charging = True
+        if real_grid_power > 0:
+            # L1 entlädt, L2 lädt aus dem Netz. Bei Import: L1 bekommt 0, L2 bekommt den gesamten Wert (damit L2 das Laden stoppt)
+            anteil_l1 = 0.0
+            anteil_l2 = 1.0
+        else:
+            # Bei Export: L1 bekommt den gesamten Wert (damit L1 das Entladen stoppt), L2 bekommt 0
+            anteil_l1 = 1.0
+            anteil_l2 = 0.0
+    elif op_l2 > 100.0 and ac_charge_l1 > 100.0:
+        is_cross_charging = True
+        if real_grid_power > 0:
+            # L2 entlädt, L1 lädt aus dem Netz. Bei Import: L2 bekommt 0, L1 bekommt den gesamten Wert (damit L1 das Laden stoppt)
+            anteil_l1 = 1.0
+            anteil_l2 = 0.0
+        else:
+            # Bei Export: L2 bekommt den gesamten Wert (damit L2 das Entladen stoppt), L1 bekommt 0
+            anteil_l1 = 0.0
+            anteil_l2 = 1.0
+            
+    if is_cross_charging:
+        pass
+    elif real_grid_power > 0:
         usable_l1 = max(0.0, soc_l1 - soc_min)
         usable_l2 = max(0.0, soc_l2 - soc_min)
         total = usable_l1 + usable_l2
