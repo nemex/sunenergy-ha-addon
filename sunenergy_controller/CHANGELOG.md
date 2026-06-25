@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.1
+- **Zweiter Speicher (L2) Support**: Vollständige Integration eines optionalen zweiten Speichers auf Phase L2.
+- **Koordiniertes Laden/Entladen**: Paralleles, ausgeglichenes Laden (proportional zum Headroom) und Entladen (proportional zum SOC) beider Speicher, um gegenseitige Schwingungen zu vermeiden.
+- **Nachtmodus- & Zwangsladungs-Integration**: Vollwertige Steuerung beider Speicher auch im Nachtmodus und bei der regelmäßigen Zwangsladung/Kalibrierung.
+- **Dynamisches Web-UI**: Automatische Erweiterung des Dashboards um separate L2-Werte (SOC L2, GS L2, IS L2) und eine zusätzliche Spalte für L2 in der Wechselrichter-Ansicht, falls konfiguriert.
+
 ## v2.0.0
 - **Nulleinspeisung-Bypass für morgen**: Neuer Schalter `input_boolean.sunenergy_bypass_tomorrow` ermöglicht es, die Nulleinspeisung am nächsten Kalendertag (von 0:00 bis 24:00 Uhr) komplett auszusetzen, um die maximale Erzeugung bei perfektem Solarwetter zu testen. Hoymiles und Carport-Module laufen dabei zu 100 % ungedrosselt. Am Folgetag kehrt das System automatisch wieder zur Nulleinspeisung zurück.
 - **Web-UI Erweiterung**: Unterstützung des Bypass-Modus auf dem Live-Dashboard mit passenden Statusmeldungen und optischer Kennzeichnung.
