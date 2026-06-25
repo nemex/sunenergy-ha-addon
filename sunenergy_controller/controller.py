@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.1.3
+SunEnergy XT Controller v2.1.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -384,7 +384,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.1.3 startet...")
+    log.info("SunEnergy XT Controller v2.1.4 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1435,8 +1435,8 @@ def main():
                 is_target_l1 = 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l1 = 2400
-            elif curr_soc >= (soc_max_limit - 3.0) or ((gs_l1_rounded < -200) and (pb_current < 150.0)):
-                if drosseln or ((gs_l1_rounded < -200) and (pb_current < 150.0)):
+            elif curr_soc >= (soc_max_limit - 3.0) or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
+                if drosseln or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))
                     is_target_l1 = min(pv_current, restbedarf)
                 else:
@@ -1451,8 +1451,8 @@ def main():
                 is_target_l2 = 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l2 = 2400
-            elif curr_soc_l2 >= (soc_max_limit - 3.0) or ((gs_l2_rounded < -200) and (pb_l2 < 150.0)):
-                if drosseln or ((gs_l2_rounded < -200) and (pb_l2 < 150.0)):
+            elif curr_soc_l2 >= (soc_max_limit - 3.0) or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
+                if drosseln or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))
                     is_target_l2 = min(pv_l2, restbedarf)
                 else:

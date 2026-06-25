@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.1.4
+- **Stabilität im nativen Polling**: Deaktiviert den BMS-Blocker-Detektor (IS-Throttling) im nativen Modus. Dies verhindert, dass sich das Ladesystem (insb. L2) dauerhaft bei IS=10W festfrisst.
+- **BMS-Blocker-Sign-Fix**: Korrigiert den Vorzeichen-Vergleich im manuellen BMS-Blocker, sodass Entladevorgänge (negative BP-Werte) nicht fälschlicherweise als blockiertes Laden interpretiert werden.
+
 ## v2.1.3
 - **Richtungs-Koordination (Cross-Charging-Schutz)**: Implementiert eine oszillationsfreie, proxy-basierte Steuerung (Zuweisung von 0W / realem Netzwert) bei gegenseitiger AC-AC Kreuzladung von L1 und L2.
 - **Speicher-Telemetrie**: Erweitert den geteilten Zustand um Echtzeit-Leistungswerte (OP, PV, IW) beider Inverter.
