@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.2.0
+- **Beseitigung der Doppel-Drosselung**: Verhindert das gleichzeitige Abregeln von Hoymiles (HMS) und L1 DC-PV (Carport-Module via IS) bei aktivem AC-AC-Transfer (Fix 1 & Fix 2).
+- **HMS-Anpassung bei Transfer**: Erlaubt den Hoymiles bei aktivem Transfer, so viel einzuspeisen, wie Hausverbrauch und Transferleistung zusammen benötigen.
+- **IS-Anpassung bei Transfer**: Das IS-Limit von L1 wird um die Transferleistung angehoben (`is_floor = max(200, restbedarf + p_transfer)`), um genügend PV-Leistung für den Transfer freizugeben.
+- **Kreuzladungs-Bypass**: Unterdrückt fälschliche Kreuzladungs-Erkennungen und Warnungen im Haupt-Controller und im Web-Proxy, sobald ein AC-AC-Transfer aktiv ist.
+
+## v2.1.9
+- **IS-Sägezahn-Fix**: Führt eine dynamische Mindestgrenze (`is_floor = max(200, restbedarf)`) für das IS-Limit bei vollem Akku (SOC=95%) ein, um das ständige Auf- und Abspringen des Ladereglers zu verhindern.
+- **Transfer-Boost bei vollem L1**: Leitet bei vollem L1-Speicher (SOC=95%) den gesamten solaren Überschuss direkt als Transfer zu L2 um, statt den Transfer proportional zur SOC-Differenz zu deckeln.
+
+## v2.1.8
+- **Manueller SOC-Ausgleich L1/L2**: Implementiert eine automatische Angleichung der Speicherlevel via AC-AC-Transfer (Einspeisen über L1, zeitgleiches AC-Laden über L2), ohne die Nulleinspeisung zu verletzen.
+- **Slew-Rate & Wolkenschutz**: Limitiert den Anstieg der Transferleistung auf +50W/Tick. Bei Einbruch des solaren Überschusses wird der Transfer sofort (ohne Slew-Rate-Verzögerung) auf 0W gestoppt, um Netzbezug zu verhindern.
+- **L2-Lade-Fade-Out**: Reduziert die Transferleistung linear ab 90% SOC von L2 stufenlos auf 0W bei 95% SOC.
+
 ## v2.1.7
 - **Version Bump**: Stellt durch einen sauberen Versions-Bump auf v2.1.7 sicher, dass Home Assistant das Update korrekt erkennt und baut, und korrigiert den im Start-Log angezeigten Versionsstring.
 
