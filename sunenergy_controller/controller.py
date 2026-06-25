@@ -489,6 +489,8 @@ def main():
                 if k in disk_state:
                     state[k] = disk_state[k]
 
+            is_native = use_native_pid and not state.get("in_fallback_mode", False)
+
             # ------------------------------------------------------------------
             # 1. Messwerte lesen
             # ------------------------------------------------------------------
@@ -621,6 +623,24 @@ def main():
                 state["l1_polling_ok"] = True
                 state["last_poll_l1_ts"] = time.time()
                 state["consecutive_polls_l1"] = state.get("consecutive_polls_l1", 0) + 1
+                
+                # MM Self-healing
+                mm_val = se_data.get("MM")
+                target_mm = 1 if is_native else 0
+                if mm_val is not None and str(mm_val) != str(target_mm):
+                    log.warning("L1 MM state mismatch: reported=%s, target=%s. Enforcing...", mm_val, target_mm)
+                    if target_mm == 1:
+                        ha_ip = opts.get("ha_ip", "192.168.178.132")
+                        md_payload = {
+                            "mode": "direct",
+                            "direct": {"dat_url": f"http://{ha_ip}:8765/meter"},
+                            "dat_str": {"pwr": "total_act_power"}
+                        }
+                        md_str = json.dumps(md_payload)
+                        sunenergy_write(sunenergy_ip, {"MD": md_str, "MM": 1, "GS": 0})
+                    else:
+                        sunenergy_write(sunenergy_ip, {"MM": 0})
+                    state["last_device_mm"] = target_mm
             else:
                 state["l1_polling_ok"] = False
                 state["consecutive_polls_l1"] = 0
@@ -644,6 +664,24 @@ def main():
                     state["l2_polling_ok"] = True
                     state["last_poll_l2_ts"] = time.time()
                     state["consecutive_polls_l2"] = state.get("consecutive_polls_l2", 0) + 1
+                    
+                    # MM Self-healing
+                    mm_val_l2 = se_data_l2.get("MM")
+                    target_mm_l2 = 1 if is_native else 0
+                    if mm_val_l2 is not None and str(mm_val_l2) != str(target_mm_l2):
+                        log.warning("L2 MM state mismatch: reported=%s, target=%s. Enforcing...", mm_val_l2, target_mm_l2)
+                        if target_mm_l2 == 1:
+                            ha_ip = opts.get("ha_ip", "192.168.178.132")
+                            md_payload = {
+                                "mode": "direct",
+                                "direct": {"dat_url": f"http://{ha_ip}:8765/meter"},
+                                "dat_str": {"pwr": "total_act_power"}
+                            }
+                            md_str = json.dumps(md_payload)
+                            sunenergy_write(sunenergy_ip_l2, {"MD": md_str, "MM": 1, "GS": 0})
+                        else:
+                            sunenergy_write(sunenergy_ip_l2, {"MM": 0})
+                        state["last_device_mm_l2"] = target_mm_l2
                 else:
                     pv_l2 = float(state.get("pv_last_l2", 0.0))
                     state["l2_polling_ok"] = False
