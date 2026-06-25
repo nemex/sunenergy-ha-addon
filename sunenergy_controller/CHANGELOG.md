@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.1.0
+- **Natives PID-Polling**: Ermöglicht die Selbstregelung der Speicher über den Add-on-Proxy (MD-Zählerbindung & MM=1).
+- **Prozess-sicheres State-Saving**: Atomares Schreiben der State-Updates verhindert Datenverlust zwischen Controller und Proxy-Server.
+- **Intelligentes Proxy-Splitting**: IP-sensitives Splitting am `/meter`-Proxy (Laden nach Headroom, Entladen nach usable SOC).
+- **Hysteretischer Fallback**: Automatisches Umschalten auf GS-Regelung (MM=0) bei Signalverlust (>15s) und kontrollierte Rückkehr erst nach 3 aufeinanderfolgenden erfolgreichen Polls (kein unzuverlässiger MS-Status-Check).
+- **Online-Status-Synchronisation**: Sofortiges Speichern des Systemzustands bei Erreichbarkeitsänderungen sorgt für verzögerungsfreies Splitting.
+
 ## v2.0.1
 - **Zweiter Speicher (L2) Support**: Vollständige Integration eines optionalen zweiten Speichers auf Phase L2.
 - **Koordiniertes Laden/Entladen**: Paralleles, ausgeglichenes Laden (proportional zum Headroom) und Entladen (proportional zum SOC) beider Speicher, um gegenseitige Schwingungen zu vermeiden.
