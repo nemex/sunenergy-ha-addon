@@ -105,14 +105,16 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
 <h1>⚡ SunEnergy XT Controller</h1>
-
+ 
 <div class="grid" id="cards">
   <div class="card"><div class="card-title">Modus</div><div id="c-mode" class="mode night">—</div></div>
   <div class="card"><div class="card-title">Netz</div><div id="c-grid" class="card-value">— W</div></div>
   <div class="card"><div class="card-title">Haus</div><div id="c-haus" class="card-value">— W</div></div>
   <div class="card"><div class="card-title">Solar (HMS)</div><div id="c-solar" class="card-value">— W</div></div>
   <div class="card"><div class="card-title">GS Sollwert</div><div id="c-gs" class="card-value">— W</div></div>
+  <div class="card" id="card-gs-l2" style="display:none"><div class="card-title">GS Sollwert L2</div><div id="c-gs-l2" class="card-value">— W</div></div>
   <div class="card"><div class="card-title">IS Limit</div><div id="c-is" class="card-value">— W</div></div>
+  <div class="card" id="card-is-l2" style="display:none"><div class="card-title">IS Limit L2</div><div id="c-is-l2" class="card-value">— W</div></div>
   <div class="card"><div class="card-title">HMS 2000 Limit</div><div id="c-hms-2000" class="card-value">— W</div></div>
   <div class="card"><div class="card-title">HMS 1600 Limit</div><div id="c-hms-1600" class="card-value">— W</div></div>
   <div class="card">
@@ -120,27 +122,32 @@ HTML = """<!DOCTYPE html>
     <div id="c-soc" class="card-value">— %</div>
     <div class="soc-bar"><div id="c-soc-bar" class="soc-fill" style="width:0%"></div></div>
   </div>
+  <div class="card" id="card-soc-l2" style="display:none">
+    <div class="card-title">SOC L2</div>
+    <div id="c-soc-l2" class="card-value">— %</div>
+    <div class="soc-bar"><div id="c-soc-bar-l2" class="soc-fill" style="width:0%"></div></div>
+  </div>
 </div>
-
+ 
 <div class="chart-wrap">
   <h2>Netzleistung (letzte 100 Messwerte)</h2>
   <canvas id="chart-grid"></canvas>
 </div>
-
+ 
 <div class="chart-wrap">
   <h2>Solar / Haus / IS / HMS-Limit</h2>
   <canvas id="chart-power"></canvas>
 </div>
-
+ 
 <div class="chart-wrap">
   <h2>Wechselrichter — Ist vs. Limit</h2>
   <div style="margin-bottom:10px">
     <span style="font-size:10px;color:#4a5568">Status: </span>
     <span id="inv-status" style="font-size:11px;font-family:monospace">—</span>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:8px">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;margin-bottom:8px" id="inv-grid">
     <div>
-      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">SunEnergyXT (DC+AC)</div>
+      <div id="inv-se-title" style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">SunEnergyXT (DC+AC)</div>
       <div style="display:flex;justify-content:space-between;margin-bottom:2px">
         <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-se-ist">—</span> W</span>
         <span style="font-size:11px;color:#4a5568">IS Limit: <span id="inv-se-lim">—</span> W</span>
@@ -149,6 +156,17 @@ HTML = """<!DOCTYPE html>
         <div id="inv-se-bar" style="height:100%;background:#00e676;border-radius:4px;width:0%;transition:width 1s"></div>
       </div>
       <div id="inv-se-reason" style="font-size:10px;color:#4a5568">—</div>
+    </div>
+    <div id="inv-se-l2-wrap" style="display:none">
+      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">SunEnergyXT L2</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+        <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-se-l2-ist">—</span> W</span>
+        <span style="font-size:11px;color:#4a5568">IS Limit: <span id="inv-se-l2-lim">—</span> W</span>
+      </div>
+      <div style="height:8px;background:#1e2d3d;border-radius:4px;overflow:hidden;margin-bottom:4px">
+        <div id="inv-se-l2-bar" style="height:100%;background:#00e676;border-radius:4px;width:0%;transition:width 1s"></div>
+      </div>
+      <div id="inv-se-l2-reason" style="font-size:10px;color:#4a5568">—</div>
     </div>
     <div>
       <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">HMS-2000</div>
@@ -174,7 +192,7 @@ HTML = """<!DOCTYPE html>
     </div>
   </div>
 </div>
-
+ 
 <div class="footer">
   <span id="ts">—</span>
   <div>
@@ -183,13 +201,13 @@ HTML = """<!DOCTYPE html>
     <button class="btn" style="margin-left:8px;border-color:#ff3d57;color:#ff3d57" onclick="deleteLog()">🗑 Log löschen</button>
   </div>
 </div>
-
+ 
 <script>
 const chartColors = {
   grid: '#ff3d57', haus: '#00c2ff', solar: '#f0a500',
   is: '#00e676', hms: '#7c3aed', gs: '#ec4899'
 };
-
+ 
 function makeChart(id, datasets, yLabel) {
   return new Chart(document.getElementById(id), {
     type: 'line',
@@ -205,18 +223,18 @@ function makeChart(id, datasets, yLabel) {
     }
   });
 }
-
+ 
 const gridChart = makeChart('chart-grid', [
   { label: 'Netz (W)', data: [], borderColor: chartColors.grid, backgroundColor: 'rgba(255,61,87,0.1)', tension: 0.3, pointRadius: 0, fill: true }
 ], 'Watt');
-
+ 
 const powerChart = makeChart('chart-power', [
   { label: 'Solar HMS (W)', data: [], borderColor: chartColors.solar, tension: 0.3, pointRadius: 0 },
   { label: 'Haus (W)', data: [], borderColor: chartColors.haus, tension: 0.3, pointRadius: 0 },
   { label: 'IS Limit (W)', data: [], borderColor: chartColors.is, tension: 0.3, pointRadius: 0, borderDash: [4,2] },
   { label: 'HMS Limit (W)', data: [], borderColor: chartColors.hms, tension: 0.3, pointRadius: 0, borderDash: [4,2] },
 ], 'Watt');
-
+ 
 function updateCards(state, csv) {
   let mode = state.active_mode || 'night';
   // soc_full: wenn aktiv geregelt UND Akku voll (>= soc_normal_max), zeige "SOC VOLL"
@@ -228,68 +246,128 @@ function updateCards(state, csv) {
   const el = document.getElementById('c-mode');
   el.textContent = { active: 'AKTIV REGELND', soc_full: 'SOC VOLL (IS)', night: 'NACHT', calibration: 'ZWANGSLADUNG', feed_in: 'EINSPEISUNG AKTIV', feed_in_standby: 'EINSPEISUNG STANDBY', bypass: 'BYPASS AKTIV' }[mode] || mode.toUpperCase();
   el.className = 'mode ' + mode;
-
+ 
   const grid = parseFloat(csv.grid_p || state.grid_p_filtered || 0);
   setCard('c-grid', grid.toFixed(0) + ' W', grid > 50 ? 'neg' : grid < -30 ? 'pos' : '');
   setCard('c-haus', parseFloat(csv.haus_p || state.haus_p_last || 0).toFixed(0) + ' W', '');
   setCard('c-solar', parseFloat(csv.solar_p || state.solar_p_last || 0).toFixed(0) + ' W', 'pos');
-  setCard('c-gs', parseFloat(csv.gs || state.last_gs || 0).toFixed(0) + ' W', '');
-  setCard('c-is', (csv.is_target !== undefined ? parseFloat(csv.is_target) : parseFloat(state.last_is || 0)).toFixed(0) + ' W', '');
+  
+  if (state.has_l2) {
+    document.getElementById('card-gs-l2').style.display = 'block';
+    document.getElementById('card-is-l2').style.display = 'block';
+    document.getElementById('card-soc-l2').style.display = 'block';
+    document.getElementById('inv-se-l2-wrap').style.display = 'block';
+    
+    // Titel L1 Karten anpassen
+    document.querySelector('#cards .card:nth-child(5) .card-title').textContent = 'GS Sollwert L1';
+    document.querySelector('#cards .card:nth-child(7) .card-title').textContent = 'IS Limit L1';
+    document.querySelector('#cards .card:nth-child(11) .card-title').textContent = 'SOC L1';
+    document.getElementById('inv-se-title').textContent = 'SunEnergyXT L1';
+
+    // GS L1 und L2
+    const gsL1 = parseFloat(csv.gs_l1 !== undefined ? csv.gs_l1 : (state.last_device_gs || 0));
+    const gsL2 = parseFloat(csv.gs_l2 !== undefined ? csv.gs_l2 : (state.last_device_gs_l2 || 0));
+    setCard('c-gs', gsL1.toFixed(0) + ' W', '');
+    setCard('c-gs-l2', gsL2.toFixed(0) + ' W', '');
+
+    // IS L1 und L2
+    const isL1 = parseFloat(csv.is_target !== undefined ? csv.is_target : (state.last_device_is || state.last_is || 2400));
+    const isL2 = parseFloat(state.last_device_is_l2 || state.last_is_l2 || 2400);
+    setCard('c-is', isL1.toFixed(0) + ' W', '');
+    setCard('c-is-l2', isL2.toFixed(0) + ' W', '');
+
+    // SOC L1 und L2
+    const socL1 = parseFloat(csv.soc !== undefined ? csv.soc : (state.soc || 0));
+    const socL2 = parseFloat(csv.soc_l2 !== undefined ? csv.soc_l2 : (state.soc_l2 || 0));
+    setCard('c-soc', socL1.toFixed(0) + ' %', socL1 < 20 ? 'warn' : '');
+    document.getElementById('c-soc-bar').style.width = Math.min(100, socL1) + '%';
+    setCard('c-soc-l2', socL2.toFixed(0) + ' %', socL2 < 20 ? 'warn' : '');
+    document.getElementById('c-soc-bar-l2').style.width = Math.min(100, socL2) + '%';
+  } else {
+    document.getElementById('card-gs-l2').style.display = 'none';
+    document.getElementById('card-is-l2').style.display = 'none';
+    document.getElementById('card-soc-l2').style.display = 'none';
+    document.getElementById('inv-se-l2-wrap').style.display = 'none';
+    
+    document.querySelector('#cards .card:nth-child(5) .card-title').textContent = 'GS Sollwert';
+    document.querySelector('#cards .card:nth-child(7) .card-title').textContent = 'IS Limit';
+    document.querySelector('#cards .card:nth-child(11) .card-title').textContent = 'SOC';
+    document.getElementById('inv-se-title').textContent = 'SunEnergyXT (DC+AC)';
+
+    setCard('c-gs', parseFloat(csv.gs || state.last_gs || 0).toFixed(0) + ' W', '');
+    setCard('c-is', (csv.is_target !== undefined ? parseFloat(csv.is_target) : parseFloat(state.last_is || 0)).toFixed(0) + ' W', '');
+    const soc = parseFloat(csv.soc || state.soc || 0);
+    setCard('c-soc', soc.toFixed(0) + ' %', soc < 20 ? 'warn' : '');
+    document.getElementById('c-soc-bar').style.width = Math.min(100, soc) + '%';
+  }
+ 
   const lim2000 = parseFloat(csv.hms_2000_lim !== undefined ? csv.hms_2000_lim : (state.last_hms_2000_lim !== undefined ? state.last_hms_2000_lim : 2000));
   const lim1600 = parseFloat(csv.hms_1600_lim !== undefined ? csv.hms_1600_lim : (state.last_hms_1600_lim !== undefined ? state.last_hms_1600_lim : 1600));
   setCard('c-hms-2000', lim2000.toFixed(0) + ' W', '');
   setCard('c-hms-1600', lim1600.toFixed(0) + ' W', '');
-
-  const soc = parseFloat(csv.soc || state.soc || 0);
-  setCard('c-soc', soc.toFixed(0) + ' %', soc < 20 ? 'warn' : '');
-  document.getElementById('c-soc-bar').style.width = Math.min(100, soc) + '%';
+ 
   document.getElementById('ts').textContent = 'Letzte Aktualisierung: ' + new Date().toLocaleTimeString('de-DE');
-
-  // Wechselrichter Ist vs Limit — direkt aus CSV-Feldern
-  const seIst  = parseFloat(csv.pv !== undefined ? csv.pv : (state.pv_last || 0));  // SunEnergyXT PV-Leistung
-  const seLim  = parseFloat(csv.is_target || 0); // IS Limit
+ 
+  // Wechselrichter Ist vs Limit
+  const seIst  = parseFloat(csv.pv !== undefined ? csv.pv : (state.pv_last || 0));  // L1
+  const seLim  = parseFloat(csv.is_target !== undefined ? csv.is_target : (state.last_device_is || state.last_is || 2400));
+  
+  const seIstL2 = parseFloat(csv.pv_l2 !== undefined ? csv.pv_l2 : (state.pv_last_l2 || 0)); // L2
+  const seLimL2 = parseFloat(state.last_device_is_l2 || state.last_is_l2 || 2400);
+ 
   const h2000Ist = parseFloat(csv.hms_2000 || 0);
   const h1600Ist = parseFloat(csv.hms_1600 || 0);
-
+ 
   // Status bestimmen
   const currentGrid = csv.grid_p !== undefined ? parseFloat(csv.grid_p) : grid;
   const currentMode = csv.mode || mode;
   let statusText = '—';
-  let seReason = '—', h2000Reason = '—', h1600Reason = '—';
-
+  let seReason = '—', seReasonL2 = '—', h2000Reason = '—', h1600Reason = '—';
+ 
   if (currentMode === 'night') {
     statusText = '⚪ Nacht — kein Betrieb';
     seReason = 'Nacht';
+    seReasonL2 = 'Nacht';
     h2000Reason = 'Nacht';
     h1600Reason = 'Nacht';
   } else if (currentMode === 'bypass') {
     statusText = '🟢 Bypass aktiv — ungedrosselt (' + Math.round(currentGrid) + 'W Einspeisung)';
     seReason = '✅ Bypass (100%)';
+    seReasonL2 = '✅ Bypass (100%)';
     h2000Reason = '✅ Bypass (100%)';
     h1600Reason = '✅ Bypass (100%)';
   } else if (currentGrid < -25) {
     statusText = '🟡 Gedrosselt — Überschuss (' + Math.round(currentGrid) + 'W Einspeisung)';
     seReason = seLim < 2400 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
+    seReasonL2 = seLimL2 < 2400 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
     h2000Reason = lim2000 < 2000 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
     h1600Reason = lim1600 < 1600 ? '⬇ gedrosselt (Überschuss)' : '✅ volle Leistung';
   } else if (currentGrid > 25) {
     statusText = '🟢 Volle Leistung — Netzbezug (' + Math.round(currentGrid) + 'W)';
     seReason = '✅ volle Leistung';
+    seReasonL2 = '✅ volle Leistung';
     h2000Reason = '✅ volle Leistung';
     h1600Reason = '✅ volle Leistung';
   } else {
     statusText = '🟢 Nulleinspeisung aktiv (' + Math.round(currentGrid) + 'W)';
     seReason = seLim < 2400 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
+    seReasonL2 = seLimL2 < 2400 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
     h2000Reason = lim2000 < 2000 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
     h1600Reason = lim1600 < 1600 ? '⬇ leicht gedrosselt' : '✅ volle Leistung';
   }
-
+ 
   document.getElementById('inv-status').textContent = statusText;
   document.getElementById('inv-se-reason').textContent = seReason;
+  if (state.has_l2) {
+    document.getElementById('inv-se-l2-reason').textContent = seReasonL2;
+  }
   document.getElementById('inv-2000-reason').textContent = h2000Reason;
   document.getElementById('inv-1600-reason').textContent = h1600Reason;
-
+ 
   setInv('inv-se',   seIst,   seLim,  2400);
+  if (state.has_l2) {
+    setInv('inv-se-l2', seIstL2, seLimL2, 2400);
+  }
   setInv('inv-2000', h2000Ist, lim2000, 2000);
   setInv('inv-1600', h1600Ist, lim1600, 1600);
 }
@@ -419,6 +497,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 st["soc_normal_max"] = float(opts.get("soc_normal_max", 95))
             except Exception:
                 st["soc_normal_max"] = 95
+            st["has_l2"] = bool(opts.get("sunenergy_ip_l2", ""))
             self._json(st)
 
         elif self.path == "/api":

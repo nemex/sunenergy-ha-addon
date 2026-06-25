@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "2.0.0"
+version: "2.0.1"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -53,6 +53,12 @@ options:
   manual_feed_in_min_soc: 90
   manual_feed_in_power: 3600
   bypass_tomorrow_switch: "input_boolean.sunenergy_bypass_tomorrow"
+  # L2 Speicher (optional)
+  sunenergy_ip_l2: "192.168.178.122"
+  soc_sensor_l2: "sensor.sunenergyxt_500_pro_l2_system_speicherlevel"
+  gs_entity_l2: "number.sunenergyxt_500_pro_l2_sollwert_leistung_netzanschluss"
+  mm_switch_l2: "switch.sunenergyxt_500_pro_l2_lokaler_nulleinspeisemodus"
+  sa_entity_l2: "number.sunenergyxt_500_pro_l2_system_ladegrenze"
 schema:
   shelly_ip: str
   sunenergy_ip: str
@@ -78,4 +84,10 @@ schema:
   manual_feed_in_min_soc: float
   manual_feed_in_power: int
   bypass_tomorrow_switch: str
+  # L2 Speicher Schema (optional, erlaubt leere Strings)
+  sunenergy_ip_l2: str?
+  soc_sensor_l2: str?
+  gs_entity_l2: str?
+  mm_switch_l2: str?
+  sa_entity_l2: str?
 
