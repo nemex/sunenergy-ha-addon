@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.1.10
+SunEnergy XT Controller v2.1.11
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.1.10 startet...")
+    log.info("SunEnergy XT Controller v2.1.11 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -482,6 +482,7 @@ def main():
     while RUNNING:
         try:
             tick_start = time.monotonic()
+            p_transfer = float(state.get("last_p_transfer", 0.0))
 
             # Merge proxy poll updates from proxy state
             proxy_state = load_proxy_state()
@@ -727,8 +728,7 @@ def main():
             # Deaktiviert während der gewollten SOC-Angleichung (p_transfer > 10W)
             ac_charge_l1 = max(0.0, iw_current - pv_current)
             ac_charge_l2 = max(0.0, iw_l2 - pv_l2)
-            is_transfer_active = float(state.get("last_p_transfer", 0.0)) > 10.0
-            if not is_transfer_active and ((ac_charge_l1 > 100.0 and op_l2 > 100.0) or (ac_charge_l2 > 100.0 and op_current > 100.0)):
+            if p_transfer <= 10.0 and ((ac_charge_l1 > 100.0 and op_l2 > 100.0) or (ac_charge_l2 > 100.0 and op_current > 100.0)):
                 log.warning("⚠️ AC-AC Kreuzladung erkannt (L1_AC_charge=%.0fW, L2_AC_charge=%.0fW, L1_OP=%.0fW, L2_OP=%.0fW)! Erzwinge sofortiges State-Saving...",
                             ac_charge_l1, ac_charge_l2, op_current, op_l2)
                 save_state(state)
@@ -1393,6 +1393,9 @@ def main():
                 hms_limit_new = hms_limit_last
 
             hms_limit_new = max(0.0, min(3600.0, hms_limit_new))
+            # Fix 2 — HMS-Anpassung bei aktivem Transfer:
+            if p_transfer > 10.0:
+                hms_limit_new = min(3600.0, haus_p + p_transfer)
             state["last_hms_limit"] = hms_limit_new
 
             # HMS Limits berechnen
@@ -1462,6 +1465,12 @@ def main():
                     is_target_l2 = 2400
             else:
                 is_target_l2 = 2400
+
+            # Fix 1 — IS-Anpassung bei aktivem Transfer:
+            if p_transfer > 10.0:
+                restbedarf = max(0, int(haus_p - solar_p))
+                is_floor = max(200, restbedarf + int(p_transfer))
+                is_target_l1 = max(is_floor, is_target_l1)
 
             # Runden und Grenzen L1
             is_target_l1 = max(10, min(2400, round(is_target_l1 / 10) * 10))
