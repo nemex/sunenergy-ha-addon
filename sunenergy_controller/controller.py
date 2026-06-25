@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.1.7 startet...")
+    log.info("SunEnergy XT Controller v2.1.8 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1332,6 +1332,7 @@ def main():
             if low_soc_active_l2:
                 gs_l2 = min(0.0, gs_l2)
 
+            # Vorläufiges Runden für Schutzlogiken (HMS- und IS-Drosselung)
             gs_l1_rounded = round(gs_l1 / 10) * 10
             gs_l1_rounded = max(-2400, min(2400, gs_l1_rounded))
             
@@ -1339,35 +1340,6 @@ def main():
             if has_l2:
                 gs_l2_rounded = round(gs_l2 / 10) * 10
                 gs_l2_rounded = max(-2400, min(2400, gs_l2_rounded))
-
-            is_native = use_native_pid and not state.get("in_fallback_mode", False)
-            if not is_native:
-                # MM AUS — wir regeln (nur schalten, wenn nicht bereits aus)
-                current_mm_state = ha_get_state(mm_switch, "on")
-                if current_mm_state != "off":
-                    ha_switch(mm_switch, False)
-                if has_l2 and mm_switch_l2:
-                    current_mm_state_l2 = ha_get_state(mm_switch_l2, "on")
-                    if current_mm_state_l2 != "off":
-                        ha_switch(mm_switch_l2, False)
-
-                # GS Sollwert in HA schreiben (nur bei nennenswerten Änderungen)
-                if state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_l1_rounded) >= 10:
-                    ha_set_number(gs_entity, gs_l1_rounded)
-                    state["last_gs_written"] = gs_l1_rounded
-                
-                if has_l2 and gs_entity_l2:
-                    if state.get("last_gs_written_l2") is None or abs(state["last_gs_written_l2"] - gs_l2_rounded) >= 10:
-                        ha_set_number(gs_entity_l2, gs_l2_rounded)
-                        state["last_gs_written_l2"] = gs_l2_rounded
-            else:
-                # Im nativen Modus schreiben wir GS=0 in HA
-                if state.get("last_gs_written") != 0:
-                    ha_set_number(gs_entity, 0)
-                    state["last_gs_written"] = 0
-                if has_l2 and gs_entity_l2 and state.get("last_gs_written_l2") != 0:
-                    ha_set_number(gs_entity_l2, 0)
-                    state["last_gs_written_l2"] = 0
 
             gs_new_rounded = gs_l1_rounded + gs_l2_rounded
 
@@ -1435,6 +1407,7 @@ def main():
 
             # IS Limit der Batterie anpassen
             # L1
+            is_native = use_native_pid and not state.get("in_fallback_mode", False)
             if low_soc_active_l1:
                 is_target_l1 = 10
             elif bypass_active or is_actively_feeding_in:
@@ -1486,6 +1459,96 @@ def main():
                 is_target_l2 = min(is_target_l2, is_last_l2 + 1000.0)
                 is_target_l2 = max(10, min(2400, round(is_target_l2 / 10) * 10))
             state["last_is_l2"] = is_target_l2
+
+            # ==================================================================
+            # v2.1.8: SOC-Angleichung für L1/L2 im manuellen Modus via AC-AC-Transfer
+            # ==================================================================
+            p_transfer = 0.0
+            if not is_native and has_l2:
+                soc_max_curr = max(curr_soc, curr_soc_l2)
+                soc_diff = curr_soc - curr_soc_l2
+                
+                if soc_max_curr > 80.0 and abs(soc_diff) > 5.0:
+                    if soc_diff > 0.0 and pv_current > haus_p and curr_soc_l2 < soc_max_limit and curr_soc > soc_min:
+                        # Berechne Roh-Transferleistung
+                        k_p = 15.0
+                        p_transfer_raw = (soc_diff - 5.0) * k_p
+                        
+                        # stufenloses Abregeln (Fade-Out), wenn L2 sich 95% nähert
+                        fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc_l2) / 5.0))
+                        p_transfer_raw *= fade_out
+                        
+                        # Gedeckelt auf den solaren Überschuss von L1
+                        solar_excess = pv_current - haus_p
+                        
+                        # Begrenzung auf die freien AC-Kapazitäten beider Geräte
+                        max_possible_l1_increase = max(0.0, is_target_l1 - gs_l1)
+                        max_possible_l2_charge = max(0.0, 2400.0 + gs_l2)
+                        
+                        p_transfer_target = min(p_transfer_raw, solar_excess, max_possible_l1_increase, max_possible_l2_charge)
+                        p_transfer_target = max(0.0, p_transfer_target)
+                        
+                        # Slew-Rate Limit beim Hochfahren, sofortiges Runterfahren bei Wolken
+                        last_p_transfer = state.get("last_p_transfer", 0.0)
+                        if p_transfer_target > last_p_transfer:
+                            p_transfer = min(p_transfer_target, last_p_transfer + 50.0)
+                        else:
+                            p_transfer = p_transfer_target
+                        
+                        state["last_p_transfer"] = p_transfer
+                        
+                        if p_transfer > 10.0:
+                            gs_l1 += p_transfer
+                            gs_l2 -= p_transfer
+                            log.info("SOC-Angleichung aktiv: Transferiere %.1fW von L1 zu L2 (SOC L1: %.1f%%, L2: %.1f%%, solarer Überschuss L1: %.1fW, IS_L1: %dW)",
+                                     p_transfer, curr_soc, curr_soc_l2, pv_current, is_target_l1)
+                    else:
+                        state["last_p_transfer"] = 0.0
+                else:
+                    state["last_p_transfer"] = 0.0
+            else:
+                if "last_p_transfer" in state:
+                    state["last_p_transfer"] = 0.0
+
+            # Finales Runden der GS-Sollwerte nach Transfer
+            gs_l1_rounded = round(gs_l1 / 10) * 10
+            gs_l1_rounded = max(-2400, min(2400, gs_l1_rounded))
+
+            gs_l2_rounded = 0
+            if has_l2:
+                gs_l2_rounded = round(gs_l2 / 10) * 10
+                gs_l2_rounded = max(-2400, min(2400, gs_l2_rounded))
+
+            gs_new_rounded = gs_l1_rounded + gs_l2_rounded
+
+            # HA-Schreiben durchführen
+            if not is_native:
+                # MM AUS — wir regeln (nur schalten, wenn nicht bereits aus)
+                current_mm_state = ha_get_state(mm_switch, "on")
+                if current_mm_state != "off":
+                    ha_switch(mm_switch, False)
+                if has_l2 and mm_switch_l2:
+                    current_mm_state_l2 = ha_get_state(mm_switch_l2, "on")
+                    if current_mm_state_l2 != "off":
+                        ha_switch(mm_switch_l2, False)
+
+                # GS Sollwert in HA schreiben (nur bei nennenswerten Änderungen)
+                if state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_l1_rounded) >= 10:
+                    ha_set_number(gs_entity, gs_l1_rounded)
+                    state["last_gs_written"] = gs_l1_rounded
+                
+                if has_l2 and gs_entity_l2:
+                    if state.get("last_gs_written_l2") is None or abs(state["last_gs_written_l2"] - gs_l2_rounded) >= 10:
+                        ha_set_number(gs_entity_l2, gs_l2_rounded)
+                        state["last_gs_written_l2"] = gs_l2_rounded
+            else:
+                # Im nativen Modus schreiben wir GS=0 in HA
+                if state.get("last_gs_written") != 0:
+                    ha_set_number(gs_entity, 0)
+                    state["last_gs_written"] = 0
+                if has_l2 and gs_entity_l2 and state.get("last_gs_written_l2") != 0:
+                    ha_set_number(gs_entity_l2, 0)
+                    state["last_gs_written_l2"] = 0
 
             # Direkt ans Gerät schreiben (nur bei Änderungen)
             # L1
