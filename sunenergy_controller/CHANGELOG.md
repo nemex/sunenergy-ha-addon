@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.2.6
+- **Korrektur Vorzeichen L2-Leistungssensor**: Konvertiert negative Messwerte des Shelly-Sensors (die Einspeisung/Entladung repräsentieren) automatisch in positive Werte für `op_l2`. Positive Messwerte (die Laden repräsentieren) werden ignoriert (auf 0.0 gesetzt), da der Ladebedarf separat berechnet wird.
+
 ## v2.2.5
 - **L2-Entladeleistung im Hausverbrauch berücksichtigt**: Erlaubt das Konfigurieren von `op_l2_sensor` (z.B. für einen Shelly Pro 1PM), um die AC-Entladeleistung von L2 direkt aus Home Assistant einzulesen. Dies korrigiert die Hausverbrauchsberechnung bei Installationen mit zwei Speichereinheiten, wenn die Entladeleistung von L2 nicht über die SunEnergy-API gemeldet wird.
 
