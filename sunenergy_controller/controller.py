@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.2.7
+SunEnergy XT Controller v2.2.9
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.2.7 startet...")
+    log.info("SunEnergy XT Controller v2.2.9 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1452,13 +1452,14 @@ def main():
                     if has_l2 and curr_soc_l2 < soc_max_limit:
                         fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc_l2) / 5.0))
                         l2_headroom = 2400.0 * fade_out
-                    
+
                     is_target_l1 = min(pv_current, restbedarf + l2_headroom)
                     # Mindestlimit is_floor verhindert IS-Sägezahn (Drosselung max. bis max(200, restbedarf))
                     is_floor = max(200, restbedarf)
                     is_target_l1 = max(is_floor, is_target_l1)
                 else:
-                    is_target_l1 = 2400
+                    # v2.2.9: Sanfter Anstieg statt sofortigem Sprung auf 2400W — verhindert IS-Ping-Pong bei SOC=95%
+                    is_target_l1 = min(2400, float(state.get("last_device_is", 2400)) + 400)
             else:
                 is_target_l1 = 2400
 
@@ -1480,13 +1481,14 @@ def main():
                     if curr_soc < soc_max_limit:
                         fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc) / 5.0))
                         l1_headroom = 2400.0 * fade_out
-                    
+
                     is_target_l2 = min(pv_l2, restbedarf + l1_headroom)
                     # Mindestlimit is_floor verhindert IS-Sägezahn
                     is_floor = max(200, restbedarf)
                     is_target_l2 = max(is_floor, is_target_l2)
                 else:
-                    is_target_l2 = 2400
+                    # v2.2.9: Sanfter Anstieg statt sofortigem Sprung auf 2400W — verhindert IS-Ping-Pong bei SOC=95%
+                    is_target_l2 = min(2400, float(state.get("last_device_is_l2", 2400)) + 400)
             else:
                 is_target_l2 = 2400
 

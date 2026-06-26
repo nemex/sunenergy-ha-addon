@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.2.9
+- **IS Ping-Pong Fix bei SOC=95%**: Verhindert das schnelle Wechseln des IS-Limits zwischen 200W und 2400W, wenn der Akku voll ist und `drosseln=False`. Statt sofort auf 2400W zu springen, wird das IS-Limit nun maximal um +400W pro Tick erhöht (Slew-Rate-Begrenzung). Gilt für beide Geräte L1 und L2. Hintergrund: Der sofortige Sprung auf 2400W führte zu einem Leistungsimpuls, der das Netz kurzzeitig negativ machte, `drosseln=True` auslöste und IS wieder auf 200W setzte — ein stabiler Schwingkreis mit ~9 Zyklen/Minute.
+
 ## v2.2.7
 - **Stabilitäts-Fix Pendeln**: Reduziert den I-Regler-Gain von 0.5 auf 0.3 und begrenzt den GS-Sprung auf ±120W pro 5s-Tick (Rate-Limiting). Verhindert die bisher auftretenden GS-Sprünge von bis zu 1450W in einem einzigen Tick, die bei plötzlichen Lastsprüngen zu massiver Über-/Untereinspeisung (bis -1890W) geführt haben.
 - **Integrator-Reset bei OP-Einbruch**: Setzt den GS-Integrator auf 0 zurück, wenn die Batterie von >100W plötzlich auf <10W OP-Ausgang fällt. Verhindert Windup-bedingte Überschwinger beim Wiederanfahren.
