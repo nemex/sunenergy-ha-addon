@@ -1458,14 +1458,14 @@ def main():
                     is_floor = max(200, restbedarf)
                     target_val = max(is_floor, target_val)
                     
-                    # v2.2.10: Sanfter Abfall bei Drosselung (max -250W/Tick), außer bei starker Einspeisung (< -300W)
-                    if grid_p_raw < -300.0:
+                    # v2.2.10: Sanfter Abfall bei Drosselung (max -250W/Tick), außer bei starker Einspeisung (< -400W)
+                    if grid_p_raw < -400.0:
                         is_target_l1 = target_val
                     else:
                         is_target_l1 = max(target_val, float(state.get("last_device_is", 2400)) - 250)
                 else:
-                    # v2.2.10: Sofortige Freigabe bei echtem Netzbezug (>100W), sonst sanfter Anstieg (+100W/Tick)
-                    if grid_p_raw > 100.0:
+                    # v2.2.10: Sofortige Freigabe bei echtem Netzbezug (>400W), sonst sanfter Anstieg (+100W/Tick)
+                    if grid_p_raw > 400.0:
                         is_target_l1 = 2400
                     else:
                         is_target_l1 = min(2400, float(state.get("last_device_is", 2400)) + 100)
@@ -1500,14 +1500,14 @@ def main():
                     is_floor = max(200, restbedarf)
                     target_val = max(is_floor, target_val)
                     
-                    # v2.2.10: Sanfter Abfall bei Drosselung (max -250W/Tick), außer bei starker Einspeisung (< -300W)
-                    if grid_p_raw < -300.0:
+                    # v2.2.10: Sanfter Abfall bei Drosselung (max -250W/Tick), außer bei starker Einspeisung (< -400W)
+                    if grid_p_raw < -400.0:
                         is_target_l2 = target_val
                     else:
                         is_target_l2 = max(target_val, float(state.get("last_device_is_l2", 2400)) - 250)
                 else:
-                    # v2.2.10: Sofortige Freigabe bei echtem Netzbezug (>100W), sonst sanfter Anstieg (+100W/Tick)
-                    if grid_p_raw > 100.0:
+                    # v2.2.10: Sofortige Freigabe bei echtem Netzbezug (>400W), sonst sanfter Anstieg (+100W/Tick)
+                    if grid_p_raw > 400.0:
                         is_target_l2 = 2400
                     else:
                         is_target_l2 = min(2400, float(state.get("last_device_is_l2", 2400)) + 100)
