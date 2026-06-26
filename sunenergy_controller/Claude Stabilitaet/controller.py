@@ -560,24 +560,20 @@ def main():
             solar_2000_val = ha_get_state(hms_2000_power_sensor)
             if solar_2000_val not in (None, "unknown", "unavailable"):
                 solar_p_2000 = abs(float(solar_2000_val))
-                hms_2000_online = True
             else:
                 solar_p_2000 = float(state.get("solar_p_2000_last", 0.0))
-                hms_2000_online = (ha_get_state(hms_2000_reachable_sensor, "off") == "on")
-                if not hms_2000_online:
-                    solar_p_2000 = 0.0
-                log.debug("HMS-2000 Power-Sensor offline — online: %s, val: %.0fW", hms_2000_online, solar_p_2000)
+                log.debug("HMS-2000 Power-Sensor offline — verwende letzten Wert %.0fW", solar_p_2000)
 
             solar_1600_val = ha_get_state(hms_1600_power_sensor)
             if solar_1600_val not in (None, "unknown", "unavailable"):
                 solar_p_1600 = abs(float(solar_1600_val))
-                hms_1600_online = True
             else:
                 solar_p_1600 = float(state.get("solar_p_1600_last", 0.0))
-                hms_1600_online = (ha_get_state(hms_1600_reachable_sensor, "off") == "on")
-                if not hms_1600_online:
-                    solar_p_1600 = 0.0
-                log.debug("HMS-1600 Power-Sensor offline — online: %s, val: %.0fW", hms_1600_online, solar_p_1600)
+                log.debug("HMS-1600 Power-Sensor offline — verwende letzten Wert %.0fW", solar_p_1600)
+            
+            # Robustes Checken: Wenn Leistung > 10W, ist er online. Ansonsten aus HA lesen.
+            hms_2000_online = (ha_get_state(hms_2000_reachable_sensor, "off") == "on") or (solar_p_2000 > 10.0)
+            hms_1600_online = (ha_get_state(hms_1600_reachable_sensor, "off") == "on") or (solar_p_1600 > 10.0)
             
             solar_p = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
 
@@ -1069,9 +1065,11 @@ def main():
                             if current_mm_state_l2 != "off":
                                 ha_switch(mm_switch_l2, False)
                     
-                    # Hoymiles auf Maximum setzen
-                    ha_set_number(hms_2000_entity, 2000)
-                    ha_set_number(hms_1600_entity, 1600)
+                    # Hoymiles auf Maximum setzen (v1.9.2: beide mit Online-Check)
+                    if hms_2000_online:
+                        ha_set_number(hms_2000_entity, 2000)
+                    if hms_1600_online:
+                        ha_set_number(hms_1600_entity, 1600)
                     
                     # IS auf Maximum
                     sunenergy_write(sunenergy_ip, {"IS": 2400})
@@ -1128,14 +1126,6 @@ def main():
                     gs_last = float(state.get("last_gs", 0))
                     _delta_night = max(-120.0, min(120.0, grid_p_raw * 0.3))
                     gs_new = gs_last + _delta_night
-
-                    # Anti-Windup bei vollen/nicht ladbaren Batterien (nachts)
-                    headroom_l1 = max(0.0, soc_max_limit - curr_soc)
-                    headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and pv_l2 > 10.0) else 0.0
-                    total_headroom = headroom_l1 + headroom_l2
-                    if total_headroom <= 0.0:
-                        gs_new = max(0.0, gs_new)
-
                     if low_soc_active:
                         gs_new = min(0.0, gs_new)
                     gs_new = max(-max_gs, min(max_gs, gs_new))
@@ -1156,15 +1146,16 @@ def main():
                             if gs_l1 > 2400:
                                 rem = gs_l1 - 2400
                                 gs_l1 = 2400
-                                if usable_soc_l2 > 0.0:
-                                    gs_l2 = min(2400, gs_l2 + rem)
+                                gs_l2 = min(2400, gs_l2 + rem)
                             elif gs_l2 > 2400:
                                 rem = gs_l2 - 2400
                                 gs_l2 = 2400
-                                if usable_soc_l1 > 0.0:
-                                    gs_l1 = min(2400, gs_l1 + rem)
+                                gs_l1 = min(2400, gs_l1 + rem)
                     elif gs_new < 0:
                         # Laden proportional zum Headroom
+                        headroom_l1 = max(0.0, soc_max_limit - curr_soc)
+                        headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if has_l2 else 0.0
+                        total_headroom = headroom_l1 + headroom_l2
                         if total_headroom > 0:
                             ratio_l1 = headroom_l1 / total_headroom
                             ratio_l2 = headroom_l2 / total_headroom
@@ -1173,13 +1164,11 @@ def main():
                             if gs_l1 < -2400:
                                 rem = gs_l1 + 2400
                                 gs_l1 = -2400
-                                if headroom_l2 > 0.0:
-                                    gs_l2 = max(-2400, gs_l2 + rem)
+                                gs_l2 = max(-2400, gs_l2 + rem)
                             elif gs_l2 < -2400:
                                 rem = gs_l2 + 2400
                                 gs_l2 = -2400
-                                if headroom_l1 > 0.0:
-                                    gs_l1 = max(-2400, gs_l1 + rem)
+                                gs_l1 = max(-2400, gs_l1 + rem)
 
                     # Sicherheitsgrenzen bei niedrigem SOC anwenden
                     if low_soc_active_l1:
@@ -1321,14 +1310,6 @@ def main():
                 gs_last = float(state.get("last_gs", 0))
                 _delta_day = max(-120.0, min(120.0, grid_error * 0.3))
                 gs_new = gs_last + _delta_day
-
-                # Anti-Windup bei vollen/nicht ladbaren Batterien (tagsüber)
-                headroom_l1 = max(0.0, soc_max_limit - curr_soc)
-                headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and pv_l2 > 10.0) else 0.0
-                total_headroom = headroom_l1 + headroom_l2
-                if total_headroom <= 0.0:
-                    gs_new = max(0.0, gs_new)
-
                 if low_soc_active_l1 and (not has_l2 or low_soc_active_l2):
                     gs_new = min(0.0, gs_new)
                 gs_new = max(-max_gs, min(max_gs, gs_new))
@@ -1349,15 +1330,16 @@ def main():
                         if gs_l1 > 2400:
                             rem = gs_l1 - 2400
                             gs_l1 = 2400
-                            if usable_soc_l2 > 0.0:
-                                gs_l2 = min(2400, gs_l2 + rem)
+                            gs_l2 = min(2400, gs_l2 + rem)
                         elif gs_l2 > 2400:
                             rem = gs_l2 - 2400
                             gs_l2 = 2400
-                            if usable_soc_l1 > 0.0:
-                                gs_l1 = min(2400, gs_l1 + rem)
+                            gs_l1 = min(2400, gs_l1 + rem)
                 elif gs_new < 0:
                     # Laden proportional zum Headroom
+                    headroom_l1 = max(0.0, soc_max_limit - curr_soc)
+                    headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if has_l2 else 0.0
+                    total_headroom = headroom_l1 + headroom_l2
                     if total_headroom > 0:
                         ratio_l1 = headroom_l1 / total_headroom
                         ratio_l2 = headroom_l2 / total_headroom
@@ -1366,13 +1348,11 @@ def main():
                         if gs_l1 < -2400:
                             rem = gs_l1 + 2400
                             gs_l1 = -2400
-                            if headroom_l2 > 0.0:
-                                gs_l2 = max(-2400, gs_l2 + rem)
+                            gs_l2 = max(-2400, gs_l2 + rem)
                         elif gs_l2 < -2400:
                             rem = gs_l2 + 2400
                             gs_l2 = -2400
-                            if headroom_l1 > 0.0:
-                                gs_l1 = max(-2400, gs_l1 + rem)
+                            gs_l1 = max(-2400, gs_l1 + rem)
 
             # Sicherheitsgrenzen bei niedrigem SOC anwenden
             if low_soc_active_l1:

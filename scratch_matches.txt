@@ -1,0 +1,40 @@
+P5: 5.4.1 Netzanschluss und PV-Anschluss
+P6: 7.1 Hinweise zur Netzwerkkonfiguration
+P9: 17. Verwenden Sie keine beschädigten Netzkabel, Steckverbinder oder nicht normgerechten
+P9: 21. Bei längerer Lagerung laden Sie die Batterie alle 3 Monate auf ca. 60 % auf. Erfolgt über 6
+P9: 1. Entladen Sie die Batterie vollständig und entsorgen Sie sie gemäß den geltenden lokalen
+P10: Netzanschluss-Zertifizierung
+P10: Netzbetrieb-
+P10: Netzladen (AC)
+P10: Netz-/Insel-
+P11: Netzanschluss-Zertifizierung
+P11: laden / entladen;
+P11: Empfohlen: alle 3 Monate einmal laden / entladen;
+P11: laden / entladen;
+P14: der Netzwerkkonfiguration Konfigurationsmodus
+P14: Laden: Lauflicht;
+P14: Netzwerkkonfiguration: Im ausgeschalteten Zustand die Taste 10 Sekunden gedrückt halten,
+P14: Netzspannung normal, blau
+P16: Hybridspeichersystem (Kopfspeicher), 1 Stk. AC-Netzanschlusskabel, 3 m, 1 Stk.
+P16: AC-Netzanschlusses,
+P19: AC-Netzanschluss
+P21: mit dem Netzwerk verbinden kann.
+P24: 4. Trennen Sie den Kopfspeicher vom Stromnetz.
+P29: 5.4.1 Netzanschluss und PV-Anschluss
+P29: AC-Netzanschluss
+P34: Zum Entriegeln des AC-Netzanschlusses.
+P35: 1. Netzversorgung normal :
+P35: (bei unzureichender Batterie- oder PV-Leistung wird die Versorgung durch das öffentliche Netz ergänzt).
+P35: 2. Netzausfall :
+P35: 3. Netzwiederkehr :
+P35: Das System schaltet automatisch zurück auf Netzbetrieb; die Last wird weiterhin normal versorgt.
+P36: 7.1 Hinweise zur Netzwerkkonfiguration
+P36: Während des BLE-Konfigurationsvorgangs stellen Sie bitte sicher, dass die Netzwerkumgebung
+P36: innerhalb des lokalen Netzwerks (LAN) eine Zero-Configuration-Netzwerkerkennung realisiert.
+P36: von .local-Domainnamen innerhalb des lokalen Netzwerks, ohne dass ein herkömmlicher
+P36: Geräten im lokalen Netzwerk suchen und deren Broadcast-Informationen auflösen, um die IP-
+P36: Wenn das Gerät noch nicht mit einem Netzwerk verbunden ist, wird automatisch die
+P36: Netzwerkkonfiguration über Bluetooth zu ermöglichen.
+P37: 1. Über Bluetooth kann die Netzwerkkonfiguration des Hybridspeichersystems einfach
+P37: Bitte scannen Sie den QR-Code, um die SunEnergyXT App herunterzuladen. Alternativ können Sie
+P37: die App im Apple App Store oder im Google Play Store unter “SunEnergyXT” herunterladen.
