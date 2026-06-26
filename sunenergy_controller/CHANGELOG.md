@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.2.10
+- **L2-Bypass bei fehlendem PV**: Wenn L2 keine PV-Leistung meldet (da keine Module angeschlossen sind), bleibt `is_target_l2` starr auf `2400 W`. Das stoppt jegliche unnötigen HTTP-Schreibzugriffe über WLAN an L2 und halbiert die API-Latenz des Reglers.
+- **Dynamische IS Slew-Rate (Regelungsstabilität)**:
+  - *Anstieg*: Ramping-Up auf maximal `+100W` pro Tick begrenzt (um Hoymiles-Regelung Zeit zum Folgen zu geben). Bei echtem Netzbezug (`grid_p_raw > 100W`) wird das Limit jedoch sofort auf `2400W` angehoben, um schnelle Entladung bei Lastsprüngen zu sichern.
+  - *Abfall*: Ramping-Down auf maximal `-250W` pro Tick begrenzt (um Einspeisespitzen beim Drosseln abzufangen). Bei starker Einspeisung (`grid_p_raw < -300W`) wird jedoch sofort hart gedrosselt.
+
 ## v2.2.9
 - **IS Ping-Pong Fix bei SOC=95%**: Verhindert das schnelle Wechseln des IS-Limits zwischen 200W und 2400W, wenn der Akku voll ist und `drosseln=False`. Statt sofort auf 2400W zu springen, wird das IS-Limit nun maximal um +400W pro Tick erhöht (Slew-Rate-Begrenzung). Gilt für beide Geräte L1 und L2. Hintergrund: Der sofortige Sprung auf 2400W führte zu einem Leistungsimpuls, der das Netz kurzzeitig negativ machte, `drosseln=True` auslöste und IS wieder auf 200W setzte — ein stabiler Schwingkreis mit ~9 Zyklen/Minute.
 
