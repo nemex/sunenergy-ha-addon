@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.3.1
+- **Separate Batterie-Sensoren**: Aufteilung der geschätzten AC-Batterieleistung in `sensor.sunenergy_battery_ac_l1` und `sensor.sunenergy_battery_ac_l2`. Behebt visuelle Darstellungsfehler auf Multi-Batterie-Dashboards.
+
 ## v2.3.0
 - **Optimierung IS-Bypass-Schwellenwerte**: Erhöhung der Schwellenwerte für den automatischen Bypass auf `+400W` (Netzbezug für schnelle Freigabe) und `-400W` (Netzeinspeisung für schnelle Drosselung). Verhindert, dass der Bypass bereits bei kleineren normalen Regelfluuktuationen an der Nulllinie triggert, was zuvor die Oszillationen erneut anstieß.
 

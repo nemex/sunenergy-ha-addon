@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.0
+SunEnergy XT Controller v2.3.1
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.0 startet...")
+    log.info("SunEnergy XT Controller v2.3.1 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1126,6 +1126,14 @@ def main():
                     gs_last = float(state.get("last_gs", 0))
                     _delta_night = max(-120.0, min(120.0, grid_p_raw * 0.3))
                     gs_new = gs_last + _delta_night
+
+                    # Anti-Windup bei vollen/nicht ladbaren Batterien (nachts)
+                    headroom_l1 = max(0.0, soc_max_limit - curr_soc)
+                    headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and pv_l2 > 10.0) else 0.0
+                    total_headroom = headroom_l1 + headroom_l2
+                    if total_headroom <= 0.0:
+                        gs_new = max(0.0, gs_new)
+
                     if low_soc_active:
                         gs_new = min(0.0, gs_new)
                     gs_new = max(-max_gs, min(max_gs, gs_new))
@@ -1146,16 +1154,15 @@ def main():
                             if gs_l1 > 2400:
                                 rem = gs_l1 - 2400
                                 gs_l1 = 2400
-                                gs_l2 = min(2400, gs_l2 + rem)
+                                if usable_soc_l2 > 0.0:
+                                    gs_l2 = min(2400, gs_l2 + rem)
                             elif gs_l2 > 2400:
                                 rem = gs_l2 - 2400
                                 gs_l2 = 2400
-                                gs_l1 = min(2400, gs_l1 + rem)
+                                if usable_soc_l1 > 0.0:
+                                    gs_l1 = min(2400, gs_l1 + rem)
                     elif gs_new < 0:
                         # Laden proportional zum Headroom
-                        headroom_l1 = max(0.0, soc_max_limit - curr_soc)
-                        headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if has_l2 else 0.0
-                        total_headroom = headroom_l1 + headroom_l2
                         if total_headroom > 0:
                             ratio_l1 = headroom_l1 / total_headroom
                             ratio_l2 = headroom_l2 / total_headroom
@@ -1164,11 +1171,13 @@ def main():
                             if gs_l1 < -2400:
                                 rem = gs_l1 + 2400
                                 gs_l1 = -2400
-                                gs_l2 = max(-2400, gs_l2 + rem)
+                                if headroom_l2 > 0.0:
+                                    gs_l2 = max(-2400, gs_l2 + rem)
                             elif gs_l2 < -2400:
                                 rem = gs_l2 + 2400
                                 gs_l2 = -2400
-                                gs_l1 = max(-2400, gs_l1 + rem)
+                                if headroom_l1 > 0.0:
+                                    gs_l1 = max(-2400, gs_l1 + rem)
 
                     # Sicherheitsgrenzen bei niedrigem SOC anwenden
                     if low_soc_active_l1:
@@ -1264,6 +1273,8 @@ def main():
                 ha_push_sensor("sensor.sunenergy_grid_p",         grid_p_raw,  "W", "power",  "Netz aktuell (Controller)")
                 ha_push_sensor("sensor.sunenergy_solar_p",        solar_p,     "W", "power",  "Solar gesamt (Controller)")
                 ha_push_sensor("sensor.sunenergy_battery_ac",     battery_ac_est, "W", "power", "Batterie AC (Controller)")
+                ha_push_sensor("sensor.sunenergy_battery_ac_l1",  battery_ac_est_l1, "W", "power", "Batterie L1 AC (Controller)")
+                ha_push_sensor("sensor.sunenergy_battery_ac_l2",  battery_ac_est_l2, "W", "power", "Batterie L2 AC (Controller)")
 
                 state["grid_p_filtered"] = grid_p_raw
                 state["last_gs"]         = gs_new
@@ -1308,6 +1319,14 @@ def main():
                 gs_last = float(state.get("last_gs", 0))
                 _delta_day = max(-120.0, min(120.0, grid_error * 0.3))
                 gs_new = gs_last + _delta_day
+
+                # Anti-Windup bei vollen/nicht ladbaren Batterien (tagsüber)
+                headroom_l1 = max(0.0, soc_max_limit - curr_soc)
+                headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and pv_l2 > 10.0) else 0.0
+                total_headroom = headroom_l1 + headroom_l2
+                if total_headroom <= 0.0:
+                    gs_new = max(0.0, gs_new)
+
                 if low_soc_active_l1 and (not has_l2 or low_soc_active_l2):
                     gs_new = min(0.0, gs_new)
                 gs_new = max(-max_gs, min(max_gs, gs_new))
@@ -1328,16 +1347,15 @@ def main():
                         if gs_l1 > 2400:
                             rem = gs_l1 - 2400
                             gs_l1 = 2400
-                            gs_l2 = min(2400, gs_l2 + rem)
+                            if usable_soc_l2 > 0.0:
+                                gs_l2 = min(2400, gs_l2 + rem)
                         elif gs_l2 > 2400:
                             rem = gs_l2 - 2400
                             gs_l2 = 2400
-                            gs_l1 = min(2400, gs_l1 + rem)
+                            if usable_soc_l1 > 0.0:
+                                gs_l1 = min(2400, gs_l1 + rem)
                 elif gs_new < 0:
                     # Laden proportional zum Headroom
-                    headroom_l1 = max(0.0, soc_max_limit - curr_soc)
-                    headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if has_l2 else 0.0
-                    total_headroom = headroom_l1 + headroom_l2
                     if total_headroom > 0:
                         ratio_l1 = headroom_l1 / total_headroom
                         ratio_l2 = headroom_l2 / total_headroom
@@ -1346,11 +1364,13 @@ def main():
                         if gs_l1 < -2400:
                             rem = gs_l1 + 2400
                             gs_l1 = -2400
-                            gs_l2 = max(-2400, gs_l2 + rem)
+                            if headroom_l2 > 0.0:
+                                gs_l2 = max(-2400, gs_l2 + rem)
                         elif gs_l2 < -2400:
                             rem = gs_l2 + 2400
                             gs_l2 = -2400
-                            gs_l1 = max(-2400, gs_l1 + rem)
+                            if headroom_l1 > 0.0:
+                                gs_l1 = max(-2400, gs_l1 + rem)
 
             # Sicherheitsgrenzen bei niedrigem SOC anwenden
             if low_soc_active_l1:
@@ -1747,6 +1767,8 @@ def main():
             ha_push_sensor("sensor.sunenergy_grid_p",         grid_p_raw,  "W", "power",  "Netz aktuell (Controller)")
             ha_push_sensor("sensor.sunenergy_solar_p",        solar_p,     "W", "power",  "Solar gesamt (Controller)")
             ha_push_sensor("sensor.sunenergy_battery_ac",     battery_ac_est, "W", "power", "Batterie AC (Controller)")
+            ha_push_sensor("sensor.sunenergy_battery_ac_l1",  battery_ac_est_l1, "W", "power", "Batterie L1 AC (Controller)")
+            ha_push_sensor("sensor.sunenergy_battery_ac_l2",  battery_ac_est_l2, "W", "power", "Batterie L2 AC (Controller)")
 
             # last_hms_2000/1600_lim werden jetzt nur noch bei echten Schreibbefehlen aktualisiert (drift-safe)
 
