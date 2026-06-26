@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.2.7
+- **Stabilitäts-Fix Pendeln**: Reduziert den I-Regler-Gain von 0.5 auf 0.3 und begrenzt den GS-Sprung auf ±120W pro 5s-Tick (Rate-Limiting). Verhindert die bisher auftretenden GS-Sprünge von bis zu 1450W in einem einzigen Tick, die bei plötzlichen Lastsprüngen zu massiver Über-/Untereinspeisung (bis -1890W) geführt haben.
+- **Integrator-Reset bei OP-Einbruch**: Setzt den GS-Integrator auf 0 zurück, wenn die Batterie von >100W plötzlich auf <10W OP-Ausgang fällt. Verhindert Windup-bedingte Überschwinger beim Wiederanfahren.
+
 ## v2.2.6
 - **Korrektur Vorzeichen L2-Leistungssensor**: Konvertiert negative Messwerte des Shelly-Sensors (die Einspeisung/Entladung repräsentieren) automatisch in positive Werte für `op_l2`. Positive Messwerte (die Laden repräsentieren) werden ignoriert (auf 0.0 gesetzt), da der Ladebedarf separat berechnet wird.
 
