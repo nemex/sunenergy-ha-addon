@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.2.6
+SunEnergy XT Controller v2.2.7
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.2.6 startet...")
+    log.info("SunEnergy XT Controller v2.2.7 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -724,6 +724,16 @@ def main():
             # Sofort speichern, falls sich der Online-Status geändert hat
             if state.get("l1_polling_ok", True) != prev_l1_ok or state.get("l2_polling_ok", True) != prev_l2_ok:
                 save_state(state)
+
+            # Integrator-Reset bei plötzlichem OP-Einbruch auf 0
+            # Verhindert Windup wenn die Batterie kurz abschaltet und dann mit falschem GS wiederkommt
+            prev_op_l1 = float(state.get("op_l1", op_current))
+            prev_op_l2 = float(state.get("op_l2", op_l2))
+            if prev_op_l1 > 100.0 and op_current < 10.0:
+                log.warning("L1 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l1, op_current)
+                state["last_gs"] = 0.0
+            if has_l2 and prev_op_l2 > 100.0 and op_l2 < 10.0:
+                log.warning("L2 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l2, op_l2)
 
             # Speicher-Leistungswerte im Zustand sichern
             state["op_l1"] = op_current
@@ -1114,7 +1124,8 @@ def main():
                     # GS nachts aktiv regeln
                     max_gs = 4800.0 if has_l2 else 2400.0
                     gs_last = float(state.get("last_gs", 0))
-                    gs_new = gs_last + grid_p_raw * 0.5
+                    _delta_night = max(-120.0, min(120.0, grid_p_raw * 0.3))
+                    gs_new = gs_last + _delta_night
                     if low_soc_active:
                         gs_new = min(0.0, gs_new)
                     gs_new = max(-max_gs, min(max_gs, gs_new))
@@ -1293,9 +1304,10 @@ def main():
                 
                 gs_new = gs_l1 + gs_l2
             else:
-                # GS Formel: gedämpft → gs_last + grid_error * 0.5
+                # GS Formel: gedämpft → gs_last + grid_error * 0.3, Rate-Limit ±120W/Tick
                 gs_last = float(state.get("last_gs", 0))
-                gs_new = gs_last + grid_error * 0.5
+                _delta_day = max(-120.0, min(120.0, grid_error * 0.3))
+                gs_new = gs_last + _delta_day
                 if low_soc_active_l1 and (not has_l2 or low_soc_active_l2):
                     gs_new = min(0.0, gs_new)
                 gs_new = max(-max_gs, min(max_gs, gs_new))
