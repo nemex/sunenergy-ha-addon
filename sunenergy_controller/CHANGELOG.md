@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.3.0
+- **Optimierung IS-Bypass-Schwellenwerte**: Erhöhung der Schwellenwerte für den automatischen Bypass auf `+400W` (Netzbezug für schnelle Freigabe) und `-400W` (Netzeinspeisung für schnelle Drosselung). Verhindert, dass der Bypass bereits bei kleineren normalen Regelfluuktuationen an der Nulllinie triggert, was zuvor die Oszillationen erneut anstieß.
+
 ## v2.2.10
 - **L2-Bypass bei fehlendem PV**: Wenn L2 keine PV-Leistung meldet (da keine Module angeschlossen sind), bleibt `is_target_l2` starr auf `2400 W`. Das stoppt jegliche unnötigen HTTP-Schreibzugriffe über WLAN an L2 und halbiert die API-Latenz des Reglers.
 - **Dynamische IS Slew-Rate (Regelungsstabilität)**:
