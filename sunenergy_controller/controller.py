@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.9
+SunEnergy XT Controller v2.3.10
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -368,6 +368,17 @@ def calc_hms_limits(
 
 
 
+def safe_float(state: dict, key: str, default: float) -> float:
+    """Liest State-Key sicher als float, auch wenn Wert None oder ungueltig ist."""
+    val = state.get(key)
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
 def calc_adaptive_gs_delta(error, ki_min=0.15, ki_max=0.5, ki_error_scale=600.0):
     # Exponent 0.7 bewirkt progressiven Anstieg bei mittleren Fehlern
     ki_err_factor = min(1.0, (abs(error) / ki_error_scale) ** 0.7)
@@ -408,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.9 startet...")
+    log.info("SunEnergy XT Controller v2.3.10 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -506,7 +517,7 @@ def main():
 
     # Lokaler Cache für SunEnergyXT Daten zur Entlastung bei API-Ausfällen (Option C)
     op_current = 0.0
-    pv_current = float(state.get("pv_last", 0.0))
+    pv_current = safe_float(state, "pv_last", 0.0)
     pb_current = 0.0
     iw_current = 0.0
     
@@ -518,7 +529,14 @@ def main():
     while RUNNING:
         try:
             tick_start = time.monotonic()
-            p_transfer = float(state.get("last_p_transfer", 0.0))
+            
+            # Kreuzladung Hold-Time noch aktiv?
+            if time.time() < state.get("kreuzladung_hold_until", 0):
+                log.info("Kreuzladung Hold-Time aktiv — überspringe Regelzyklus")
+                sleep_tick(TICK_S)
+                continue
+
+            p_transfer = safe_float(state, "last_p_transfer", 0.0)
 
             # Merge proxy poll updates from proxy state
             proxy_state = load_proxy_state()
@@ -543,7 +561,7 @@ def main():
                 if grid_val not in (None, "unknown", "unavailable"):
                     grid_p_raw = float(grid_val)
                 else:
-                    grid_p_raw = float(state.get("grid_p_filtered", 0.0))
+                    grid_p_raw = safe_float(state, "grid_p_filtered", 0.0)
                     log.warning("Grid-Sensor (%s) offline — verwende letzten Wert %.0fW", grid_sensor, grid_p_raw)
 
             soc_val = ha_get_state(soc_sensor)
@@ -551,7 +569,7 @@ def main():
                 curr_soc = float(soc_val)
                 state["soc"] = curr_soc
             else:
-                curr_soc = float(state.get("soc", 0.0))
+                curr_soc = safe_float(state, "soc", 0.0)
                 log.warning("SOC-Sensor (%s) offline — verwende letzten Wert %.0f%%", soc_sensor, curr_soc)
 
             # L2 SOC einlesen
@@ -562,7 +580,7 @@ def main():
                     curr_soc_l2 = float(soc_val_l2)
                     state["soc_l2"] = curr_soc_l2
                 else:
-                    curr_soc_l2 = float(state.get("soc_l2", 0.0))
+                    curr_soc_l2 = safe_float(state, "soc_l2", 0.0)
                     log.warning("L2 SOC-Sensor (%s) offline — verwende letzten Wert %.0f%%", soc_sensor_l2, curr_soc_l2)
 
             # Hysteresis für niedrigen SOC (Entladeschutz) L1
@@ -597,7 +615,7 @@ def main():
                 solar_p_2000 = abs(float(solar_2000_val))
                 hms_2000_online = True
             else:
-                solar_p_2000 = float(state.get("solar_p_2000_last", 0.0))
+                solar_p_2000 = safe_float(state, "solar_p_2000_last", 0.0)
                 hms_2000_online = (ha_get_state(hms_2000_reachable_sensor, "off") == "on")
                 if not hms_2000_online:
                     solar_p_2000 = 0.0
@@ -608,7 +626,7 @@ def main():
                 solar_p_1600 = abs(float(solar_1600_val))
                 hms_1600_online = True
             else:
-                solar_p_1600 = float(state.get("solar_p_1600_last", 0.0))
+                solar_p_1600 = safe_float(state, "solar_p_1600_last", 0.0)
                 hms_1600_online = (ha_get_state(hms_1600_reachable_sensor, "off") == "on")
                 if not hms_1600_online:
                     solar_p_1600 = 0.0
@@ -715,6 +733,8 @@ def main():
                     else:
                         sunenergy_write(sunenergy_ip, {"MM": 0})
                     state["last_device_mm"] = target_mm
+                    state["last_device_is"] = state.get("last_device_is") or 2400
+                    state["last_device_gs"] = state.get("last_device_gs") or 0
             else:
                 state["l1_polling_ok"] = False
                 state["consecutive_polls_l1"] = 0
@@ -758,8 +778,10 @@ def main():
                         else:
                             sunenergy_write(sunenergy_ip_l2, {"MM": 0})
                         state["last_device_mm_l2"] = target_mm_l2
+                        state["last_device_is_l2"] = state.get("last_device_is_l2") or 2400
+                        state["last_device_gs_l2"] = state.get("last_device_gs_l2") or 0
                 else:
-                    pv_l2 = float(state.get("pv_last_l2", 0.0))
+                    pv_l2 = safe_float(state, "pv_last_l2", 0.0)
                     state["l2_polling_ok"] = False
                     state["consecutive_polls_l2"] = 0
                     log.warning("SunEnergyXT L2 API nicht erreichbar, verwende letzte Werte (OP=%.1fW, PV=%.1fW, BP=%.1fW)", 
@@ -784,8 +806,8 @@ def main():
 
             # Integrator-Reset bei plötzlichem OP-Einbruch auf 0
             # Verhindert Windup wenn die Batterie kurz abschaltet und dann mit falschem GS wiederkommt
-            prev_op_l1 = float(state.get("op_l1", op_current))
-            prev_op_l2 = float(state.get("op_l2", op_l2))
+            prev_op_l1 = safe_float(state, "op_l1", op_current)
+            prev_op_l2 = safe_float(state, "op_l2", op_l2)
             if prev_op_l1 > 100.0 and op_current < 10.0:
                 log.warning("L1 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l1, op_current)
                 state["last_gs"] = 0.0
@@ -803,14 +825,7 @@ def main():
             state["iw_l2"] = iw_l2
             state["pb_l2"] = pb_l2
 
-            # AC-AC Kreuzladungs-Erkennung und direktes Speichern für schnelles Proxy-Breakout
-            # Deaktiviert während der gewollten SOC-Angleichung (p_transfer > 10W)
-            ac_charge_l1 = max(0.0, iw_current - pv_current)
-            ac_charge_l2 = max(0.0, iw_l2 - pv_l2)
-            if p_transfer <= 10.0 and ((ac_charge_l1 > 100.0 and op_l2 > 100.0) or (ac_charge_l2 > 100.0 and op_current > 100.0)):
-                log.warning("⚠️ AC-AC Kreuzladung erkannt (L1_AC_charge=%.0fW, L2_AC_charge=%.0fW, L1_OP=%.0fW, L2_OP=%.0fW)! Erzwinge sofortiges State-Saving...",
-                            ac_charge_l1, ac_charge_l2, op_current, op_l2)
-                save_state(state)
+
 
             # Berechne den Hausverbrauch lokal und verzögerungsfrei
             SE_CHARGER_EFF = 0.9
@@ -850,6 +865,31 @@ def main():
                 state["haus_p_dropouts"] = 0
 
             state["last_haus_p"] = haus_p
+
+            # AC-AC Kreuzladungs-Erkennung und direktes Speichern für schnelles Proxy-Breakout
+            # Deaktiviert während der gewollten SOC-Angleichung (p_transfer > 10W)
+            ac_charge_l1 = max(0.0, iw_current - pv_current)
+            ac_charge_l2 = max(0.0, iw_l2 - pv_l2)
+            if p_transfer <= 10.0 and ((ac_charge_l1 > 100.0 and op_l2 > 100.0) or (ac_charge_l2 > 100.0 and op_current > 100.0)):
+                log.warning("⚠️ AC-AC Kreuzladung erkannt (L1_AC_charge=%.0fW, L2_AC_charge=%.0fW, L1_OP=%.0fW, L2_OP=%.0fW)! Sofortkorrektur!",
+                            ac_charge_l1, ac_charge_l2, op_current, op_l2)
+                
+                # Hold-Time setzen damit der Regler nicht sofort wieder aufmacht
+                state["kreuzladung_hold_until"] = time.time() + 30  # 30s warten
+                
+                # Direkt schreiben, nicht auf nächsten Zyklus warten
+                sunenergy_write(sunenergy_ip, {"GS": 0, "IS": max(200, int(haus_p))})
+                if has_l2:
+                    sunenergy_write(sunenergy_ip_l2, {"GS": 0, "IS": max(200, int(haus_p))})
+                
+                # State synchronisieren
+                state["last_device_gs"] = 0
+                state["last_device_gs_l2"] = 0
+                state["last_device_is"] = max(200, int(haus_p))
+                if has_l2:
+                    state["last_device_is_l2"] = max(200, int(haus_p))
+                
+                save_state(state)
 
             # Fallback-Überwachung für use_native_pid
             if use_native_pid:
@@ -1196,7 +1236,7 @@ def main():
                 else:
                     # GS nachts aktiv regeln
                     max_gs = 4800.0 if has_l2 else 2400.0
-                    gs_last = float(state.get("last_gs", 0))
+                    gs_last = safe_float(state, "last_gs", 0.0)
                     _delta_night = calc_adaptive_gs_delta(grid_p_raw)
                     gs_new = gs_last + _delta_night
 
@@ -1392,7 +1432,7 @@ def main():
                 gs_new = gs_l1 + gs_l2
             else:
                 # GS Formel: gedämpft → gs_last + grid_error * 0.3, Rate-Limit ±120W/Tick
-                gs_last = float(state.get("last_gs", 0))
+                gs_last = safe_float(state, "last_gs", 0.0)
                 _delta_day = calc_adaptive_gs_delta(grid_error)
                 gs_new = gs_last + _delta_day
 
@@ -1470,7 +1510,7 @@ def main():
             gs_new_rounded = gs_l1_rounded + gs_l2_rounded
 
             # HMS stufenlos regeln
-            hms_limit_last = float(state.get("last_hms_limit", 3600.0))
+            hms_limit_last = safe_float(state, "last_hms_limit", 3600.0)
             hms_change = 0.0
 
             # Bei aktiver manueller Einspeisung oder Bypass Hoymiles voll öffnen
@@ -1574,13 +1614,13 @@ def main():
                     if grid_p_raw < -400.0:
                         is_target_l1 = target_val
                     else:
-                        is_target_l1 = max(target_val, float(state.get("last_device_is") or 2400) - 250)
+                        is_target_l1 = max(target_val, safe_float(state, "last_device_is", 2400.0) - 250)
                 else:
                     # v2.2.10: Sofortige Freigabe bei echtem Netzbezug (>400W), sonst sanfter Anstieg (+100W/Tick)
                     if grid_p_raw > 400.0:
                         is_target_l1 = 2400
                     else:
-                        is_target_l1 = min(2400, float(state.get("last_device_is") or 2400) + 100)
+                        is_target_l1 = min(2400, safe_float(state, "last_device_is", 2400.0) + 100)
             else:
                 is_target_l1 = 2400
 
@@ -1621,13 +1661,13 @@ def main():
                     if grid_p_raw < -400.0:
                         is_target_l2 = target_val
                     else:
-                        is_target_l2 = max(target_val, float(state.get("last_device_is_l2") or 2400) - 250)
+                        is_target_l2 = max(target_val, safe_float(state, "last_device_is_l2", 2400.0) - 250)
                 else:
                     # v2.2.10: Sofortige Freigabe bei echtem Netzbezug (>400W), sonst sanfter Anstieg (+100W/Tick)
                     if grid_p_raw > 400.0:
                         is_target_l2 = 2400
                     else:
-                        is_target_l2 = min(2400, float(state.get("last_device_is_l2") or 2400) + 100)
+                        is_target_l2 = min(2400, safe_float(state, "last_device_is_l2", 2400.0) + 100)
             else:
                 is_target_l2 = 2400
 
@@ -1812,7 +1852,7 @@ def main():
             do_is_update = (is_tick % 6 == 0)
 
             if hms_2000_online:
-                last_written_2000 = float(state.get("last_hms_2000_lim", 2000.0))
+                last_written_2000 = safe_float(state, "last_hms_2000_lim", 2000.0)
                 # Senden wenn der neue Wert um >= 50W vom zuletzt geschriebenen abweicht
                 # ODER wenn Inverter trotz Drosselung > 50W über Limit liegt
                 need_send_2000 = (abs(last_written_2000 - limit_2000) >= 50) or (drosseln and solar_p_2000 > limit_2000 + 50 and do_is_update)
@@ -1821,7 +1861,7 @@ def main():
                     state["last_hms_2000_lim"] = limit_2000
 
             if hms_1600_online:
-                last_written_1600 = float(state.get("last_hms_1600_lim", 1600.0))
+                last_written_1600 = safe_float(state, "last_hms_1600_lim", 1600.0)
                 need_send_1600 = (abs(last_written_1600 - limit_1600) >= 50) or (drosseln and solar_p_1600 > limit_1600 + 50 and do_is_update)
                 if need_send_1600:
                     ha_set_number(hms_1600_entity, limit_1600)
