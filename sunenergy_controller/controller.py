@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.7
+SunEnergy XT Controller v2.3.8
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -408,7 +408,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.7 startet...")
+    log.info("SunEnergy XT Controller v2.3.8 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1548,6 +1548,11 @@ def main():
                 is_target_l1 = 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l1 = 2400
+            elif akkus_voll:
+                # v2.3.8: Bei vollen Akkus den Anstiegs-Limiter umgehen und IS direkt stabilisieren
+                is_stable = max(200, int(haus_p - solar_p))
+                is_target_l1 = is_stable
+                state["last_is"] = is_stable
             elif is_native and pv_current > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l1 = max(10, haus_p - solar_p)
@@ -1590,6 +1595,11 @@ def main():
                 # L2 hat keine PV-Module -> Keine Drosselung nötig, bleibt auf Maximum.
                 # Verhindert unnötige Schreibzugriffe über WLAN an L2.
                 is_target_l2 = 2400
+            elif akkus_voll:
+                # v2.3.8: Bei vollen Akkus den Anstiegs-Limiter umgehen und IS direkt stabilisieren
+                is_stable = max(200, int(haus_p - solar_p))
+                is_target_l2 = is_stable
+                state["last_is_l2"] = is_stable
             elif is_native and pv_l2 > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l2 = max(10, haus_p - solar_p)

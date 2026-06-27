@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.3.8
+- **Stabilisierung der PV-Drosselung (IS-Sägezahn Fix)**: Bei vollen Akkus (>= 94% SOC) wird die DC-Leistungsbegrenzung (IS) direkt auf den Restbedarf (Hausbedarf abzüglich Hoymiles-Erzeugung) gesetzt und der Anstiegs-Limiter umgangen. Dies beendet das periodische Schwingen des Carport-Limits zwischen 200W und 1500W. L2 bleibt schreibgeschützt, wenn dort keine PV-Module angeschlossen sind.
+
 ## v2.3.7
 - **Plausibilitätsfilter für haus_p und solar_p**: Führt eine Debounce-Logik (Überbrückung von bis zu 3 Ticks / 15s) für die Leistungssensoren ein. Verhindert Fehlregelungen (z.B. plötzliche Volldrosselung) durch kurzzeitige Sensor-Aussetzer (0W-Auslesefehler).
 
