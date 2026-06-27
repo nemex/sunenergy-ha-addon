@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.2
+SunEnergy XT Controller v2.3.3
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -373,7 +373,7 @@ def calc_hms_limits(
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.2 startet...")
+    log.info("SunEnergy XT Controller v2.3.3 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1131,7 +1131,7 @@ def main():
 
                     # Anti-Windup bei vollen/nicht ladbaren Batterien (nachts)
                     headroom_l1 = max(0.0, soc_max_limit - curr_soc)
-                    headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and pv_l2 > 10.0) else 0.0
+                    headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and (pv_l2 > 10.0 or curr_soc_l2 < soc_max_limit)) else 0.0
                     total_headroom = headroom_l1 + headroom_l2
                     if total_headroom <= 0.0:
                         gs_new = max(0.0, gs_new)
@@ -1324,7 +1324,7 @@ def main():
 
                 # Anti-Windup bei vollen/nicht ladbaren Batterien (tagsüber)
                 headroom_l1 = max(0.0, soc_max_limit - curr_soc)
-                headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and pv_l2 > 10.0) else 0.0
+                headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and (pv_l2 > 10.0 or curr_soc_l2 < soc_max_limit)) else 0.0
                 total_headroom = headroom_l1 + headroom_l2
                 if total_headroom <= 0.0:
                     gs_new = max(0.0, gs_new)

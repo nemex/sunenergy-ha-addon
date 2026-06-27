@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.3.3
+- **Fix für L2-AC-Ladeblockierung bei fehlendem PV**: Behebt einen Fehler, bei dem L2 nicht geladen werden durfte (GS_L2 nicht negativ werden durfte), wenn kein PV an L2 angeschlossen war. Die Sperre (`headroom_l2 = 0.0`) wird nun nur noch angewendet, wenn L2 bereits voll ist (SOC >= 95%).
+
 ## v2.3.2
 - **Fix für verbleibende Solarleistung nachts**: Behebt einen Zirkelbezugsfehler bei der Online-Erkennung der Hoymiles-Wechselrichter. Zuvor führte das Eingehen von `unavailable` oder `unknown` im Dunkeln dazu, dass der Controller dauerhaft auf die letzten bekannten positiven Werte (z.B. 76W) zurückgriff und sich selbst fälschlicherweise als online einstufte.
 
