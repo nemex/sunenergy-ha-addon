@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.10
+SunEnergy XT Controller v2.3.11
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -419,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.10 startet...")
+    log.info("SunEnergy XT Controller v2.3.11 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -529,13 +529,6 @@ def main():
     while RUNNING:
         try:
             tick_start = time.monotonic()
-            
-            # Kreuzladung Hold-Time noch aktiv?
-            if time.time() < state.get("kreuzladung_hold_until", 0):
-                log.info("Kreuzladung Hold-Time aktiv — überspringe Regelzyklus")
-                sleep_tick(TICK_S)
-                continue
-
             p_transfer = safe_float(state, "last_p_transfer", 0.0)
 
             # Merge proxy poll updates from proxy state
@@ -1296,6 +1289,12 @@ def main():
                                 if headroom_l1 > 0.0:
                                     gs_l1 = max(-2400, gs_l1 + rem)
 
+                    # Kreuzladung Hold-Time aktiv? Dann Laden (negatives GS) verhindern
+                    if time.time() < state.get("kreuzladung_hold_until", 0):
+                        gs_l1 = max(0.0, gs_l1)
+                        gs_l2 = max(0.0, gs_l2)
+                        log.debug("Kreuzladung Hold-Time aktiv (Nacht) — Laden (negatives GS) gesperrt")
+
                     # Sicherheitsgrenzen bei niedrigem SOC anwenden
                     if low_soc_active_l1:
                         gs_l1 = min(0.0, gs_l1)
@@ -1491,6 +1490,12 @@ def main():
                             gs_l2 = -2400
                             if headroom_l1 > 0.0:
                                 gs_l1 = max(-2400, gs_l1 + rem)
+
+            # Kreuzladung Hold-Time aktiv? Dann Laden (negatives GS) verhindern
+            if time.time() < state.get("kreuzladung_hold_until", 0):
+                gs_l1 = max(0.0, gs_l1)
+                gs_l2 = max(0.0, gs_l2)
+                log.debug("Kreuzladung Hold-Time aktiv — Laden (negatives GS) gesperrt")
 
             # Sicherheitsgrenzen bei niedrigem SOC anwenden
             if low_soc_active_l1:

@@ -1,9 +1,12 @@
 # Changelog
 
+## v2.3.11
+- **Verfeinerter Kreuzladungsschutz (kein Blindflug)**: Die Hold-Time nach einer erkannten Kreuzladung blockiert nicht mehr den gesamten Regelzyklus. Stattdessen wird nur das Laden der Akkus (negatives GS) für 30 Sekunden gesperrt. Die Entladungs-Regelung bei Lastspitzen bleibt voll aktiv, was unerwünschten Netzbezug verhindert.
+
 ## v2.3.10
 - **Einführung globaler safe_float() Hilfsfunktion**: Alle `float(state.get(...))` Typkonvertierungen wurden durch `safe_float()` ersetzt. Dies verhindert zukünftige Typ-Abstürze bei aus `None` resultierenden Werten im Regelzyklus.
 - **MM-Mismatch Absicherung**: Nach der Erkennung und Durchsetzung eines MM-Statusunterschieds werden die kritischen `last_device_*` State-Keys sofort mit sicheren Standardwerten anstelle von `None` vorinitialisiert.
-- **Aktiver Kreuzladungsschutz**: Bei einer erkannten AC-AC Kreuzladung (ein Akku entlädt, der andere lädt) greift der Regler nun sofort aktiv im selben Regelzyklus ein. GS für beide Batterien wird unverzüglich auf 0 gesetzt, die DC-Einspeisung wird limitiert und eine 30-sekündige Hold-Time blockiert die Regelung zur Beruhigung. Das reduziert die Kreuzladungs-Dauer von ca. 14 Minuten auf unter 10 Sekunden.
+- **Aktiver Kreuzladungsschutz**: Bei einer erkannten AC-AC Kreuzladung (ein Akku entlädt, der andere lädt) greift der Regler nun sofort aktiv im selben Regelzyklus ein. GS für beide Batterien wird unverzüglich auf 0 gesetzt, die DC-Einspeisung wird limitiert und eine 30-sekündige Hold-Time blockierte anfangs den gesamten Regelzyklus zur Beruhigung.
 
 ## v2.3.9
 - **Hotfix für None-Typ-Fehler im Drossel-Limiter**: Behebt einen Absturz des Regelzyklus, der auftrat, weil `state.get("last_device_is")` (oder `last_device_is_l2`) im Status-Wörterbuch explizit als `None` hinterlegt war und beim Versuch der `float()`-Konvertierung einen TypeError auslöste. Die Konvertierung fängt nun `None` ab und fällt sicher auf den Standardwert `2400` zurück.
