@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.3.5
+- **HMS-Drosselungsschutz bei freier Ladekapazität**: Verhindert, dass die Hoymiles (HMS) unter die Summe aus Hausverbrauch und freier Ladekapazität beider Akkus gedrosselt werden, da diese den Überschuss lokal aufnehmen können. Das verhindert das Verschenken von Solarleistung, wenn noch Ladekapazität vorhanden ist.
+
 ## v2.3.4
 - **Adaptives kI (Regelungsdynamik)**: Der Regelfaktor des GS-Integrators wird nun dynamisch an die Fehlergröße angepasst (sanfter bei kleinem Rauschen, aggressiver bei großen Lastsprüngen).
 - **Hold-Time nach Kategoriewechsel**: Das Anpassen der GS-Regelung wird nach Moduswechseln zwischen den Hauptkategorien (Nacht, Regelung, Bypass, Kalibrierung) für 30 Sekunden pausiert, um der Hardware Zeit zum Einschwingen zu geben.

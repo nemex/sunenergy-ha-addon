@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.4
+SunEnergy XT Controller v2.3.5
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -408,7 +408,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.4 startet...")
+    log.info("SunEnergy XT Controller v2.3.5 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1484,6 +1484,12 @@ def main():
             # Fix 2 — HMS-Anpassung bei aktivem Transfer:
             if p_transfer > 10.0:
                 hms_limit_new = min(3600.0, haus_p + p_transfer)
+
+            charge_capacity_l1 = 2400.0 if curr_soc < soc_max_limit else 0.0
+            charge_capacity_l2 = 2400.0 if (has_l2 and curr_soc_l2 < soc_max_limit) else 0.0
+            hms_limit_new = max(hms_limit_new, haus_p + charge_capacity_l1 + charge_capacity_l2)
+
+            hms_limit_new = max(0.0, min(3600.0, hms_limit_new))
             state["last_hms_limit"] = hms_limit_new
 
             # HMS Limits berechnen
