@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.6
+SunEnergy XT Controller v2.3.7
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -408,7 +408,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.6 startet...")
+    log.info("SunEnergy XT Controller v2.3.7 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -616,6 +616,24 @@ def main():
             
             solar_p = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
 
+            # Plausibilitätsfilter für solar_p Aussetzer (max. 3 Ticks / 15s überbrücken)
+            last_solar_p = state.get("last_solar_p", solar_p)
+            solar_p_dropouts = state.get("solar_p_dropouts", 0)
+
+            if solar_p < 10.0 and last_solar_p > 200.0:
+                if solar_p_dropouts < 3:
+                    log.warning("⚠️ solar_p Aussetzer (%.0fW -> %.0fW), verwende letzten Wert (Tick %d/3)", 
+                                solar_p, last_solar_p, solar_p_dropouts + 1)
+                    solar_p = last_solar_p
+                    state["solar_p_dropouts"] = solar_p_dropouts + 1
+                else:
+                    log.warning("⚠️ solar_p dauerhaft niedrig (3 Ticks), akzeptiere Wert (%.0fW)", solar_p)
+                    state["solar_p_dropouts"] = 0
+            else:
+                state["solar_p_dropouts"] = 0
+
+            state["last_solar_p"] = solar_p
+
             # Watchdog
             watchdog_ok = False
             if read_direct:
@@ -814,6 +832,24 @@ def main():
             # Gesamt-Batterieleistung
             battery_ac_est = battery_ac_est_l1 + battery_ac_est_l2
             haus_p = max(0.0, grid_p_raw + solar_p + battery_ac_est)
+
+            # Plausibilitätsfilter für haus_p Aussetzer (max. 3 Ticks / 15s überbrücken)
+            last_haus_p = state.get("last_haus_p", haus_p)
+            haus_p_dropouts = state.get("haus_p_dropouts", 0)
+
+            if haus_p < 50.0 and last_haus_p > 200.0:
+                if haus_p_dropouts < 3:
+                    log.warning("⚠️ haus_p Aussetzer (%.0fW -> %.0fW), verwende letzten Wert (Tick %d/3)", 
+                                haus_p, last_haus_p, haus_p_dropouts + 1)
+                    haus_p = last_haus_p
+                    state["haus_p_dropouts"] = haus_p_dropouts + 1
+                else:
+                    log.warning("⚠️ haus_p dauerhaft niedrig (3 Ticks), akzeptiere Wert (%.0fW)", haus_p)
+                    state["haus_p_dropouts"] = 0
+            else:
+                state["haus_p_dropouts"] = 0
+
+            state["last_haus_p"] = haus_p
 
             # Fallback-Überwachung für use_native_pid
             if use_native_pid:
