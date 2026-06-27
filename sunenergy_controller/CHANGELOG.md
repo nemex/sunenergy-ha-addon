@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.3.4
+- **Adaptives kI (Regelungsdynamik)**: Der Regelfaktor des GS-Integrators wird nun dynamisch an die Fehlergröße angepasst (sanfter bei kleinem Rauschen, aggressiver bei großen Lastsprüngen).
+- **Hold-Time nach Kategoriewechsel**: Das Anpassen der GS-Regelung wird nach Moduswechseln zwischen den Hauptkategorien (Nacht, Regelung, Bypass, Kalibrierung) für 30 Sekunden pausiert, um der Hardware Zeit zum Einschwingen zu geben.
+
 ## v2.3.3
 - **Fix für L2-AC-Ladeblockierung bei fehlendem PV**: Behebt einen Fehler, bei dem L2 nicht geladen werden durfte (GS_L2 nicht negativ werden durfte), wenn kein PV an L2 angeschlossen war. Die Sperre (`headroom_l2 = 0.0`) wird nun nur noch angewendet, wenn L2 bereits voll ist (SOC >= 95%).
 

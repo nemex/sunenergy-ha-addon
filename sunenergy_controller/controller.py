@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.3
+SunEnergy XT Controller v2.3.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -368,12 +368,47 @@ def calc_hms_limits(
 
 
 
+def calc_adaptive_gs_delta(error, ki_min=0.15, ki_max=0.5, ki_error_scale=600.0):
+    # Exponent 0.7 bewirkt progressiven Anstieg bei mittleren Fehlern
+    ki_err_factor = min(1.0, (abs(error) / ki_error_scale) ** 0.7)
+    ki_eff = ki_min + (ki_max - ki_min) * ki_err_factor
+    delta = error * ki_eff
+    
+    # Slew-Rate-Begrenzung: sanft bei kleinem Fehler, schnell bei großem Fehler
+    slew_limit = 80.0 if abs(error) < 150.0 else 250.0
+    return max(-slew_limit, min(slew_limit, delta))
+
+
+def set_active_mode(state, new_mode, hold_seconds=30.0):
+    state["active_mode"] = new_mode
+    
+    # Bestimme die übergeordnete Kategorie
+    if new_mode in ["active", "feed_in", "feed_in_standby"]:
+        major_mode = "REGULATION"
+    elif new_mode == "night":
+        major_mode = "NIGHT"
+    elif new_mode == "bypass":
+        major_mode = "BYPASS"
+    elif new_mode == "calibration":
+        major_mode = "CALIBRATION"
+    else:
+        major_mode = new_mode
+        
+    old_major_mode = state.get("last_major_mode")
+    if old_major_mode != major_mode:
+        state["last_major_mode"] = major_mode
+        if old_major_mode is not None:
+            state["hold_until"] = time.monotonic() + hold_seconds
+            log.info("Betriebsmodus-Kategorie geändert: %s -> %s. Hold-Time für %.0fs aktiv.", 
+                     old_major_mode, major_mode, hold_seconds)
+
+
 # ---------------------------------------------------------------------------
 # Hauptregelschleife
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.3 startet...")
+    log.info("SunEnergy XT Controller v2.3.4 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -464,7 +499,7 @@ def main():
     state["last_device_is_l2"] = None
     state["last_gs_written_l2"] = None
 
-    state["active_mode"] = "night"
+    set_active_mode(state, "night")
     save_state(state)
     log.info("Addon gestartet, SA=%s%%, HMS-Limit=%sW, Speicher L2 aktiv: %s, Natives Polling: %s", 
              soc_normal_max, state["last_hms_limit"], "Ja" if has_l2 else "Nein", "Ja" if use_native_pid else "Nein")
@@ -986,7 +1021,7 @@ def main():
             )
             if zwangsladung_trigger:
                 log.info("Zwangsladung gestartet! %.1f Tage seit letzter Vollladung", tage_seit)
-                state["active_mode"] = "calibration"
+                set_active_mode(state, "calibration")
                 save_state(state)
 
             if state["active_mode"] == "calibration" and (curr_soc < 100 or (has_l2 and curr_soc_l2 < 100)):
@@ -1021,7 +1056,7 @@ def main():
             if state["active_mode"] == "calibration" and curr_soc >= 100 and (not has_l2 or curr_soc_l2 >= 100):
                 log.info("Zwangsladung abgeschlossen!")
                 state["last_calibration_ts"] = time.time()
-                state["active_mode"] = "night"
+                set_active_mode(state, "night")
                 
                 # L1 zurücksetzen
                 ha_set_number(sa_entity, soc_normal_max)
@@ -1083,7 +1118,7 @@ def main():
                         if has_l2:
                             sunenergy_write(sunenergy_ip_l2, {"MM": 0})
                     
-                    state["active_mode"] = "night"
+                    set_active_mode(state, "night")
                     state["last_device_mm"] = 0 if not is_native else None
                     state["last_device_is"] = 2400
                     state["last_device_gs"] = None
@@ -1126,8 +1161,12 @@ def main():
                     # GS nachts aktiv regeln
                     max_gs = 4800.0 if has_l2 else 2400.0
                     gs_last = float(state.get("last_gs", 0))
-                    _delta_night = max(-120.0, min(120.0, grid_p_raw * 0.3))
+                    _delta_night = calc_adaptive_gs_delta(grid_p_raw)
                     gs_new = gs_last + _delta_night
+
+                    hold_until = state.get("hold_until", 0.0)
+                    if time.monotonic() < hold_until:
+                        gs_new = gs_last
 
                     # Anti-Windup bei vollen/nicht ladbaren Batterien (nachts)
                     headroom_l1 = max(0.0, soc_max_limit - curr_soc)
@@ -1287,12 +1326,11 @@ def main():
             # ------------------------------------------------------------------
             # 7. Tagregelung — universell für jeden SOC mit Spam-Schutz
             # ------------------------------------------------------------------
-            if bypass_active:
-                state["active_mode"] = "bypass"
+                set_active_mode(state, "bypass")
             elif feed_in_active:
-                state["active_mode"] = "feed_in" if is_actively_feeding_in else "feed_in_standby"
+                set_active_mode(state, "feed_in" if is_actively_feeding_in else "feed_in_standby")
             else:
-                state["active_mode"] = "active"
+                set_active_mode(state, "active")
 
             # Netz-Fehler bezüglich des Soll-Netzwertes (0W bzw. -500W bei manueller Einspeisung)
             grid_error = grid_p_raw - grid_target
@@ -1319,8 +1357,12 @@ def main():
             else:
                 # GS Formel: gedämpft → gs_last + grid_error * 0.3, Rate-Limit ±120W/Tick
                 gs_last = float(state.get("last_gs", 0))
-                _delta_day = max(-120.0, min(120.0, grid_error * 0.3))
+                _delta_day = calc_adaptive_gs_delta(grid_error)
                 gs_new = gs_last + _delta_day
+
+                hold_until = state.get("hold_until", 0.0)
+                if time.monotonic() < hold_until:
+                    gs_new = gs_last
 
                 # Anti-Windup bei vollen/nicht ladbaren Batterien (tagsüber)
                 headroom_l1 = max(0.0, soc_max_limit - curr_soc)
