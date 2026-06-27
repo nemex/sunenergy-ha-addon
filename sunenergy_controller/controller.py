@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.8
+SunEnergy XT Controller v2.3.9
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -408,7 +408,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.8 startet...")
+    log.info("SunEnergy XT Controller v2.3.9 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1574,13 +1574,13 @@ def main():
                     if grid_p_raw < -400.0:
                         is_target_l1 = target_val
                     else:
-                        is_target_l1 = max(target_val, float(state.get("last_device_is", 2400)) - 250)
+                        is_target_l1 = max(target_val, float(state.get("last_device_is") or 2400) - 250)
                 else:
                     # v2.2.10: Sofortige Freigabe bei echtem Netzbezug (>400W), sonst sanfter Anstieg (+100W/Tick)
                     if grid_p_raw > 400.0:
                         is_target_l1 = 2400
                     else:
-                        is_target_l1 = min(2400, float(state.get("last_device_is", 2400)) + 100)
+                        is_target_l1 = min(2400, float(state.get("last_device_is") or 2400) + 100)
             else:
                 is_target_l1 = 2400
 
@@ -1621,13 +1621,13 @@ def main():
                     if grid_p_raw < -400.0:
                         is_target_l2 = target_val
                     else:
-                        is_target_l2 = max(target_val, float(state.get("last_device_is_l2", 2400)) - 250)
+                        is_target_l2 = max(target_val, float(state.get("last_device_is_l2") or 2400) - 250)
                 else:
                     # v2.2.10: Sofortige Freigabe bei echtem Netzbezug (>400W), sonst sanfter Anstieg (+100W/Tick)
                     if grid_p_raw > 400.0:
                         is_target_l2 = 2400
                     else:
-                        is_target_l2 = min(2400, float(state.get("last_device_is_l2", 2400)) + 100)
+                        is_target_l2 = min(2400, float(state.get("last_device_is_l2") or 2400) + 100)
             else:
                 is_target_l2 = 2400
 

@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.3.9
+- **Hotfix für None-Typ-Fehler im Drossel-Limiter**: Behebt einen Absturz des Regelzyklus, der auftrat, weil `state.get("last_device_is")` (oder `last_device_is_l2`) im Status-Wörterbuch explizit als `None` hinterlegt war und beim Versuch der `float()`-Konvertierung einen TypeError auslöste. Die Konvertierung fängt nun `None` ab und fällt sicher auf den Standardwert `2400` zurück.
+
 ## v2.3.8
 - **Stabilisierung der PV-Drosselung (IS-Sägezahn Fix)**: Bei vollen Akkus (>= 94% SOC) wird die DC-Leistungsbegrenzung (IS) direkt auf den Restbedarf (Hausbedarf abzüglich Hoymiles-Erzeugung) gesetzt und der Anstiegs-Limiter umgangen. Dies beendet das periodische Schwingen des Carport-Limits zwischen 200W und 1500W. L2 bleibt schreibgeschützt, wenn dort keine PV-Module angeschlossen sind.
 
