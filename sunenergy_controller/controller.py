@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.5
+SunEnergy XT Controller v2.3.6
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -408,7 +408,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.5 startet...")
+    log.info("SunEnergy XT Controller v2.3.6 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1485,8 +1485,9 @@ def main():
             if p_transfer > 10.0:
                 hms_limit_new = min(3600.0, haus_p + p_transfer)
 
-            charge_capacity_l1 = 2400.0 if curr_soc < soc_max_limit else 0.0
-            charge_capacity_l2 = 2400.0 if (has_l2 and curr_soc_l2 < soc_max_limit) else 0.0
+            # v2.3.6: Ladekapazität ab 1% unter dem Limit auf 0 setzen, da das BMS dort bereits abriegelt
+            charge_capacity_l1 = 2400.0 if curr_soc < (soc_max_limit - 1.0) else 0.0
+            charge_capacity_l2 = 2400.0 if (has_l2 and curr_soc_l2 < (soc_max_limit - 1.0)) else 0.0
             hms_limit_new = max(hms_limit_new, haus_p + charge_capacity_l1 + charge_capacity_l2)
 
             hms_limit_new = max(0.0, min(3600.0, hms_limit_new))
@@ -1499,9 +1500,9 @@ def main():
             )
 
             # Drossel-Flag für HA/Visualisierung und Batterie-Entkoppelung setzen
-            # Wir drosseln aktiv, wenn das Limit unter Maximum liegt UND die Hoymiles
-            # tatsächlich an diesem Limit hängen (also mehr erzeugen könnten).
-            drosseln = (hms_limit_new < 3500.0) and (solar_p >= hms_limit_new - 150.0) and (grid_error <= 50.0)
+            # Wir drosseln das Carport (IS) auch direkt, wenn die Akkus fast voll sind und Einspeisung vorliegt
+            akkus_voll = curr_soc >= (soc_max_limit - 1.0) and (not has_l2 or curr_soc_l2 >= (soc_max_limit - 1.0))
+            drosseln = ((hms_limit_new < 3500.0) and (solar_p >= hms_limit_new - 150.0) and (grid_error <= 50.0)) or (akkus_voll and grid_p_raw < -50.0)
             state["drosseln"] = drosseln
 
             # IS Limit der Batterie anpassen

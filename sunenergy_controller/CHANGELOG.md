@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.3.6
+- **Priorisierte Drosselungskette (DC vor AC)**: Wenn die Akkus fast voll sind (>= 94% SOC) und Netzeinspeisung vorliegt, werden zuerst die Carport-Module (DC-Drosselung über IS) auf den Restbedarf heruntergeregelt. Die Hoymiles (AC-Drosselung) werden erst gedrosselt, wenn der DC-Eingriff nicht ausreicht.
+- **Korrektur Vollladungs-Erkennung für Drosselschutz**: Der Ladekapazitäts-Schutz für das HMS-Limit (v2.3.5) deklariert die Akkus nun ab 94% SOC (1% unter dem Limit) als voll, da das interne BMS an dieser Grenze die Ladeleistung bereits abriegelt und der Regler andernfalls die Drosselung blockiert hätte.
+
 ## v2.3.5
 - **HMS-Drosselungsschutz bei freier Ladekapazität**: Verhindert, dass die Hoymiles (HMS) unter die Summe aus Hausverbrauch und freier Ladekapazität beider Akkus gedrosselt werden, da diese den Überschuss lokal aufnehmen können. Das verhindert das Verschenken von Solarleistung, wenn noch Ladekapazität vorhanden ist.
 
