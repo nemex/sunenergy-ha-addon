@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.5.0
+- **Filterung kosmetischer Mismatch-Warnungen**: Die Mismatch-Warnungen für `IS` und `GS` werden nun nur noch dann ausgegeben, wenn es sich um einen echten, persistenten Übertragungsfehler handelt (Sollwert im letzten Tick bereits gesetzt, Box meldet aber immer noch einen abweichenden Istwert). Normale PID-Sollwertanpassungen führen dadurch nicht mehr zu "False Positives" im Protokoll.
+
 ## v2.4.9
 - **Selbstheilung bei State Mismatches (IS & GS)**: Die limits `IS` (Laderegler-Limit) und `GS` (Einspeise-Sollwert) werden nun bei Abweichungen zwischen Soll- und Istwert automatisch auf dem Gerät überschrieben. Zudem wurden `log.warning` Einträge hinzugefügt, um solche Mismatches sichtbar zu machen (z.B. wenn das Gerät seine Drosselung nicht freigegeben hat oder offline zurückgesetzt wurde).
 
