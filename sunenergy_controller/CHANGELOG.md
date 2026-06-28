@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.4.3
+- **Fehlalarm-Korrektur im reaktiven Kreuzladungsschutz**: Die Erkennung prüft nun die *Netto-Entladeleistung* der Batteriezellen (`op - pv > 100W`) statt der reinen AC-Ausgangsleistung (`op > 100W`). Dies verhindert, dass ein hardwareseitiger PV-Überschuss-Sicherheitsdump eines vollen Akkus fälschlicherweise als Kreuzladung eingestuft wird. Der freie Akku kann diesen solaren Überschuss nun ungehindert und schwingungsfrei einspeichern.
+
 ## v2.4.2
 - **Strukturelle Kreuzladungs-Vermeidung (Korrektur)**: Der Akku-zu-Akku-Transfer (SOC-Angleichung) wird nun aktiv in beide Richtungen blockiert, sobald der Zielspeicher keine eigene PV-Erzeugung hat (`pv < 10W`). Dies verhindert zuverlässig, dass Ladestrom für einen Akku über die AC-Schnittstelle aus der entladenden Batterie (oder dem Netz bei Nacht) bezogen wird (AC-AC Kreuzladung). Der Transfer wird automatisch freigegeben, sobald beide Speicher eigene PV-Module besitzen und erzeugen.
 

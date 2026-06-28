@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.4.2
+SunEnergy XT Controller v2.4.3
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -419,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.4.2 startet...")
+    log.info("SunEnergy XT Controller v2.4.3 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -863,7 +863,12 @@ def main():
             # Deaktiviert während der gewollten SOC-Angleichung (p_transfer > 10W)
             ac_charge_l1 = max(0.0, iw_current - pv_current)
             ac_charge_l2 = max(0.0, iw_l2 - pv_l2)
-            if p_transfer <= 10.0 and ((ac_charge_l1 > 100.0 and op_l2 > 100.0) or (ac_charge_l2 > 100.0 and op_current > 100.0)):
+            
+            # Kreuzladung liegt nur vor, wenn der abgebende Akku NETTO aus seinen Zellen entlädt
+            l1_entlaedt_netto = (op_current - pv_current) > 100.0
+            l2_entlaedt_netto = (op_l2 - pv_l2) > 100.0
+            
+            if p_transfer <= 10.0 and ((ac_charge_l1 > 100.0 and l2_entlaedt_netto) or (ac_charge_l2 > 100.0 and l1_entlaedt_netto)):
                 log.warning("⚠️ AC-AC Kreuzladung erkannt (L1_AC_charge=%.0fW, L2_AC_charge=%.0fW, L1_OP=%.0fW, L2_OP=%.0fW)! Sofortkorrektur!",
                             ac_charge_l1, ac_charge_l2, op_current, op_l2)
                 
