@@ -1,12 +1,12 @@
 # Changelog
 
-## v2.3.12
-- **Strukturelle Kreuzladungs-Vermeidung**: Der Akku-zu-Akku-Transfer (SOC-Angleichung) wird nun aktiv blockiert, sobald der Quellspeicher netto entlädt (d.h. `op - pv > 100W`). Dadurch wird verhindert, dass der Quellspeicher seine Batteriezellen über die AC-Schnittstelle entlädt, um den Zielspeicher zu laden. Ein Transfer findet nur noch statt, wenn die Energie direkt aus solarem DC-Überschuss des Quellspeichers stammt.
+## v2.4.2
+- **Strukturelle Kreuzladungs-Vermeidung (Korrektur)**: Der Akku-zu-Akku-Transfer (SOC-Angleichung) wird nun aktiv blockiert, sobald der Quellspeicher AC-Leistung ins Hausnetz abgibt (`op > 100W`) und der Zielspeicher keine eigene PV-Erzeugung hat (`pv < 10W`). Dies verhindert zuverlässig, dass Ladestrom für den Zielspeicher aus dem AC-Ausgang des Quellspeichers bezogen wird (AC-AC Kreuzladung).
 
-## v2.3.11
+## v2.4.1
 - **Verfeinerter Kreuzladungsschutz (kein Blindflug)**: Die Hold-Time nach einer erkannten Kreuzladung blockiert nicht mehr den gesamten Regelzyklus. Stattdessen wird nur das Laden der Akkus (negatives GS) für 30 Sekunden gesperrt. Die Entladungs-Regelung bei Lastspitzen bleibt voll aktiv, was unerwünschten Netzbezug verhindert.
 
-## v2.3.10
+## v2.4.0
 - **Einführung globaler safe_float() Hilfsfunktion**: Alle `float(state.get(...))` Typkonvertierungen wurden durch `safe_float()` ersetzt. Dies verhindert zukünftige Typ-Abstürze bei aus `None` resultierenden Werten im Regelzyklus.
 - **MM-Mismatch Absicherung**: Nach der Erkennung und Durchsetzung eines MM-Statusunterschieds werden die kritischen `last_device_*` State-Keys sofort mit sicheren Standardwerten anstelle von `None` vorinitialisiert.
 - **Aktiver Kreuzladungsschutz**: Bei einer erkannten AC-AC Kreuzladung (ein Akku entlädt, der andere lädt) greift der Regler nun sofort aktiv im selben Regelzyklus ein. GS für beide Batterien wird unverzüglich auf 0 gesetzt, die DC-Einspeisung wird limitiert und eine 30-sekündige Hold-Time blockierte anfangs den gesamten Regelzyklus zur Beruhigung.
