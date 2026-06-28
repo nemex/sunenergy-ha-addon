@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.4.6
+- **Korrektur der Headroom-Berechnung (Anti-Windup)**: L2 wird nun in der Lade-Kapazitätsberechnung (Headroom) und im Anti-Windup-Schutz nur noch dann berücksichtigt, wenn das Gerät über eigene aktive PV-Erzeugung verfügt (`pv_l2 > 10.0W`). Dies verhindert, dass ein Akku ohne Solarzellen (L2) bei vollem L1-Akku fälschlicherweise Lade-Headroom vorgaukelt, was zu blockierten Anti-Windup-Schleifen, dauerhaftem `gs_l2 = -2400W` und massiver unkontrollierter Einspeisung ins Netz führte.
+
 ## v2.4.5
 - **Einführung von Debug-Endpunkten im Web-UI**: Es wurden die Endpunkte `/debug_l2` (Abfrage der L2-Gerätedaten direkt über die API) und `/debug_opts` (Anzeige der verschlüsselten Addon-Konfigurationsoptionen) hinzugefügt, um tiefergehende Fehlerdiagnosen bei Ladeausfällen von L2 zu ermöglichen.
 
