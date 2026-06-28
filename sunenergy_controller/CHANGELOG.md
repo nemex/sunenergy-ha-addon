@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.4.7
+- **Dynamische Akku-voll-Erkennung (Drosselung)**: Die logische Variable `akkus_voll` wird nun direkt aus dem berechneten Lade-Headroom (`total_headroom <= 0`) abgeleitet. Dadurch wird der L1-Akku sofort gedrosselt, wenn er voll ist und L2 keine PV-Module besitzt (also keinen Headroom hat), ohne dass L2s niedrigerer SOC die Drosselung fälschlicherweise blockiert.
+
 ## v2.4.6
 - **Korrektur der Headroom-Berechnung (Anti-Windup)**: L2 wird nun in der Lade-Kapazitätsberechnung (Headroom) und im Anti-Windup-Schutz nur noch dann berücksichtigt, wenn das Gerät über eigene aktive PV-Erzeugung verfügt (`pv_l2 > 10.0W`). Dies verhindert, dass ein Akku ohne Solarzellen (L2) bei vollem L1-Akku fälschlicherweise Lade-Headroom vorgaukelt, was zu blockierten Anti-Windup-Schleifen, dauerhaftem `gs_l2 = -2400W` und massiver unkontrollierter Einspeisung ins Netz führte.
 

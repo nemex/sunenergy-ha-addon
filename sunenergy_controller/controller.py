@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.4.6
+SunEnergy XT Controller v2.4.7
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -419,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.4.6 startet...")
+    log.info("SunEnergy XT Controller v2.4.7 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1587,7 +1587,7 @@ def main():
 
             # Drossel-Flag für HA/Visualisierung und Batterie-Entkoppelung setzen
             # Wir drosseln das Carport (IS) auch direkt, wenn die Akkus fast voll sind und Einspeisung vorliegt
-            akkus_voll = curr_soc >= (soc_max_limit - 1.0) and (not has_l2 or curr_soc_l2 >= (soc_max_limit - 1.0))
+            akkus_voll = total_headroom <= 0.0
             drosseln = ((hms_limit_new < 3500.0) and (solar_p >= hms_limit_new - 150.0) and (grid_error <= 50.0)) or (akkus_voll and grid_p_raw < -50.0)
             state["drosseln"] = drosseln
 
