@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.4.4
+- **Optimierung der Nulleinspeisung bei vollen Akkus**: Das minimale Limit für die DC-PV-Drosselung (`is_floor`) wurde von 200W auf 10W gesenkt. Wenn die Akkus voll sind, regelt die SunEnergyXT-Box nun ihre Solarerzeugung bis fast Null herunter. Das verhindert, dass überschüssige PV-Energie über den Hardware-Sicherheitsdump unkontrolliert ins Hausnetz fließt, und ermöglicht den Hoymiles eine präzise Ausregelung des Netzbezugs auf echte 0W.
+
 ## v2.4.3
 - **Fehlalarm-Korrektur im reaktiven Kreuzladungsschutz**: Die Erkennung prüft nun die *Netto-Entladeleistung* der Batteriezellen (`op - pv > 100W`) statt der reinen AC-Ausgangsleistung (`op > 100W`). Dies verhindert, dass ein hardwareseitiger PV-Überschuss-Sicherheitsdump eines vollen Akkus fälschlicherweise als Kreuzladung eingestuft wird. Der freie Akku kann diesen solaren Überschuss nun ungehindert und schwingungsfrei einspeichern.
 
