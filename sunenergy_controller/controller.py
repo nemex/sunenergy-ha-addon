@@ -1745,10 +1745,9 @@ def main():
                         p_transfer_target = min(p_transfer_raw, solar_excess, max_possible_src_increase, max_possible_dest_charge)
                         p_transfer_target = max(0.0, p_transfer_target)
                         
-                        # v2.4.2: Transfer-Sperre wenn Quellspeicher AC-Output hat UND Zielspeicher kein eigenes PV hat
-                        src_has_ac_output = (op_current > 100.0) if src_is_l1 else (op_l2 > 100.0)
-                        dest_has_no_pv = (pv_l2 < 10.0) if src_is_l1 else (pv_current < 10.0)
-                        if src_has_ac_output and dest_has_no_pv:
+                        # v2.4.2: Transfer-Sperre wenn Zielspeicher kein eigenes PV hat (AC-AC Kreuzladungs-Vermeidung)
+                        dest_has_pv = (pv_l2 >= 10.0) if src_is_l1 else (pv_current >= 10.0)
+                        if not dest_has_pv:
                             p_transfer_target = 0.0
                         
                         # Slew-Rate Limit beim Hochfahren, sofortiges Runterfahren bei Wolken
