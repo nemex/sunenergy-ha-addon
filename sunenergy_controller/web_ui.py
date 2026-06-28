@@ -645,6 +645,26 @@ class UIHandler(BaseHTTPRequestHandler):
             st["has_l2"] = bool(opts.get("sunenergy_ip_l2", ""))
             self._json(st)
 
+        elif self.path == "/debug_l2":
+            ip_l2 = opts.get("sunenergy_ip_l2", "")
+            if ip_l2:
+                try:
+                    r = requests.get(f"http://{ip_l2}/read", timeout=5)
+                    self._json(r.json())
+                except Exception as e:
+                    self._json({"error": str(e)})
+            else:
+                self._json({"error": "No L2 IP configured"})
+
+        elif self.path == "/debug_opts":
+            masked_opts = {}
+            for k, v in opts.items():
+                if "password" in k.lower() or "token" in k.lower() or "secret" in k.lower():
+                    masked_opts[k] = "***"
+                else:
+                    masked_opts[k] = v
+            self._json(masked_opts)
+
         elif self.path == "/api":
             rows = get_csv_data(100)
             self._json({"rows": rows})
