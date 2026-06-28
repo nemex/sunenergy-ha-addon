@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.4.8
+- **Bedingte PV-Drosselung bei vollen Akkus**: Die Drosselung der Solarladeregler (IS-Limit) greift bei vollen Akkus nun nur noch dann, wenn tatsächlich Überschuss ins Netz fließen würde (`drosseln = True`). Dadurch bleibt das IS-Limit bei Lastspitzen bzw. Energiebedarf im Haus voll geöffnet (`2400W`), um die Last prioritär direkt aus der Sonne zu decken, anstatt fälschlicherweise die Batterien zu entladen.
+
 ## v2.4.7
 - **Dynamische Akku-voll-Erkennung (Drosselung)**: Die logische Variable `akkus_voll` wird nun direkt aus dem berechneten Lade-Headroom (`total_headroom <= 0`) abgeleitet. Dadurch wird der L1-Akku sofort gedrosselt, wenn er voll ist und L2 keine PV-Module besitzt (also keinen Headroom hat), ohne dass L2s niedrigerer SOC die Drosselung fälschlicherweise blockiert.
 
