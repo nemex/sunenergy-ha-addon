@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.3.12
+- **Strukturelle Kreuzladungs-Vermeidung**: Der Akku-zu-Akku-Transfer (SOC-Angleichung) wird nun aktiv blockiert, sobald der Quellspeicher netto entlädt (d.h. `op - pv > 100W`). Dadurch wird verhindert, dass der Quellspeicher seine Batteriezellen über die AC-Schnittstelle entlädt, um den Zielspeicher zu laden. Ein Transfer findet nur noch statt, wenn die Energie direkt aus solarem DC-Überschuss des Quellspeichers stammt.
+
 ## v2.3.11
 - **Verfeinerter Kreuzladungsschutz (kein Blindflug)**: Die Hold-Time nach einer erkannten Kreuzladung blockiert nicht mehr den gesamten Regelzyklus. Stattdessen wird nur das Laden der Akkus (negatives GS) für 30 Sekunden gesperrt. Die Entladungs-Regelung bei Lastspitzen bleibt voll aktiv, was unerwünschten Netzbezug verhindert.
 

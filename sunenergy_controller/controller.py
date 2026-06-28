@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.3.11
+SunEnergy XT Controller v2.3.12
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -419,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.3.11 startet...")
+    log.info("SunEnergy XT Controller v2.3.12 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1744,6 +1744,11 @@ def main():
                         
                         p_transfer_target = min(p_transfer_raw, solar_excess, max_possible_src_increase, max_possible_dest_charge)
                         p_transfer_target = max(0.0, p_transfer_target)
+                        
+                        # v2.3.12: Transfer-Sperre wenn der Quellspeicher netto entlädt (AC-AC Kreuzladungs-Vermeidung)
+                        netto_ac_src = (op_current - pv_current) if src_is_l1 else (op_l2 - pv_l2)
+                        if netto_ac_src > 100.0:
+                            p_transfer_target = 0.0
                         
                         # Slew-Rate Limit beim Hochfahren, sofortiges Runterfahren bei Wolken
                         last_p_transfer = state.get("last_p_transfer", 0.0)
