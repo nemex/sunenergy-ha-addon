@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.4.8
+SunEnergy XT Controller v2.4.9
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -419,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.4.8 startet...")
+    log.info("SunEnergy XT Controller v2.4.9 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -742,6 +742,7 @@ def main():
             pv_l2 = 0.0
             pb_l2 = 0.0
             iw_l2 = 0.0
+            se_data_l2 = None
             if has_l2:
                 se_data_l2 = sunenergy_read(sunenergy_ip_l2)
                 if se_data_l2:
@@ -1826,16 +1827,29 @@ def main():
 
             # Direkt ans Gerät schreiben (nur bei Änderungen)
             # L1
+            reported_is = se_data.get("IS") if se_data else None
+            reported_gs = se_data.get("GS") if se_data else None
+            reported_is_f = float(reported_is) if reported_is is not None else None
+            reported_gs_f = float(reported_gs) if reported_gs is not None else None
+
+            mismatch_is_l1 = reported_is_f is not None and abs(reported_is_f - is_target_l1) >= 10
+            if mismatch_is_l1:
+                log.warning("⚠️ L1 IS mismatch: reported=%.0fW, target=%dW. Enforcing...", reported_is_f, is_target_l1)
+
             device_payload_l1 = {}
-            if state.get("last_device_is") != is_target_l1:
+            if (state.get("last_device_is") != is_target_l1) or mismatch_is_l1:
                 device_payload_l1["IS"] = is_target_l1
                 state["last_device_is"] = is_target_l1
             
             if not is_native:
+                mismatch_gs_l1 = reported_gs_f is not None and abs(reported_gs_f - gs_l1_rounded) >= 10
+                if mismatch_gs_l1:
+                    log.warning("⚠️ L1 GS mismatch: reported=%.0fW, target=%dW. Enforcing...", reported_gs_f, gs_l1_rounded)
+
                 if state.get("last_device_mm") != 0:
                     device_payload_l1["MM"] = 0
                     state["last_device_mm"] = 0
-                if state.get("last_device_gs") != gs_l1_rounded:
+                if (state.get("last_device_gs") != gs_l1_rounded) or mismatch_gs_l1:
                     device_payload_l1["GS"] = gs_l1_rounded
                     state["last_device_gs"] = gs_l1_rounded
                 
@@ -1844,16 +1858,29 @@ def main():
 
             # L2
             if has_l2:
+                reported_is_l2 = se_data_l2.get("IS") if se_data_l2 else None
+                reported_gs_l2 = se_data_l2.get("GS") if se_data_l2 else None
+                reported_is_l2_f = float(reported_is_l2) if reported_is_l2 is not None else None
+                reported_gs_l2_f = float(reported_gs_l2) if reported_gs_l2 is not None else None
+
+                mismatch_is_l2 = reported_is_l2_f is not None and abs(reported_is_l2_f - is_target_l2) >= 10
+                if mismatch_is_l2:
+                    log.warning("⚠️ L2 IS mismatch: reported=%.0fW, target=%dW. Enforcing...", reported_is_l2_f, is_target_l2)
+
                 device_payload_l2 = {}
-                if state.get("last_device_is_l2") != is_target_l2:
+                if (state.get("last_device_is_l2") != is_target_l2) or mismatch_is_l2:
                     device_payload_l2["IS"] = is_target_l2
                     state["last_device_is_l2"] = is_target_l2
                 
                 if not is_native:
+                    mismatch_gs_l2 = reported_gs_l2_f is not None and abs(reported_gs_l2_f - gs_l2_rounded) >= 10
+                    if mismatch_gs_l2:
+                        log.warning("⚠️ L2 GS mismatch: reported=%.0fW, target=%dW. Enforcing...", reported_gs_l2_f, gs_l2_rounded)
+
                     if state.get("last_device_mm_l2") != 0:
                         device_payload_l2["MM"] = 0
                         state["last_device_mm_l2"] = 0
-                    if state.get("last_device_gs_l2") != gs_l2_rounded:
+                    if (state.get("last_device_gs_l2") != gs_l2_rounded) or mismatch_gs_l2:
                         device_payload_l2["GS"] = gs_l2_rounded
                         state["last_device_gs_l2"] = gs_l2_rounded
                         

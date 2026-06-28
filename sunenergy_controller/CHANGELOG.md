@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.4.9
+- **Selbstheilung bei State Mismatches (IS & GS)**: Die limits `IS` (Laderegler-Limit) und `GS` (Einspeise-Sollwert) werden nun bei Abweichungen zwischen Soll- und Istwert automatisch auf dem Gerät überschrieben. Zudem wurden `log.warning` Einträge hinzugefügt, um solche Mismatches sichtbar zu machen (z.B. wenn das Gerät seine Drosselung nicht freigegeben hat oder offline zurückgesetzt wurde).
+
 ## v2.4.8
 - **Bedingte PV-Drosselung bei vollen Akkus**: Die Drosselung der Solarladeregler (IS-Limit) greift bei vollen Akkus nun nur noch dann, wenn tatsächlich Überschuss ins Netz fließen würde (`drosseln = True`). Dadurch bleibt das IS-Limit bei Lastspitzen bzw. Energiebedarf im Haus voll geöffnet (`2400W`), um die Last prioritär direkt aus der Sonne zu decken, anstatt fälschlicherweise die Batterien zu entladen.
 
