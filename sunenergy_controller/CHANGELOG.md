@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.5.1
+- **Dynamisches AC-Laden für L2 & L1->L2 Transfer**: L2 kann nun wieder über AC aus dem Überschuss der Hoymiles und von L1 geladen werden. Ein neuer Lade-Blockade-Schutz erkennt automatisch, wenn L2 die Ladung verweigert (BMS voll, App-Limit, unplugged), blockiert temporär L2s Headroom und drosselt die Hoymiles, um Einspeise-Deadlocks zu verhindern. Zudem wurde die Transferlogik (L1->L2) für solaren Überschuss von L1 freigegeben, indem nun geprüft wird, ob die Quelle (L1) PV-Erzeugung hat.
+
 ## v2.5.0
 - **Filterung kosmetischer Mismatch-Warnungen**: Die Mismatch-Warnungen für `IS` und `GS` werden nun nur noch dann ausgegeben, wenn es sich um einen echten, persistenten Übertragungsfehler handelt (Sollwert im letzten Tick bereits gesetzt, Box meldet aber immer noch einen abweichenden Istwert). Normale PID-Sollwertanpassungen führen dadurch nicht mehr zu "False Positives" im Protokoll.
 
