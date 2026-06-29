@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.5.1
+SunEnergy XT Controller v2.5.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -419,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.5.0 startet...")
+    log.info("SunEnergy XT Controller v2.5.2 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -758,7 +758,7 @@ def main():
                     state["consecutive_polls_l2"] = state.get("consecutive_polls_l2", 0) + 1
                     
                     # v2.5.1: L2 Lade-Blockade-Erkennung (BMS voll, App-Limit oder unplugged)
-                    last_gs_l2 = state.get("last_device_gs_l2", 0.0)
+                    last_gs_l2 = safe_float(state, "last_device_gs_l2", 0.0)
                     if last_gs_l2 < -100.0:
                         if iw_l2 < 50.0:
                             if not state.get("l2_charge_blocked", False):
