@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.5.4
+SunEnergy XT Controller v2.5.5
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -419,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.5.4 startet...")
+    log.info("SunEnergy XT Controller v2.5.5 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1420,21 +1420,65 @@ def main():
 
             if bypass_active:
                 # Bypass-Modus: Nulleinspeisung ausgesetzt.
-                # Keine Drosselung der Wechselrichter.
-                if curr_soc >= (soc_max_limit - 3.0):
+                # Wir berechnen gs_new über den PID-Regler, um Batterieladung zu maximieren.
+                gs_last = safe_float(state, "last_gs", 0.0)
+                _delta_day = calc_adaptive_gs_delta(grid_error)
+                gs_new = gs_last + _delta_day
+                
+                # Zwangsladung/Hold-Time/Limits wie im normalen Modus anwenden
+                hold_until = state.get("hold_until", 0.0)
+                if time.monotonic() < hold_until:
+                    gs_new = gs_last
+                
+                headroom_l1 = max(0.0, soc_max_limit - curr_soc)
+                l2_charge_blocked = state.get("l2_charge_blocked", False)
+                headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
+                total_headroom = headroom_l1 + headroom_l2
+                if total_headroom <= 0.0:
+                    gs_new = max(0.0, gs_new)
+                
+                gs_new = max(-max_gs, min(max_gs, gs_new))
+                
+                # Aufteilung unter Berücksichtigung von vollen Batterien (Durchreichen)
+                l1_full = curr_soc >= (soc_max_limit - 3.0)
+                l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 3.0))
+                
+                if l1_full and l2_full:
                     gs_l1 = pv_current
+                    gs_l2 = pv_l2
+                elif l1_full:
+                    gs_l1 = pv_current
+                    gs_l2 = gs_new - gs_l1
+                    if l2_charge_blocked:
+                        gs_l2 = max(0.0, gs_l2)
+                    gs_l2 = max(-2400.0, min(2400.0, gs_l2))
+                elif l2_full:
+                    gs_l2 = pv_l2
+                    gs_l1 = gs_new - gs_l2
+                    gs_l1 = max(-2400.0, min(2400.0, gs_l1))
                 else:
-                    gs_l1 = max(-2400, min(2400, (haus_p - solar_p) * 0.5))
-                
-                if has_l2:
-                    if curr_soc_l2 >= (soc_max_limit - 3.0):
-                        gs_l2 = pv_l2
+                    # Beide nicht voll -> Normale proportionale Aufteilung
+                    if gs_new > 0:
+                        usable_soc_l1 = max(0.0, curr_soc - soc_min) if not low_soc_active_l1 else 0.0
+                        usable_soc_l2 = max(0.0, curr_soc_l2 - soc_min) if (has_l2 and not low_soc_active_l2) else 0.0
+                        total_usable = usable_soc_l1 + usable_soc_l2
+                        if total_usable > 0:
+                            ratio_l1 = usable_soc_l1 / total_usable
+                            ratio_l2 = usable_soc_l2 / total_usable
+                            gs_l1 = gs_new * ratio_l1
+                            gs_l2 = gs_new * ratio_l2
+                        else:
+                            gs_l1 = 0.0
+                            gs_l2 = 0.0
                     else:
-                        gs_l2 = max(-2400, min(2400, (haus_p - solar_p) * 0.5))
-                else:
-                    gs_l2 = 0.0
-                
-                gs_new = gs_l1 + gs_l2
+                        if total_headroom > 0:
+                            ratio_l1 = headroom_l1 / total_headroom
+                            ratio_l2 = headroom_l2 / total_headroom
+                            gs_l1 = gs_new * ratio_l1
+                            gs_l2 = gs_new * ratio_l2
+                        else:
+                            gs_l1 = 0.0
+                            gs_l2 = 0.0
             else:
                 # GS Formel: gedämpft → gs_last + grid_error * 0.3, Rate-Limit ±120W/Tick
                 gs_last = safe_float(state, "last_gs", 0.0)
@@ -1755,6 +1799,10 @@ def main():
                         # v2.5.1: Transfer-Sperre wenn Quellspeicher kein eigenes PV hat (AC-AC Kreuzladungs-Vermeidung)
                         src_has_pv = (pv_current >= 10.0) if src_is_l1 else (pv_l2 >= 10.0)
                         if not src_has_pv:
+                            p_transfer_target = 0.0
+                        
+                        # v2.5.5: Transfer-Sperre wenn der Zielspeicher (L2) AC-ladeblockiert ist
+                        if src_is_l1 and state.get("l2_charge_blocked", False):
                             p_transfer_target = 0.0
                         
                         # Slew-Rate Limit beim Hochfahren, sofortiges Runterfahren bei Wolken
