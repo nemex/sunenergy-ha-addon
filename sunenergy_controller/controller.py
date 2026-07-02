@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.5.5
+SunEnergy XT Controller v2.5.6
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -419,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.5.5 startet...")
+    log.info("SunEnergy XT Controller v2.5.6 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1440,37 +1440,39 @@ def main():
                 gs_new = max(-max_gs, min(max_gs, gs_new))
                 
                 # Aufteilung unter Berücksichtigung von vollen Batterien (Durchreichen)
-                l1_full = curr_soc >= (soc_max_limit - 3.0)
-                l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 3.0))
-                
-                if l1_full and l2_full:
-                    gs_l1 = pv_current
-                    gs_l2 = pv_l2
-                elif l1_full:
-                    gs_l1 = pv_current
-                    gs_l2 = gs_new - gs_l1
-                    if l2_charge_blocked:
-                        gs_l2 = max(0.0, gs_l2)
-                    gs_l2 = max(-2400.0, min(2400.0, gs_l2))
-                elif l2_full:
-                    gs_l2 = pv_l2
-                    gs_l1 = gs_new - gs_l2
-                    gs_l1 = max(-2400.0, min(2400.0, gs_l1))
-                else:
-                    # Beide nicht voll -> Normale proportionale Aufteilung
-                    if gs_new > 0:
-                        usable_soc_l1 = max(0.0, curr_soc - soc_min) if not low_soc_active_l1 else 0.0
-                        usable_soc_l2 = max(0.0, curr_soc_l2 - soc_min) if (has_l2 and not low_soc_active_l2) else 0.0
-                        total_usable = usable_soc_l1 + usable_soc_l2
-                        if total_usable > 0:
-                            ratio_l1 = usable_soc_l1 / total_usable
-                            ratio_l2 = usable_soc_l2 / total_usable
-                            gs_l1 = gs_new * ratio_l1
-                            gs_l2 = gs_new * ratio_l2
-                        else:
-                            gs_l1 = 0.0
-                            gs_l2 = 0.0
+                if gs_new > 0:
+                    # Entladen: Normale proportionale Aufteilung nach SOC
+                    usable_soc_l1 = max(0.0, curr_soc - soc_min) if not low_soc_active_l1 else 0.0
+                    usable_soc_l2 = max(0.0, curr_soc_l2 - soc_min) if (has_l2 and not low_soc_active_l2) else 0.0
+                    total_usable = usable_soc_l1 + usable_soc_l2
+                    if total_usable > 0:
+                        ratio_l1 = usable_soc_l1 / total_usable
+                        ratio_l2 = usable_soc_l2 / total_usable
+                        gs_l1 = gs_new * ratio_l1
+                        gs_l2 = gs_new * ratio_l2
                     else:
+                        gs_l1 = 0.0
+                        gs_l2 = 0.0
+                else:
+                    # Laden (gs_new <= 0): Begrenzung bei vollen Batterien (Durchreichen)
+                    l1_full = curr_soc >= (soc_max_limit - 3.0)
+                    l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 3.0))
+                    
+                    if l1_full and l2_full:
+                        gs_l1 = pv_current
+                        gs_l2 = pv_l2
+                    elif l1_full:
+                        gs_l1 = pv_current
+                        gs_l2 = gs_new - gs_l1
+                        if l2_charge_blocked:
+                            gs_l2 = max(0.0, gs_l2)
+                        gs_l2 = max(-2400.0, min(2400.0, gs_l2))
+                    elif l2_full:
+                        gs_l2 = pv_l2
+                        gs_l1 = gs_new - gs_l2
+                        gs_l1 = max(-2400.0, min(2400.0, gs_l1))
+                    else:
+                        # Beide nicht voll -> Proportional zum Headroom laden
                         if total_headroom > 0:
                             ratio_l1 = headroom_l1 / total_headroom
                             ratio_l2 = headroom_l2 / total_headroom
