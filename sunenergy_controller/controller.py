@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.5.6
+SunEnergy XT Controller v2.5.7
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -379,6 +379,23 @@ def safe_float(state: dict, key: str, default: float) -> float:
         return default
 
 
+def send_telegram_alert(token, chat_id, message):
+    if not token or not chat_id:
+        return
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=5)
+        if r.status_code != 200:
+            log.error("Telegram Senden fehlgeschlagen: %s", r.text)
+    except Exception as e:
+        log.error("Telegram Fehler: %s", e)
+
+
 def calc_adaptive_gs_delta(error, ki_min=0.15, ki_max=0.5, ki_error_scale=600.0):
     # Exponent 0.7 bewirkt progressiven Anstieg bei mittleren Fehlern
     ki_err_factor = min(1.0, (abs(error) / ki_error_scale) ** 0.7)
@@ -419,7 +436,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.5.6 startet...")
+    log.info("SunEnergy XT Controller v2.5.7 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -456,6 +473,9 @@ def main():
     hms_1600_power_sensor = opts.get("hms_1600_power_sensor", "sensor.hoymiles_hms_1600_4t_power")
     hms_2000_reachable_sensor = opts.get("hms_2000_reachable_sensor", "binary_sensor.hoymiles_hms_2000_4t_reachable")
     hms_1600_reachable_sensor = opts.get("hms_1600_reachable_sensor", "binary_sensor.hoymiles_hms_1600_4t_reachable")
+    
+    telegram_token        = opts.get("telegram_token", "")
+    telegram_chat_id      = opts.get("telegram_chat_id", "")
 
     soc_normal_max  = float(opts["soc_normal_max"])    # 95%
     soc_min         = float(opts["soc_min"])            # 10%
@@ -837,6 +857,70 @@ def main():
             state["iw_l2"] = iw_l2
             state["pb_l2"] = pb_l2
 
+            # --- PV-Eingangs-Überwachung (MPPT-Watchdog) ---
+            if "active_inputs" not in state:
+                state["active_inputs"] = {"L1": {}, "L2": {}}
+            if "sent_alerts" not in state:
+                state["sent_alerts"] = {}
+            if "pv_drop_ticks" not in state:
+                state["pv_drop_ticks"] = {}
+
+            def monitor_device_pvs(device_name, se_dict, total_pv):
+                if not se_dict:
+                    return
+                # 1. Prüfen, welche Ports aktiv sind
+                for i in range(1, 5):
+                    vp_val = safe_float(se_dict, f"VP{i}", 0.0)
+                    pv_val = safe_float(se_dict, f"PV{i}", 0.0)
+                    if vp_val > 10.0 or pv_val > 0.0:
+                        if not state["active_inputs"][device_name].get(str(i)):
+                            state["active_inputs"][device_name][str(i)] = True
+                            log.info("PV-Watchdog: Port PV%d bei %s als aktiv markiert (Spannung vorhanden).", i, device_name)
+
+                # 2. Watchdog-Überwachung (nur wenn das Gerät insgesamt > 150W produziert und somit Tageslicht herrscht)
+                if total_pv > 150.0:
+                    for i in range(1, 5):
+                        if state["active_inputs"][device_name].get(str(i)):
+                            vp_val = safe_float(se_dict, f"VP{i}", 0.0)
+                            pv_val = safe_float(se_dict, f"PV{i}", 0.0)
+                            
+                            # Wenn Spannung und Leistung komplett auf 0 abfallen
+                            if vp_val == 0.0 and pv_val == 0.0:
+                                tick_key = f"{device_name}_PV{i}"
+                                current_ticks = state["pv_drop_ticks"].get(tick_key, 0) + 1
+                                state["pv_drop_ticks"][tick_key] = current_ticks
+                                
+                                # Nach 5 Minuten (60 Ticks bei 5s Intervall) Warnung senden
+                                if current_ticks == 60:
+                                    alert_key = f"pv_drop_{device_name}_PV{i}"
+                                    if alert_key not in state["sent_alerts"]:
+                                        alert_msg = (
+                                            f"⚠️ <b>SunEnergy XT Controller Alarm!</b>\n"
+                                            f"Der Solar-Eingang <b>PV{i}</b> am Gerät <b>{device_name}</b> liefert keine Spannung mehr (0.0V), "
+                                            f"obwohl der Speicher insgesamt {total_pv:.0f}W PV-Leistung erzeugt.\n"
+                                            f"Bitte Sicherungen, Stecker und Kabel überprüfen!"
+                                        )
+                                        send_telegram_alert(telegram_token, telegram_chat_id, alert_msg)
+                                        state["sent_alerts"][alert_key] = time.time()
+                                        log.warning("PV-Watchdog: Telegram-Alarm gesendet für %s Port PV%d (Spannungsverlust).", device_name, i)
+                            else:
+                                tick_key = f"{device_name}_PV{i}"
+                                state["pv_drop_ticks"][tick_key] = 0
+                                
+                                alert_key = f"pv_drop_{device_name}_PV{i}"
+                                if alert_key in state["sent_alerts"]:
+                                    recovery_msg = (
+                                        f"🟢 <b>SunEnergy XT Controller Entwarnung.</b>\n"
+                                        f"Der Solar-Eingang <b>PV{i}</b> am Gerät <b>{device_name}</b> liefert wieder Spannung (aktuell {vp_val:.1f}V)."
+                                    )
+                                    send_telegram_alert(telegram_token, telegram_chat_id, recovery_msg)
+                                    del state["sent_alerts"][alert_key]
+                                    log.info("PV-Watchdog: Entwarnung gesendet für %s Port PV%d.", device_name, i)
+
+            monitor_device_pvs("L1", se_data, pv_current)
+            if has_l2 and se_data_l2:
+                monitor_device_pvs("L2", se_data_l2, pv_l2)
+
 
 
             # Berechne den Hausverbrauch lokal und verzögerungsfrei
@@ -930,6 +1014,14 @@ def main():
                         state["in_fallback_mode"] = True
                         state["consecutive_polls_l1"] = 0
                         state["consecutive_polls_l2"] = 0
+                        send_telegram_alert(
+                            telegram_token,
+                            telegram_chat_id,
+                            f"⚠️ <b>SunEnergy XT Controller: Fallback-Modus aktiv!</b>\n"
+                            f"Grund: Verbindungsausfall oder veraltete Werte bei:\n"
+                            f"- L1_stale: {l1_stale}, L2_stale: {l2_stale}\n"
+                            f"- L1_failed: {l1_failed}, L2_failed: {l2_failed}"
+                        )
                         
                         # Sofort auf MM=0 schalten, um manuelle Kontrolle zu erzwingen
                         ha_switch(mm_switch, False)
@@ -950,6 +1042,12 @@ def main():
                         log.info("🟢 Rückkehr zum nativen PID-Modus. Hysterese-Polls ok (L1=%d, L2=%d).",
                                  state.get("consecutive_polls_l1", 0), state.get("consecutive_polls_l2", 0))
                         state["in_fallback_mode"] = False
+                        send_telegram_alert(
+                            telegram_token,
+                            telegram_chat_id,
+                            "🟢 <b>SunEnergy XT Controller: Fallback beendet.</b>\n"
+                            "Die Regelung läuft wieder normal im aktiven Modus."
+                        )
                         
                         # Wieder Zählerbindung und MM=1 schreiben
                         ha_ip = opts.get("ha_ip", "192.168.178.132")

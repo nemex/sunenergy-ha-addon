@@ -62,6 +62,8 @@ options:
   op_l2_sensor: "sensor.shellypro1pm_sunenergy_l2_leistung"
   use_native_pid: false
   proxy_split_mode: "soc"
+  telegram_token: ""
+  telegram_chat_id: ""
 schema:
   shelly_ip: str
   sunenergy_ip: str
@@ -96,4 +98,6 @@ schema:
   op_l2_sensor: str?
   use_native_pid: bool
   proxy_split_mode: str
+  telegram_token: str?
+  telegram_chat_id: str?
 
