@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.5.3
+SunEnergy XT Controller v2.5.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -419,7 +419,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.5.3 startet...")
+    log.info("SunEnergy XT Controller v2.5.4 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1036,41 +1036,22 @@ def main():
                     log.info("🔋 Manuelle Einspeisung gestoppt.")
 
             # ------------------------------------------------------------------
-            # 3c. Bypass Nulleinspeisung morgen prüfen
+            # 3c. Bypass Nulleinspeisung prüfen (Sofortiger und dauerhafter Bypass)
             # ------------------------------------------------------------------
             bypass_tomorrow_switch = opts.get("bypass_tomorrow_switch", "input_boolean.sunenergy_bypass_tomorrow")
             bypass_active = False
             if bypass_tomorrow_switch:
                 bypass_switch_state = ha_get_state(bypass_tomorrow_switch, "off")
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                bypass_date = state.get("bypass_date")
-                
                 if bypass_switch_state == "on":
-                    if not bypass_date:
-                        tomorrow_dt = datetime.now() + timedelta(days=1)
-                        bypass_date = tomorrow_dt.strftime("%Y-%m-%d")
-                        state["bypass_date"] = bypass_date
-                        log.info("📅 Nulleinspeisung-Bypass für morgen (%s) eingeplant.", bypass_date)
+                    if not state.get("bypass_active_logged", False):
+                        log.info("⚡ Nulleinspeisung-Bypass SOFORT AKTIV (dauerhaft bis zum manuellen Ausschalten).")
+                        state["bypass_active_logged"] = True
                         save_state(state)
+                    bypass_active = True
                 else:
-                    if bypass_date:
-                        log.info("📅 Nulleinspeisung-Bypass Planung verworfen.")
-                        state["bypass_date"] = None
-                        bypass_date = None
-                        save_state(state)
-                
-                if bypass_date:
-                    if today_str == bypass_date:
-                        bypass_active = True
-                    elif today_str > bypass_date:
-                        log.info("📅 Nulleinspeisung-Bypass für %s abgelaufen. Zurücksetzen...", bypass_date)
-                        if not DRY_RUN:
-                            HA_SESSION.post(
-                                f"{HA_URL}/api/services/input_boolean/turn_off",
-                                json={"entity_id": bypass_tomorrow_switch},
-                                timeout=5,
-                            )
-                        state["bypass_date"] = None
+                    if state.get("bypass_active_logged", False):
+                        log.info("⚡ Nulleinspeisung-Bypass DEAKTIVIERT (zurück zur Nulleinspeisung).")
+                        state["bypass_active_logged"] = False
                         save_state(state)
 
 
