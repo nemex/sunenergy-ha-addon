@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.7.1
+SunEnergy XT Controller v2.7.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -497,7 +497,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.7.1 startet...")
+    log.info("SunEnergy XT Controller v2.7.2 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1601,9 +1601,9 @@ def main():
                 if time.monotonic() < hold_until:
                     gs_new = gs_last
                 
-                headroom_l1 = max(0.0, soc_max_limit - curr_soc)
+                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc)
                 l2_charge_blocked = state.get("l2_charge_blocked", False)
-                headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
+                headroom_l2 = max(0.0, (soc_max_limit - 1.0) - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
                 total_headroom = headroom_l1 + headroom_l2
                 if total_headroom <= 0.0:
                     gs_new = max(0.0, gs_new)
@@ -1626,8 +1626,8 @@ def main():
                         gs_l2 = 0.0
                 else:
                     # Laden (gs_new <= 0): Begrenzung bei vollen Batterien (Durchreichen)
-                    l1_full = curr_soc >= (soc_max_limit - 3.0)
-                    l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 3.0))
+                    l1_full = curr_soc >= (soc_max_limit - 1.0)
+                    l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
                     
                     if l1_full and l2_full:
                         gs_l1 = pv_current
@@ -1663,9 +1663,9 @@ def main():
                     gs_new = gs_last
 
                 # Anti-Windup bei vollen/nicht ladbaren Batterien (tagsüber)
-                headroom_l1 = max(0.0, soc_max_limit - curr_soc)
+                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc)
                 l2_charge_blocked = state.get("l2_charge_blocked", False)
-                headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
+                headroom_l2 = max(0.0, (soc_max_limit - 1.0) - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
                 total_headroom = headroom_l1 + headroom_l2
                 if total_headroom <= 0.0:
                     gs_new = max(0.0, gs_new)
@@ -1825,7 +1825,7 @@ def main():
             elif is_native and pv_current > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l1 = max(10, haus_p - solar_p)
-            elif curr_soc >= (soc_max_limit - 3.0) or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
+            elif curr_soc >= (soc_max_limit - 1.0) or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
                 if drosseln or (not is_native and (gs_l1_rounded < -200) and (-50.0 <= pb_current < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))
                     # v2.1.9: L2-Ladefähigkeit einbeziehen, um L1s AC-Ausgabe für L2-Ladung freizugeben (Deadlock-Schutz)
@@ -1872,7 +1872,7 @@ def main():
             elif is_native and pv_l2 > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l2 = max(10, haus_p - solar_p)
-            elif curr_soc_l2 >= (soc_max_limit - 3.0) or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
+            elif curr_soc_l2 >= (soc_max_limit - 1.0) or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
                 if drosseln or (not is_native and (gs_l2_rounded < -200) and (-50.0 <= pb_l2 < 150.0)):
                     restbedarf = max(0, int(haus_p - solar_p))
                     # v2.1.9: L1-Ladefähigkeit einbeziehen, um L2s AC-Ausgabe für L1-Ladung freizugeben (symmetrischer Deadlock-Schutz)
