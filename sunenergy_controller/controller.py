@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.7.0
+SunEnergy XT Controller v2.7.1
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -450,14 +450,21 @@ def send_telegram_alert(token, chat_id, message):
         log.error("Telegram Fehler: %s", e)
 
 
-def calc_adaptive_gs_delta(error, ki_min=0.15, ki_max=0.5, ki_error_scale=600.0):
+def calc_adaptive_gs_delta(error, has_l2=False, ki_min=0.15, ki_max=0.5, ki_error_scale=600.0):
     # Exponent 0.7 bewirkt progressiven Anstieg bei mittleren Fehlern
     ki_err_factor = min(1.0, (abs(error) / ki_error_scale) ** 0.7)
     ki_eff = ki_min + (ki_max - ki_min) * ki_err_factor
     delta = error * ki_eff
     
     # Slew-Rate-Begrenzung: sanft bei kleinem Fehler, schnell bei großem Fehler
-    slew_limit = 80.0 if abs(error) < 150.0 else 250.0
+    # v2.7.1: Doppelter Slew-Limit bei zwei aktiven Speichern (L2) für schnellere Reaktion
+    if abs(error) < 150.0:
+        slew_limit = 80.0
+    elif abs(error) < 800.0:
+        slew_limit = 500.0 if has_l2 else 250.0
+    else:
+        slew_limit = 1000.0 if has_l2 else 500.0
+        
     return max(-slew_limit, min(slew_limit, delta))
 
 
@@ -490,7 +497,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.7.0 startet...")
+    log.info("SunEnergy XT Controller v2.7.1 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1398,7 +1405,7 @@ def main():
                     # GS nachts aktiv regeln
                     max_gs = 4800.0 if has_l2 else 2400.0
                     gs_last = safe_float(state, "last_gs", 0.0)
-                    _delta_night = calc_adaptive_gs_delta(grid_p_raw)
+                    _delta_night = calc_adaptive_gs_delta(grid_p_raw, has_l2=has_l2)
                     gs_new = gs_last + _delta_night
 
                     hold_until = state.get("hold_until", 0.0)
@@ -1570,6 +1577,7 @@ def main():
             # ------------------------------------------------------------------
             # 7. Tagregelung — universell für jeden SOC mit Spam-Schutz
             # ------------------------------------------------------------------
+            if bypass_active:
                 set_active_mode(state, "bypass")
             elif feed_in_active:
                 set_active_mode(state, "feed_in" if is_actively_feeding_in else "feed_in_standby")
@@ -1585,7 +1593,7 @@ def main():
                 # Bypass-Modus: Nulleinspeisung ausgesetzt.
                 # Wir berechnen gs_new über den PID-Regler, um Batterieladung zu maximieren.
                 gs_last = safe_float(state, "last_gs", 0.0)
-                _delta_day = calc_adaptive_gs_delta(grid_error)
+                _delta_day = calc_adaptive_gs_delta(grid_error, has_l2=has_l2)
                 gs_new = gs_last + _delta_day
                 
                 # Zwangsladung/Hold-Time/Limits wie im normalen Modus anwenden
@@ -1647,7 +1655,7 @@ def main():
             else:
                 # GS Formel: gedämpft → gs_last + grid_error * 0.3, Rate-Limit ±120W/Tick
                 gs_last = safe_float(state, "last_gs", 0.0)
-                _delta_day = calc_adaptive_gs_delta(grid_error)
+                _delta_day = calc_adaptive_gs_delta(grid_error, has_l2=has_l2)
                 gs_new = gs_last + _delta_day
 
                 hold_until = state.get("hold_until", 0.0)
