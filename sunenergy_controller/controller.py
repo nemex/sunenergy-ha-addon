@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.6.0
+SunEnergy XT Controller v2.6.1
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -436,7 +436,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.6.0 startet...")
+    log.info("SunEnergy XT Controller v2.6.1 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -445,16 +445,16 @@ def main():
     # Reset and initialize watchdog configuration on startup using boolean toggle switches
     state["active_inputs"] = {
         "L1": {
-            "1": bool(opts.get("l1_pv1_active", True)),
-            "2": bool(opts.get("l1_pv2_active", True)),
-            "3": bool(opts.get("l1_pv3_active", True)),
-            "4": bool(opts.get("l1_pv4_active", True))
+            "1": bool(opts.get("speicher1_pv1_active", True)),
+            "2": bool(opts.get("speicher1_pv2_active", True)),
+            "3": bool(opts.get("speicher1_pv3_active", True)),
+            "4": bool(opts.get("speicher1_pv4_active", True))
         },
         "L2": {
-            "1": bool(opts.get("l2_pv1_active", False)),
-            "2": bool(opts.get("l2_pv2_active", False)),
-            "3": bool(opts.get("l2_pv3_active", False)),
-            "4": bool(opts.get("l2_pv4_active", False))
+            "1": bool(opts.get("speicher2_pv1_active", False)),
+            "2": bool(opts.get("speicher2_pv2_active", False)),
+            "3": bool(opts.get("speicher2_pv3_active", False)),
+            "4": bool(opts.get("speicher2_pv4_active", False))
         }
     }
     state["pv_drop_ticks"] = {}
