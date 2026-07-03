@@ -61,9 +61,10 @@ options:
   sa_entity_l2: "number.sunenergyxt_500_pro_l2_system_ladegrenze"
   op_l2_sensor: "sensor.shellypro1pm_sunenergy_l2_leistung"
   use_native_pid: false
-  proxy_split_mode: "soc"
   telegram_token: ""
   telegram_chat_id: ""
+  pv_inputs_l1: "1,2,3,4"
+  pv_inputs_l2: ""
 schema:
   shelly_ip: str
   sunenergy_ip: str
@@ -100,4 +101,6 @@ schema:
   proxy_split_mode: str
   telegram_token: str?
   telegram_chat_id: str?
+  pv_inputs_l1: str?
+  pv_inputs_l2: str?
 

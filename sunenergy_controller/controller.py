@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.5.8
+SunEnergy XT Controller v2.5.9
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -436,14 +436,19 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.5.8 startet...")
+    log.info("SunEnergy XT Controller v2.5.9 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
     state = load_state()
 
-    # Reset watchdog history on startup to allow wiring changes without false alarms
-    state["active_inputs"] = {"L1": {}, "L2": {}}
+    # Reset and initialize watchdog configuration on startup
+    active_ports_l1 = [int(x.strip()) for x in opts.get("pv_inputs_l1", "1,2,3,4").split(",") if x.strip().isdigit()]
+    active_ports_l2 = [int(x.strip()) for x in opts.get("pv_inputs_l2", "").split(",") if x.strip().isdigit()]
+    state["active_inputs"] = {
+        "L1": {str(p): True for p in active_ports_l1},
+        "L2": {str(p): True for p in active_ports_l2}
+    }
     state["pv_drop_ticks"] = {}
     state["sent_alerts"] = {}
     save_state(state)
@@ -874,14 +879,6 @@ def main():
             def monitor_device_pvs(device_name, se_dict, total_pv):
                 if not se_dict:
                     return
-                # 1. Prüfen, welche Ports aktiv sind
-                for i in range(1, 5):
-                    vp_val = safe_float(se_dict, f"VP{i}", 0.0)
-                    pv_val = safe_float(se_dict, f"PV{i}", 0.0)
-                    if vp_val > 10.0 or pv_val > 0.0:
-                        if not state["active_inputs"][device_name].get(str(i)):
-                            state["active_inputs"][device_name][str(i)] = True
-                            log.info("PV-Watchdog: Port PV%d bei %s als aktiv markiert (Spannung vorhanden).", i, device_name)
 
                 # 2. Watchdog-Überwachung (nur wenn das Gerät insgesamt > 150W produziert und somit Tageslicht herrscht)
                 if total_pv > 150.0:
