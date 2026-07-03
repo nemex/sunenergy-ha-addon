@@ -1,0 +1,127 @@
+configuration:
+  speicher1_pv1_active:
+    name: "Speicher 1 — PV 1"
+    description: "Enable monitoring for input PV1 (MPPT 1) of Speicher 1"
+  speicher1_pv2_active:
+    name: "Speicher 1 — PV 2"
+    description: "Enable monitoring for input PV2 (MPPT 2) of Speicher 1"
+  speicher1_pv3_active:
+    name: "Speicher 1 — PV 3"
+    description: "Enable monitoring for input PV3 (MPPT 3) of Speicher 1"
+  speicher1_pv4_active:
+    name: "Speicher 1 — PV 4"
+    description: "Enable monitoring for input PV4 (MPPT 4) of Speicher 1"
+  speicher2_pv1_active:
+    name: "Speicher 2 — PV 1"
+    description: "Enable monitoring for input PV1 (MPPT 1) of Speicher 2"
+  speicher2_pv2_active:
+    name: "Speicher 2 — PV 2"
+    description: "Enable monitoring for input PV2 (MPPT 2) of Speicher 2"
+  speicher2_pv3_active:
+    name: "Speicher 2 — PV 3"
+    description: "Enable monitoring for input PV3 (MPPT 3) of Speicher 2"
+  speicher2_pv4_active:
+    name: "Speicher 2 — PV 4"
+    description: "Enable monitoring for input PV4 (MPPT 4) of Speicher 2"
+  telegram_token:
+    name: "Telegram Watchdog — Bot Token"
+    description: "Optional: Telegram bot token for error notifications"
+  telegram_chat_id:
+    name: "Telegram Watchdog — Chat-ID"
+    description: "Optional: Personal Telegram chat ID"
+  shelly_ip:
+    name: "Shelly IP Address"
+    description: "Local IP address of the Shelly Pro 3EM"
+  sunenergy_ip:
+    name: "Speicher 1 (L1) IP Address"
+    description: "Local IP address of the first SunEnergyXT storage device"
+  ha_ip:
+    name: "Home Assistant IP Address"
+    description: "IP address of your Home Assistant server"
+  hms_2000_entity:
+    name: "HMS-2000 Limit Entity"
+    description: "Home Assistant entity ID for HMS-2000 throttle limit"
+  hms_1600_entity:
+    name: "HMS-1600 Limit Entity"
+    description: "Home Assistant entity ID for HMS-1600 throttle limit"
+  grid_sensor:
+    name: "Grid Power Sensor (Shelly)"
+    description: "Power sensor of the Shelly Pro 3EM (in Watts)"
+  soc_sensor:
+    name: "Speicher 1 SOC Sensor"
+    description: "Battery State of Charge sensor for Speicher 1"
+  gs_entity:
+    name: "Speicher 1 GS Entity"
+    description: "Entity ID for setting Grid Setpoint on Speicher 1"
+  mm_switch:
+    name: "Speicher 1 Local Zero-Feed-In Switch"
+    description: "Switch to toggle local zero-feed-in mode on Speicher 1"
+  sa_entity:
+    name: "Speicher 1 System Charge Limit"
+    description: "Entity ID for the charge limit (system limit) of Speicher 1"
+  haus_power_sensor:
+    name: "Home Consumption Sensor"
+    description: "Home Assistant sensor for current total home electricity consumption"
+  hms_2000_power_sensor:
+    name: "Hoymiles HMS-2000 Power Sensor"
+    description: "Sensor for current output power of the HMS-2000"
+  hms_1600_power_sensor:
+    name: "Hoymiles HMS-1600 Power Sensor"
+    description: "Sensor for current output power of the HMS-1600"
+  hms_2000_reachable_sensor:
+    name: "Hoymiles HMS-2000 Reachability"
+    description: "Binary sensor indicating if the HMS-2000 is reachable"
+  hms_1600_reachable_sensor:
+    name: "Hoymiles HMS-1600 Reachability"
+    description: "Binary sensor indicating if the HMS-1600 is reachable"
+  soc_normal_max:
+    name: "Maximum Normal SOC"
+    description: "SOC limit for normal daytime operation (Default: 95%)"
+  soc_min:
+    name: "Minimum SOC"
+    description: "Discharge limit for the batteries (Default: 10%)"
+  calibration_days:
+    name: "Calibration Interval (Days)"
+    description: "Interval for fully charging the batteries (Default: 15 days)"
+  dry_run:
+    name: "Test Mode (Dry-Run)"
+    description: "If active, calculations are run but no limits are written to devices"
+  manual_feed_in_switch:
+    name: "Manual Feed-In Switch"
+    description: "Switch to activate manual full feed-in mode"
+  manual_feed_in_target:
+    name: "Manual Feed-In Target (kWh)"
+    description: "Amount of energy to export during full feed-in"
+  manual_feed_in_min_soc:
+    name: "Manual Feed-In Min SOC"
+    description: "Minimum state of charge that must remain during full feed-in"
+  manual_feed_in_power:
+    name: "Manual Feed-In Power (W)"
+    description: "Constant power target for manual feed-in"
+  bypass_tomorrow_switch:
+    name: "Bypass Switch (Bypass zero-feed-in)"
+    description: "Switch to bypass zero-feed-in for continuous feed-in"
+  sunenergy_ip_l2:
+    name: "Speicher 2 (L2) IP Address"
+    description: "IP address of the optional second storage device"
+  soc_sensor_l2:
+    name: "Speicher 2 SOC Sensor"
+    description: "Battery State of Charge sensor for Speicher 2"
+  gs_entity_l2:
+    name: "Speicher 2 GS Entity"
+    description: "Entity ID for setting Grid Setpoint on Speicher 2"
+  mm_switch_l2:
+    name: "Speicher 2 Local Zero-Feed-In Switch"
+    description: "Switch to toggle local zero-feed-in mode on Speicher 2"
+  sa_entity_l2:
+    name: "Speicher 2 System Charge Limit"
+    description: "Entity ID for the charge limit of Speicher 2"
+  op_l2_sensor:
+    name: "Speicher 2 Shelly Power Sensor"
+    description: "The Shelly 1PM power sensor of Speicher 2"
+  use_native_pid:
+    name: "Use Native PID Regulation"
+    description: "Uses the firmware's built-in PID regulator (via proxy server)"
+  proxy_split_mode:
+    name: "Split Mode"
+    description: "How power is split between Speicher 1 and 2 (soc or fixed)"

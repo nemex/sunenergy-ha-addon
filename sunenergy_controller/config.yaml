@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "2.6.1"
+version: "2.6.2"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -29,6 +29,14 @@ ports:
 ports_description:
   8765/tcp: Web UI (direkter Zugriff, optional – Ingress ist aktiv)
 options:
+  speicher1_pv1_active: true
+  speicher1_pv2_active: true
+  speicher1_pv3_active: true
+  speicher1_pv4_active: true
+  speicher2_pv1_active: false
+  speicher2_pv2_active: false
+  speicher2_pv3_active: false
+  speicher2_pv4_active: false
   shelly_ip: "192.168.178.98"
   sunenergy_ip: "192.168.178.94"
   ha_ip: "192.168.178.132"
@@ -63,15 +71,15 @@ options:
   use_native_pid: false
   telegram_token: ""
   telegram_chat_id: ""
-  speicher1_pv1_active: true
-  speicher1_pv2_active: true
-  speicher1_pv3_active: true
-  speicher1_pv4_active: true
-  speicher2_pv1_active: false
-  speicher2_pv2_active: false
-  speicher2_pv3_active: false
-  speicher2_pv4_active: false
 schema:
+  speicher1_pv1_active: bool
+  speicher1_pv2_active: bool
+  speicher1_pv3_active: bool
+  speicher1_pv4_active: bool
+  speicher2_pv1_active: bool
+  speicher2_pv2_active: bool
+  speicher2_pv3_active: bool
+  speicher2_pv4_active: bool
   shelly_ip: str
   sunenergy_ip: str
   ha_ip: str
@@ -107,12 +115,4 @@ schema:
   proxy_split_mode: str
   telegram_token: str?
   telegram_chat_id: str?
-  speicher1_pv1_active: bool
-  speicher1_pv2_active: bool
-  speicher1_pv3_active: bool
-  speicher1_pv4_active: bool
-  speicher2_pv1_active: bool
-  speicher2_pv2_active: bool
-  speicher2_pv3_active: bool
-  speicher2_pv4_active: bool
 
