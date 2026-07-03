@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.5.7
+SunEnergy XT Controller v2.5.8
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -436,11 +436,17 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.5.7 startet...")
+    log.info("SunEnergy XT Controller v2.5.8 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
     state = load_state()
+
+    # Reset watchdog history on startup to allow wiring changes without false alarms
+    state["active_inputs"] = {"L1": {}, "L2": {}}
+    state["pv_drop_ticks"] = {}
+    state["sent_alerts"] = {}
+    save_state(state)
 
     DRY_RUN = bool(opts.get("dry_run", True))
     if DRY_RUN:
