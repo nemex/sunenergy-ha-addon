@@ -55,7 +55,57 @@ def load_options() -> dict:
     try:
         if Path(OPTIONS_PATH).exists():
             with open(OPTIONS_PATH) as f:
-                return json.load(f)
+                raw_opts = json.load(f)
+            
+            flat = {}
+            def recurse(d, parent_key=''):
+                for k, v in d.items():
+                    new_key = f"{parent_key}_{k}" if parent_key else k
+                    if isinstance(v, dict):
+                        recurse(v, new_key)
+                    else:
+                        flat[new_key] = v
+            recurse(raw_opts)
+            
+            legacy_mappings = {
+                "speicher1_ip": "sunenergy_ip",
+                "speicher1_soc_sensor": "soc_sensor",
+                "speicher1_gs_entity": "gs_entity",
+                "speicher1_mm_switch": "mm_switch",
+                "speicher1_sa_entity": "sa_entity",
+                "speicher2_ip_l2": "sunenergy_ip_l2",
+                "speicher2_soc_sensor_l2": "soc_sensor_l2",
+                "speicher2_gs_entity_l2": "gs_entity_l2",
+                "speicher2_mm_switch_l2": "mm_switch_l2",
+                "speicher2_sa_entity_l2": "sa_entity_l2",
+                "speicher2_op_l2_sensor": "op_l2_sensor",
+                "shelly_grid_sensor": "grid_sensor",
+                "hoymiles_hms_2000_entity": "hms_2000_entity",
+                "hoymiles_hms_1600_entity": "hms_1600_entity",
+                "hoymiles_hms_2000_power_sensor": "hms_2000_power_sensor",
+                "hoymiles_hms_1600_power_sensor": "hms_1600_power_sensor",
+                "hoymiles_hms_2000_reachable_sensor": "hms_2000_reachable_sensor",
+                "hoymiles_hms_1600_reachable_sensor": "hms_1600_reachable_sensor",
+                "regulation_ha_ip": "ha_ip",
+                "regulation_haus_power_sensor": "haus_power_sensor",
+                "regulation_soc_normal_max": "soc_normal_max",
+                "regulation_soc_min": "soc_min",
+                "regulation_calibration_days": "calibration_days",
+                "regulation_dry_run": "dry_run",
+                "regulation_use_native_pid": "use_native_pid",
+                "regulation_proxy_split_mode": "proxy_split_mode",
+                "regulation_bypass_tomorrow_switch": "bypass_tomorrow_switch",
+                "regulation_manual_feed_in_switch": "manual_feed_in_switch",
+                "regulation_manual_feed_in_target": "manual_feed_in_target",
+                "regulation_manual_feed_in_min_soc": "manual_feed_in_min_soc",
+                "regulation_manual_feed_in_power": "manual_feed_in_power",
+            }
+            
+            for new_k, legacy_k in legacy_mappings.items():
+                if new_k in flat:
+                    flat[legacy_k] = flat[new_k]
+                    
+            return flat
     except Exception:
         pass
     return {}

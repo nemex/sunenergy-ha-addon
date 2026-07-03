@@ -1,127 +1,150 @@
 configuration:
-  speicher1_pv1_active:
-    name: "Speicher 1 — PV 1"
-    description: "Überwachung für Eingang PV1 (MPPT 1) von Speicher 1 aktivieren"
-  speicher1_pv2_active:
-    name: "Speicher 1 — PV 2"
-    description: "Überwachung für Eingang PV2 (MPPT 2) von Speicher 1 aktivieren"
-  speicher1_pv3_active:
-    name: "Speicher 1 — PV 3"
-    description: "Überwachung für Eingang PV3 (MPPT 3) von Speicher 1 aktivieren"
-  speicher1_pv4_active:
-    name: "Speicher 1 — PV 4"
-    description: "Überwachung für Eingang PV4 (MPPT 4) von Speicher 1 aktivieren"
-  speicher2_pv1_active:
-    name: "Speicher 2 — PV 1"
-    description: "Überwachung für Eingang PV1 (MPPT 1) von Speicher 2 aktivieren"
-  speicher2_pv2_active:
-    name: "Speicher 2 — PV 2"
-    description: "Überwachung für Eingang PV2 (MPPT 2) von Speicher 2 aktivieren"
-  speicher2_pv3_active:
-    name: "Speicher 2 — PV 3"
-    description: "Überwachung für Eingang PV3 (MPPT 3) von Speicher 2 aktivieren"
-  speicher2_pv4_active:
-    name: "Speicher 2 — PV 4"
-    description: "Überwachung für Eingang PV4 (MPPT 4) von Speicher 2 aktivieren"
-  telegram_token:
-    name: "Telegram Watchdog — Bot Token"
-    description: "Optional: Der Token deines Telegram-Bots für Benachrichtigungen bei Fehlern"
-  telegram_chat_id:
-    name: "Telegram Watchdog — Chat-ID"
-    description: "Optional: Deine persönliche Telegram Chat-ID"
-  shelly_ip:
-    name: "Shelly IP-Adresse"
-    description: "Die lokale IP-Adresse des Shelly Pro 3EM"
-  sunenergy_ip:
-    name: "Speicher 1 (L1) IP-Adresse"
-    description: "Die lokale IP-Adresse des ersten SunEnergyXT Speichers"
-  ha_ip:
-    name: "Home Assistant IP-Adresse"
-    description: "Die IP-Adresse deines Home Assistant Servers"
-  hms_2000_entity:
-    name: "HMS-2000 Limit-Entität"
-    description: "Home Assistant Entitäts-ID für das Drossellimit des HMS-2000"
-  hms_1600_entity:
-    name: "HMS-1600 Limit-Entität"
-    description: "Home Assistant Entitäts-ID für das Drossellimit des HMS-1600"
-  grid_sensor:
-    name: "Netz-Leistungssensor (Shelly)"
-    description: "Der Leistungssensor des Shelly Pro 3EM (in Watt)"
-  soc_sensor:
-    name: "Speicher 1 SOC-Sensor"
-    description: "Der Batterie-Ladezustands-Sensor von Speicher 1"
-  gs_entity:
-    name: "Speicher 1 GS-Entität"
-    description: "Entitäts-ID zum Setzen des Grid Setpoints für Speicher 1"
-  mm_switch:
-    name: "Speicher 1 Lokaler Nulleinspeise-Schalter"
-    description: "Schalter zum Ein-/Ausschalten des lokalen Nulleinspeisemodus von Speicher 1"
-  sa_entity:
-    name: "Speicher 1 System-Ladegrenze"
-    description: "Entitäts-ID für das Speicherlimit (System-Ladegrenze) von Speicher 1"
-  haus_power_sensor:
-    name: "Hausverbrauch Sensor"
-    description: "Home Assistant Sensor für den aktuellen Gesamt-Hausverbrauch"
-  hms_2000_power_sensor:
-    name: "Hoymiles HMS-2000 Leistungssensor"
-    description: "Sensor für die aktuelle Leistung des HMS-2000"
-  hms_1600_power_sensor:
-    name: "Hoymiles HMS-1600 Leistungssensor"
-    description: "Sensor für die aktuelle Leistung des HMS-1600"
-  hms_2000_reachable_sensor:
-    name: "Hoymiles HMS-2000 Erreichbarkeit"
-    description: "Binary-Sensor, der angibt ob der HMS-2000 erreichbar ist"
-  hms_1600_reachable_sensor:
-    name: "Hoymiles HMS-1600 Erreichbarkeit"
-    description: "Binary-Sensor, der angibt ob der HMS-1600 erreichbar ist"
-  soc_normal_max:
-    name: "Maximaler Normal-SOC"
-    description: "SOC-Limit für den normalen Tagesbetrieb (Standard: 95%)"
-  soc_min:
-    name: "Minimaler SOC"
-    description: "Entladegrenze für die Akkus (Standard: 10%)"
-  calibration_days:
-    name: "Kalibrierungs-Intervall (Tage)"
-    description: "Intervall, in dem die Akkus voll aufgeladen werden (Standard: 15 Tage)"
-  dry_run:
-    name: "Testmodus (Dry-Run)"
-    description: "Wenn aktiv, werden Berechnungen durchgeführt aber keine Befehle an die Geräte gesendet"
-  manual_feed_in_switch:
-    name: "Manuelle Einspeisung Schalter"
-    description: "Schalter zum Aktivieren der manuellen Volleinspeisung"
-  manual_feed_in_target:
-    name: "Manuelle Einspeisung Ziel (kWh)"
-    description: "Energiemenge, die bei Volleinspeisung abgegeben werden soll"
-  manual_feed_in_min_soc:
-    name: "Manuelle Einspeisung Min. SOC"
-    description: "Ladezustand, der bei Volleinspeisung mindestens verbleiben muss"
-  manual_feed_in_power:
-    name: "Manuelle Einspeisung Leistung (W)"
-    description: "Konstante Leistung für die manuelle Einspeisung"
-  bypass_tomorrow_switch:
-    name: "Bypass-Schalter (Nulleinspeisung aussetzen)"
-    description: "Schalter zum Aussetzen der Nulleinspeisung für dauerhafte Einspeisung"
-  sunenergy_ip_l2:
-    name: "Speicher 2 (L2) IP-Adresse"
-    description: "IP-Adresse des optionalen zweiten Speichers"
-  soc_sensor_l2:
-    name: "Speicher 2 SOC-Sensor"
-    description: "Der Batterie-Ladezustands-Sensor von Speicher 2"
-  gs_entity_l2:
-    name: "Speicher 2 GS-Entität"
-    description: "Entitäts-ID zum Setzen des Grid Setpoints für Speicher 2"
-  mm_switch_l2:
-    name: "Speicher 2 Lokaler Nulleinspeise-Schalter"
-    description: "Schalter zum Ein-/Ausschalten des lokalen Nulleinspeisemodus von Speicher 2"
-  sa_entity_l2:
-    name: "Speicher 2 System-Ladegrenze"
-    description: "Entitäts-ID für das Speicherlimit von Speicher 2"
-  op_l2_sensor:
-    name: "Speicher 2 Shelly Leistungssensor"
-    description: "Der Shelly 1PM Leistungssensor von Speicher 2"
-  use_native_pid:
-    name: "Native PID-Regelung verwenden"
-    description: "Nutzt den in der Firmware eingebauten PID-Regler (via Proxy-Server)"
-  proxy_split_mode:
-    name: "Aufteilungsmodus"
-    description: "Wie Leistungen auf Speicher 1 und 2 aufgeteilt werden (soc oder fest)"
+  speicher1:
+    name: "Speicher 1 (L1) Konfiguration"
+    fields:
+      pv1_active:
+        name: "PV 1"
+        description: "Überwachung für Eingang PV1 (MPPT 1) von Speicher 1 aktivieren"
+      pv2_active:
+        name: "PV 2"
+        description: "Überwachung für Eingang PV2 (MPPT 2) von Speicher 1 aktivieren"
+      pv3_active:
+        name: "PV 3"
+        description: "Überwachung für Eingang PV3 (MPPT 3) von Speicher 1 aktivieren"
+      pv4_active:
+        name: "PV 4"
+        description: "Überwachung für Eingang PV4 (MPPT 4) von Speicher 1 aktivieren"
+      ip:
+        name: "IP-Adresse"
+        description: "Die lokale IP-Adresse des ersten SunEnergyXT Speichers"
+      soc_sensor:
+        name: "SOC-Sensor"
+        description: "Der Batterie-Ladezustands-Sensor von Speicher 1"
+      gs_entity:
+        name: "GS-Entität"
+        description: "Entitäts-ID zum Setzen des Grid Setpoints für Speicher 1"
+      mm_switch:
+        name: "Lokaler Nulleinspeise-Schalter"
+        description: "Schalter zum Ein-/Ausschalten des lokalen Nulleinspeisemodus von Speicher 1"
+      sa_entity:
+        name: "System-Ladegrenze"
+        description: "Entitäts-ID für das Speicherlimit (System-Ladegrenze) von Speicher 1"
+
+  speicher2:
+    name: "Speicher 2 (L2) Konfiguration"
+    fields:
+      pv1_active:
+        name: "PV 1"
+        description: "Überwachung für Eingang PV1 (MPPT 1) von Speicher 2 aktivieren"
+      pv2_active:
+        name: "PV 2"
+        description: "Überwachung für Eingang PV2 (MPPT 2) von Speicher 2 aktivieren"
+      pv3_active:
+        name: "PV 3"
+        description: "Überwachung für Eingang PV3 (MPPT 3) von Speicher 2 aktivieren"
+      pv4_active:
+        name: "PV 4"
+        description: "Überwachung für Eingang PV4 (MPPT 4) von Speicher 2 aktivieren"
+      ip_l2:
+        name: "IP-Adresse"
+        description: "IP-Adresse des optionalen zweiten Speichers"
+      soc_sensor_l2:
+        name: "SOC-Sensor"
+        description: "Der Batterie-Ladezustands-Sensor von Speicher 2"
+      gs_entity_l2:
+        name: "GS-Entität"
+        description: "Entitäts-ID zum Setzen des Grid Setpoints für Speicher 2"
+      mm_switch_l2:
+        name: "Lokaler Nulleinspeise-Schalter"
+        description: "Schalter zum Ein-/Ausschalten des lokalen Nulleinspeisemodus von Speicher 2"
+      sa_entity_l2:
+        name: "System-Ladegrenze"
+        description: "Entitäts-ID für das Speicherlimit von Speicher 2"
+      op_l2_sensor:
+        name: "Shelly Leistungssensor"
+        description: "Der Shelly 1PM Leistungssensor von Speicher 2"
+
+  shelly:
+    name: "Shelly 3EM Konfiguration"
+    fields:
+      ip:
+        name: "Shelly IP-Adresse"
+        description: "Die lokale IP-Adresse des Shelly Pro 3EM"
+      grid_sensor:
+        name: "Netz-Leistungssensor"
+        description: "Der Leistungssensor des Shelly Pro 3EM (in Watt)"
+
+  hoymiles:
+    name: "Externe Wechselrichter (Hoymiles) Konfiguration"
+    fields:
+      hms_2000_entity:
+        name: "HMS-2000 Limit-Entität"
+        description: "Home Assistant Entitäts-ID für das Drossellimit des HMS-2000"
+      hms_1600_entity:
+        name: "HMS-1600 Limit-Entität"
+        description: "Home Assistant Entitäts-ID für das Drossellimit des HMS-1600"
+      hms_2000_power_sensor:
+        name: "HMS-2000 Leistungssensor"
+        description: "Sensor für die aktuelle Leistung des HMS-2000"
+      hms_1600_power_sensor:
+        name: "HMS-1600 Leistungssensor"
+        description: "Sensor für die aktuelle Leistung des HMS-1600"
+      hms_2000_reachable_sensor:
+        name: "HMS-2000 Erreichbarkeit"
+        description: "Binary-Sensor, der angibt ob der HMS-2000 erreichbar ist"
+      hms_1600_reachable_sensor:
+        name: "HMS-1600 Erreichbarkeit"
+        description: "Binary-Sensor, der angibt ob der HMS-1600 erreichbar ist"
+
+  telegram:
+    name: "Telegram Watchdog Konfiguration"
+    fields:
+      token:
+        name: "Telegram Bot Token"
+        description: "Optional: Der Token deines Telegram-Bots für Benachrichtigungen bei Fehlern"
+      chat_id:
+        name: "Telegram Chat-ID"
+        description: "Optional: Deine persönliche Telegram Chat-ID"
+
+  regulation:
+    name: "Allgemeine Regelungs-Konfiguration"
+    fields:
+      ha_ip:
+        name: "Home Assistant IP-Adresse"
+        description: "Die IP-Adresse deines Home Assistant Servers"
+      haus_power_sensor:
+        name: "Hausverbrauch Sensor"
+        description: "Home Assistant Sensor für den aktuellen Gesamt-Hausverbrauch"
+      soc_normal_max:
+        name: "Maximaler Normal-SOC"
+        description: "SOC-Limit für den normalen Tagesbetrieb (Standard: 95%)"
+      soc_min:
+        name: "Minimaler SOC"
+        description: "Entladegrenze für die Akkus (Standard: 10%)"
+      calibration_days:
+        name: "Kalibrierungs-Intervall (Tage)"
+        description: "Intervall, in dem die Akkus voll aufgeladen werden (Standard: 15 Tage)"
+      dry_run:
+        name: "Testmodus (Dry-Run)"
+        description: "Wenn aktiv, werden Berechnungen durchgeführt aber keine Befehle an die Geräte gesendet"
+      use_native_pid:
+        name: "Native PID-Regelung verwenden"
+        description: "Nutzt den in der Firmware eingebauten PID-Regler (via Proxy-Server)"
+      proxy_split_mode:
+        name: "Aufteilungsmodus"
+        description: "Wie Leistungen auf Speicher 1 und 2 aufgeteilt werden (soc oder fest)"
+      bypass_tomorrow_switch:
+        name: "Bypass-Schalter (Nulleinspeisung aussetzen)"
+        description: "Schalter zum Aussetzen der Nulleinspeisung für dauerhafte Einspeisung"
+      manual_feed_in_switch:
+        name: "Manuelle Einspeisung Schalter"
+        description: "Schalter zum Aktivieren der manuellen Volleinspeisung"
+      manual_feed_in_target:
+        name: "Manuelle Einspeisung Ziel (kWh)"
+        description: "Energiemenge, die bei Volleinspeisung abgegeben werden soll"
+      manual_feed_in_min_soc:
+        name: "Manuelle Einspeisung Min. SOC"
+        description: "Ladezustand, der bei Volleinspeisung mindestens verbleiben muss"
+      manual_feed_in_power:
+        name: "Manuelle Einspeisung Leistung (W)"
+        description: "Konstante Leistung für die manuelle Einspeisung"

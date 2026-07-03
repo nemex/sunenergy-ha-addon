@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "2.6.2"
+version: "2.7.0"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -29,90 +29,100 @@ ports:
 ports_description:
   8765/tcp: Web UI (direkter Zugriff, optional – Ingress ist aktiv)
 options:
-  speicher1_pv1_active: true
-  speicher1_pv2_active: true
-  speicher1_pv3_active: true
-  speicher1_pv4_active: true
-  speicher2_pv1_active: false
-  speicher2_pv2_active: false
-  speicher2_pv3_active: false
-  speicher2_pv4_active: false
-  shelly_ip: "192.168.178.98"
-  sunenergy_ip: "192.168.178.94"
-  ha_ip: "192.168.178.132"
-  hms_2000_entity: "number.hoymiles_hms_2000_4t_limit_nonpersistent_absolute"
-  hms_1600_entity: "number.hoymiles_hms_1600_4t_limit_nonpersistent_absolute"
-  grid_sensor: "sensor.shellypro3em_leistung"
-  soc_sensor: "sensor.sunenergyxt_500_pro_system_speicherlevel"
-  gs_entity: "number.sunenergyxt_500_pro_sollwert_leistung_netzanschluss"
-  mm_switch: "switch.sunenergyxt_500_pro_lokaler_nulleinspeisemodus"
-  sa_entity: "number.sunenergyxt_500_pro_system_ladegrenze"
-  haus_power_sensor: "sensor.hausverbrauch_aktuell"
-  hms_2000_power_sensor: "sensor.hoymiles_hms_2000_4t_power"
-  hms_1600_power_sensor: "sensor.hoymiles_hms_1600_4t_power"
-  hms_2000_reachable_sensor: "binary_sensor.hoymiles_hms_2000_4t_reachable"
-  hms_1600_reachable_sensor: "binary_sensor.hoymiles_hms_1600_4t_reachable"
-  soc_normal_max: 95
-  soc_min: 10
-  calibration_days: 15
-  dry_run: false
-  manual_feed_in_switch: "input_boolean.sunenergy_manual_feed_in"
-  manual_feed_in_target: 1.0
-  manual_feed_in_min_soc: 90
-  manual_feed_in_power: 3600
-  bypass_tomorrow_switch: "input_boolean.sunenergy_bypass_tomorrow"
-  # L2 Speicher (optional)
-  sunenergy_ip_l2: "192.168.178.122"
-  soc_sensor_l2: "sensor.sunenergyxt_500_pro_l2_system_speicherlevel"
-  gs_entity_l2: "number.sunenergyxt_500_pro_l2_sollwert_leistung_netzanschluss"
-  mm_switch_l2: "switch.sunenergyxt_500_pro_l2_lokaler_nulleinspeisemodus"
-  sa_entity_l2: "number.sunenergyxt_500_pro_l2_system_ladegrenze"
-  op_l2_sensor: "sensor.shellypro1pm_sunenergy_l2_leistung"
-  use_native_pid: false
-  telegram_token: ""
-  telegram_chat_id: ""
+  speicher1:
+    pv1_active: true
+    pv2_active: true
+    pv3_active: true
+    pv4_active: true
+    ip: "192.168.178.94"
+    soc_sensor: "sensor.sunenergyxt_500_pro_system_speicherlevel"
+    gs_entity: "number.sunenergyxt_500_pro_sollwert_leistung_netzanschluss"
+    mm_switch: "switch.sunenergyxt_500_pro_lokaler_nulleinspeisemodus"
+    sa_entity: "number.sunenergyxt_500_pro_system_ladegrenze"
+  speicher2:
+    pv1_active: false
+    pv2_active: false
+    pv3_active: false
+    pv4_active: false
+    ip_l2: "192.168.178.122"
+    soc_sensor_l2: "sensor.sunenergyxt_500_pro_l2_system_speicherlevel"
+    gs_entity_l2: "number.sunenergyxt_500_pro_l2_sollwert_leistung_netzanschluss"
+    mm_switch_l2: "switch.sunenergyxt_500_pro_l2_lokaler_nulleinspeisemodus"
+    sa_entity_l2: "number.sunenergyxt_500_pro_l2_system_ladegrenze"
+    op_l2_sensor: "sensor.shellypro1pm_sunenergy_l2_leistung"
+  shelly:
+    ip: "192.168.178.98"
+    grid_sensor: "sensor.shellypro3em_leistung"
+  hoymiles:
+    hms_2000_entity: "number.hoymiles_hms_2000_4t_limit_nonpersistent_absolute"
+    hms_1600_entity: "number.hoymiles_hms_1600_4t_limit_nonpersistent_absolute"
+    hms_2000_power_sensor: "sensor.hoymiles_hms_2000_4t_power"
+    hms_1600_power_sensor: "sensor.hoymiles_hms_1600_4t_power"
+    hms_2000_reachable_sensor: "binary_sensor.hoymiles_hms_2000_4t_reachable"
+    hms_1600_reachable_sensor: "binary_sensor.hoymiles_hms_1600_4t_reachable"
+  telegram:
+    token: ""
+    chat_id: ""
+  regulation:
+    ha_ip: "192.168.178.132"
+    haus_power_sensor: "sensor.hausverbrauch_aktuell"
+    soc_normal_max: 95
+    soc_min: 10
+    calibration_days: 15
+    dry_run: false
+    use_native_pid: false
+    proxy_split_mode: "soc"
+    bypass_tomorrow_switch: "input_boolean.sunenergy_bypass_tomorrow"
+    manual_feed_in_switch: "input_boolean.sunenergy_manual_feed_in"
+    manual_feed_in_target: 1.0
+    manual_feed_in_min_soc: 90
+    manual_feed_in_power: 3600
 schema:
-  speicher1_pv1_active: bool
-  speicher1_pv2_active: bool
-  speicher1_pv3_active: bool
-  speicher1_pv4_active: bool
-  speicher2_pv1_active: bool
-  speicher2_pv2_active: bool
-  speicher2_pv3_active: bool
-  speicher2_pv4_active: bool
-  shelly_ip: str
-  sunenergy_ip: str
-  ha_ip: str
-  hms_2000_entity: str
-  hms_1600_entity: str
-  grid_sensor: str
-  soc_sensor: str
-  gs_entity: str
-  mm_switch: str
-  sa_entity: str
-  haus_power_sensor: str
-  hms_2000_power_sensor: str
-  hms_1600_power_sensor: str
-  hms_2000_reachable_sensor: str
-  hms_1600_reachable_sensor: str
-  soc_normal_max: int
-  soc_min: int
-  calibration_days: int
-  dry_run: bool
-  manual_feed_in_switch: str
-  manual_feed_in_target: float
-  manual_feed_in_min_soc: float
-  manual_feed_in_power: int
-  bypass_tomorrow_switch: str
-  # L2 Speicher Schema (optional, erlaubt leere Strings)
-  sunenergy_ip_l2: str?
-  soc_sensor_l2: str?
-  gs_entity_l2: str?
-  mm_switch_l2: str?
-  sa_entity_l2: str?
-  op_l2_sensor: str?
-  use_native_pid: bool
-  proxy_split_mode: str
-  telegram_token: str?
-  telegram_chat_id: str?
-
+  speicher1:
+    pv1_active: bool
+    pv2_active: bool
+    pv3_active: bool
+    pv4_active: bool
+    ip: str
+    soc_sensor: str
+    gs_entity: str
+    mm_switch: str
+    sa_entity: str
+  speicher2:
+    pv1_active: bool
+    pv2_active: bool
+    pv3_active: bool
+    pv4_active: bool
+    ip_l2: str?
+    soc_sensor_l2: str?
+    gs_entity_l2: str?
+    mm_switch_l2: str?
+    sa_entity_l2: str?
+    op_l2_sensor: str?
+  shelly:
+    ip: str
+    grid_sensor: str
+  hoymiles:
+    hms_2000_entity: str
+    hms_1600_entity: str
+    hms_2000_power_sensor: str
+    hms_1600_power_sensor: str
+    hms_2000_reachable_sensor: str
+    hms_1600_reachable_sensor: str
+  telegram:
+    token: str?
+    chat_id: str?
+  regulation:
+    ha_ip: str
+    haus_power_sensor: str
+    soc_normal_max: int
+    soc_min: int
+    calibration_days: int
+    dry_run: bool
+    use_native_pid: bool
+    proxy_split_mode: str
+    bypass_tomorrow_switch: str
+    manual_feed_in_switch: str
+    manual_feed_in_target: float
+    manual_feed_in_min_soc: float
+    manual_feed_in_power: int
