@@ -291,6 +291,24 @@ function makeChart(id, datasets, yLabel) {
   return new Chart(document.getElementById(id), {
     type: 'line',
     data: { labels: [], datasets },
+    plugins: id === 'chart-grid' ? [{
+      id: 'zeroLine',
+      afterDraw: (chart) => {
+        const yScale = chart.scales.y;
+        const zeroY = yScale.getPixelForValue(0);
+        if (zeroY >= yScale.top && zeroY <= yScale.bottom) {
+          const ctx = chart.ctx;
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(chart.chartArea.left, zeroY);
+          ctx.lineTo(chart.chartArea.right, zeroY);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }] : [],
     options: {
       responsive: true,
       animation: false,
@@ -756,6 +774,18 @@ class UIHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(b"Kein Textlog vorhanden")
 
+        elif self.path == "/api/pv_modules":
+            cfg_path = "/data/pv_modules.json"
+            if os.path.exists(cfg_path):
+                try:
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    self._json(data)
+                except Exception as e:
+                    self._json({"error": str(e)})
+            else:
+                self._json({})
+
         elif self.path == "/log":
             if os.path.exists(CSV_PATH):
                 with open(CSV_PATH, "r") as f:
@@ -787,6 +817,29 @@ class UIHandler(BaseHTTPRequestHandler):
                 if os.path.exists(CSV_PATH):
                     os.remove(CSV_PATH)
                 self._json({"status": "ok", "message": "Log gelöscht"})
+            except Exception as e:
+                self._json({"status": "error", "message": str(e)})
+        elif self.path == "/api/pv_modules":
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                post_data = self.rfile.read(content_length).decode('utf-8')
+                data = json.loads(post_data)
+                
+                cfg_path = "/data/pv_modules.json"
+                existing = {}
+                if os.path.exists(cfg_path):
+                    try:
+                        with open(cfg_path, "r", encoding="utf-8") as f:
+                            existing = json.load(f)
+                    except Exception:
+                        pass
+                
+                existing.update(data)
+                
+                with open(cfg_path, "w", encoding="utf-8") as f:
+                    json.dump(existing, f, indent=2)
+                
+                self._json({"status": "ok", "message": "Config gespeichert"})
             except Exception as e:
                 self._json({"status": "error", "message": str(e)})
         else:

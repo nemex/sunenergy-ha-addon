@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.8.1
+- **Serverseitige Speicherung der PV-Modulkonfigurationen**: Die eingetragenen Daten der PV-Module (Modell, Nennleistung) werden nun dauerhaft in der Datei `/data/pv_modules.json` auf dem Server gesichert. Dies verhindert Datenverluste bei Add-on-Updates oder Cache-Löschungen.
+- **Null-Linie im Live-Dashboard**: Im Haupt-Dashboard wurde im Netzleistungsdiagramm eine gestrichelte, weiße Referenzlinie bei `0 W` hinzugefügt, um die Regelungspräzision der Nulleinspeisung visuell besser beurteilen zu können.
+- **Live-Log Autoscroll-Standardwert**: Der Standardwert für die automatische Scrollfunktion im Live-Terminal wurde von `AN` auf `AUS` geändert, um das manuelle Lesen älterer Logs bei aktivem Taktbetrieb zu erleichtern.
+
 ## v2.8.0
 - **Skalierung von PV-Spannung und Stromstärke**: Die vom SunEnergy-Speicher gelieferten Rohwerte für Spannung (V) und Strom (A) der PV-Eingänge (z.B. 368 für 36.8V und 51 für 5.1A) werden nun im Dashboard-Tab „PV Module“ korrekt durch 10.0 geteilt, um die realen Werte mit Dezimalstelle anzuzeigen.
 

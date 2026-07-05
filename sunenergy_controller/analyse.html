@@ -122,20 +122,7 @@
         };
 
         // --- DevicePVPanel-Komponente für MPPT-Kanalüberwachung ---
-        const DevicePVPanel = ({ title, details, activePorts, deviceId }) => {
-            const [moduleConfigs, setModuleConfigs] = React.useState(() => {
-                const configs = {};
-                for (let i = 1; i <= 4; i++) {
-                    try {
-                        const saved = localStorage.getItem(`pv_module_cfg_${deviceId}_${i}`);
-                        configs[i] = saved ? JSON.parse(saved) : { model: "", peak: 0 };
-                    } catch (e) {
-                        configs[i] = { model: "", peak: 0 };
-                    }
-                }
-                return configs;
-            });
-
+        const DevicePVPanel = ({ title, details, activePorts, deviceId, configs, onSave }) => {
             const [editingPort, setEditingPort] = React.useState(null);
             const [tempModel, setTempModel] = React.useState("");
             const [tempPeak, setTempPeak] = React.useState("");
@@ -143,17 +130,15 @@
             const handleSave = (port) => {
                 const peakNum = parseFloat(tempPeak) || 0;
                 const newCfg = { model: tempModel.trim(), peak: peakNum };
-                
-                const newConfigs = { ...moduleConfigs, [port]: newCfg };
-                setModuleConfigs(newConfigs);
-                localStorage.setItem(`pv_module_cfg_${deviceId}_${port}`, JSON.stringify(newCfg));
+                onSave(`${deviceId}_${port}`, newCfg);
                 setEditingPort(null);
             };
 
             const handleStartEdit = (port) => {
                 setEditingPort(port);
-                setTempModel(moduleConfigs[port].model);
-                setTempPeak(moduleConfigs[port].peak || "");
+                const cfg = configs[`${deviceId}_${port}`] || { model: "", peak: 0 };
+                setTempModel(cfg.model);
+                setTempPeak(cfg.peak || "");
             };
 
             return (
@@ -175,7 +160,7 @@
                             // Port gilt als aktiv, wenn in HA-Optionen aktiv ODER wenn aktuell Spannung > 10V anliegt
                             const isActive = isConfiguredActive || v > 10.0;
                             
-                            const cfg = moduleConfigs[port];
+                            const cfg = (configs && configs[`${deviceId}_${port}`]) || { model: "", peak: 0 };
                             const peak = cfg?.peak || 0;
                             const efficiency = peak > 0 ? (w / peak) * 100 : 0;
 
@@ -276,7 +261,7 @@
             
             const [liveState, setLiveState] = useState(null);
             const [textLog, setTextLog] = useState("");
-            const [autoScrollLog, setAutoScrollLog] = useState(true);
+            const [autoScrollLog, setAutoScrollLog] = useState(false);
             const [logSearch, setLogSearch] = useState("");
             const terminalEndRef = useRef(null);
 
@@ -286,6 +271,35 @@
                 if (rawData && rawData.some(r => r.soc_l2 > 0)) return true;
                 return false;
             }, [liveState, rawData]);
+
+            // PV-Module Configs State & Persistence
+            const [pvConfigs, setPvConfigs] = useState({});
+
+            useEffect(() => {
+                fetch("api/pv_modules")
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data && !data.error) {
+                            setPvConfigs(data);
+                        }
+                    })
+                    .catch(e => console.error("Fehler beim Laden der PV-Module-Configs:", e));
+            }, []);
+
+            const savePvConfig = (key, cfg) => {
+                const newConfigs = { ...pvConfigs, [key]: cfg };
+                setPvConfigs(newConfigs);
+                
+                // Backup in localStorage
+                localStorage.setItem(`pv_module_cfg_${key}`, JSON.stringify(cfg));
+                
+                // POST an Server senden
+                fetch("api/pv_modules", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ [key]: cfg })
+                }).catch(e => console.error("Fehler beim Speichern der PV-Module-Config:", e));
+            };
 
             // Einstellungen
             const [energyPrice, setEnergyPrice] = useState(0.35);
@@ -1097,6 +1111,8 @@
                                                 details={liveState?.pv_details_l1}
                                                 activePorts={liveState?.active_inputs?.L1}
                                                 deviceId="L1"
+                                                configs={pvConfigs}
+                                                onSave={savePvConfig}
                                             />
                                             {/* Speicher 2 (L2) PV Module */}
                                             {hasL2 && (
@@ -1105,6 +1121,8 @@
                                                     details={liveState?.pv_details_l2}
                                                     activePorts={liveState?.active_inputs?.L2}
                                                     deviceId="L2"
+                                                    configs={pvConfigs}
+                                                    onSave={savePvConfig}
                                                 />
                                             )}
                                         </div>
