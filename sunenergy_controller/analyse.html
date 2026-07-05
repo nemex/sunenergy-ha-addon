@@ -280,6 +280,13 @@
             const [logSearch, setLogSearch] = useState("");
             const terminalEndRef = useRef(null);
 
+            // Bestimme dynamisch, ob ein zweiter Speicher (L2) vorhanden ist
+            const hasL2 = useMemo(() => {
+                if (liveState && liveState.has_l2) return true;
+                if (rawData && rawData.some(r => r.soc_l2 > 0)) return true;
+                return false;
+            }, [liveState, rawData]);
+
             // Einstellungen
             const [energyPrice, setEnergyPrice] = useState(0.35);
             const [systemCost, setSystemCost] = useState(1500);

@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.7.9
+- **Fehlerbehebung hasL2 Definition**: Die Variable `hasL2` wurde im JSX-Code an mehreren Stellen referenziert, war aber im übergeordneten JavaScript-Scope nicht deklariert. Dies führte zu einem Laufzeitfehler (`ReferenceError: hasL2 is not defined`) und einer leeren weißen Seite. Die Variable wird nun über einen reaktiven `useMemo`-Hook dynamisch abgeleitet und deklariert.
+
 ## v2.7.8
 - **Fehlerbehebung ungeschlossenes Div im Header**: Ein nicht geschlossenes `<div>`-Element in der Kopfzeile, welches mit der Einbindung der Speicher-Live-Statusanzeige eingeführt wurde und einen JSX-Kompilierungsfehler auslöste, wurde behoben.
 
