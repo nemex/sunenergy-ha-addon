@@ -735,6 +735,27 @@ class UIHandler(BaseHTTPRequestHandler):
             rows = get_csv_data(100)
             self._json({"rows": rows})
 
+        elif self.path == "/api/textlog":
+            # Addon-Textlog auslesen
+            log_path = "/data/controller.log"
+            if os.path.exists(log_path):
+                try:
+                    # Letzte 200 Zeilen lesen
+                    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = f.readlines()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write("".join(lines[-200:]).encode("utf-8"))
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(f"Fehler beim Lesen des Logs: {e}".encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Kein Textlog vorhanden")
+
         elif self.path == "/log":
             if os.path.exists(CSV_PATH):
                 with open(CSV_PATH, "r") as f:

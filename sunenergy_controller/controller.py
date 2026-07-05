@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.7.5
+SunEnergy XT Controller v2.7.6
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -26,9 +26,22 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+from logging.handlers import RotatingFileHandler
+
+# Rotating file handler (max 200KB, keep 1 backup)
+try:
+    file_handler = RotatingFileHandler(
+        "/data/controller.log", maxBytes=200 * 1024, backupCount=1, encoding="utf-8"
+    )
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    handlers = [logging.StreamHandler(), file_handler]
+except Exception:
+    handlers = [logging.StreamHandler()]
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=handlers
 )
 log = logging.getLogger("sunenergy_controller")
 
@@ -497,7 +510,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.7.5 startet...")
+    log.info("SunEnergy XT Controller v2.7.6 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -936,6 +949,21 @@ def main():
             state["pv_l2"] = pv_l2
             state["iw_l2"] = iw_l2
             state["pb_l2"] = pb_l2
+
+            # PV Module Eingangsdetails sichern (Spannung, Strom, Leistung)
+            pv_details_l1 = {}
+            for i in range(1, 5):
+                pv_details_l1[f"pv{i}_v"] = safe_float(se_data, f"VP{i}", 0.0) if se_data else 0.0
+                pv_details_l1[f"pv{i}_a"] = safe_float(se_data, f"II{i}", 0.0) if se_data else 0.0
+                pv_details_l1[f"pv{i}_w"] = safe_float(se_data, f"PV{i}", 0.0) if se_data else 0.0
+            state["pv_details_l1"] = pv_details_l1
+
+            pv_details_l2 = {}
+            for i in range(1, 5):
+                pv_details_l2[f"pv{i}_v"] = safe_float(se_data_l2, f"VP{i}", 0.0) if se_data_l2 else 0.0
+                pv_details_l2[f"pv{i}_a"] = safe_float(se_data_l2, f"II{i}", 0.0) if se_data_l2 else 0.0
+                pv_details_l2[f"pv{i}_w"] = safe_float(se_data_l2, f"PV{i}", 0.0) if se_data_l2 else 0.0
+            state["pv_details_l2"] = pv_details_l2
 
             # --- PV-Eingangs-Überwachung (MPPT-Watchdog) ---
             if "active_inputs" not in state:

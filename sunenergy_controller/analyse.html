@@ -121,6 +121,146 @@
             );
         };
 
+        // --- DevicePVPanel-Komponente für MPPT-Kanalüberwachung ---
+        const DevicePVPanel = ({ title, details, activePorts, deviceId }) => {
+            const [moduleConfigs, setModuleConfigs] = React.useState(() => {
+                const configs = {};
+                for (let i = 1; i <= 4; i++) {
+                    try {
+                        const saved = localStorage.getItem(`pv_module_cfg_${deviceId}_${i}`);
+                        configs[i] = saved ? JSON.parse(saved) : { model: "", peak: 0 };
+                    } catch (e) {
+                        configs[i] = { model: "", peak: 0 };
+                    }
+                }
+                return configs;
+            });
+
+            const [editingPort, setEditingPort] = React.useState(null);
+            const [tempModel, setTempModel] = React.useState("");
+            const [tempPeak, setTempPeak] = React.useState("");
+
+            const handleSave = (port) => {
+                const peakNum = parseFloat(tempPeak) || 0;
+                const newCfg = { model: tempModel.trim(), peak: peakNum };
+                
+                const newConfigs = { ...moduleConfigs, [port]: newCfg };
+                setModuleConfigs(newConfigs);
+                localStorage.setItem(`pv_module_cfg_${deviceId}_${port}`, JSON.stringify(newCfg));
+                setEditingPort(null);
+            };
+
+            const handleStartEdit = (port) => {
+                setEditingPort(port);
+                setTempModel(moduleConfigs[port].model);
+                setTempPeak(moduleConfigs[port].peak || "");
+            };
+
+            return (
+                <div className="bg-[#111822] border-[#1e2d3d] border p-6 rounded-2xl shadow-sm space-y-6">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                        <h2 className="text-md font-black tracking-tight text-slate-100 flex items-center gap-2">
+                            <Icon name="sliders-horizontal" className="text-amber-500" /> {title}
+                        </h2>
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">4 MPPT Kanäle</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {[1, 2, 3, 4].map(port => {
+                            const v = details ? (details[`pv${port}_v`] || 0) : 0;
+                            const a = details ? (details[`pv${port}_a`] || 0) : 0;
+                            const w = details ? (details[`pv${port}_w`] || 0) : 0;
+                            const isConfiguredActive = activePorts ? !!activePorts[String(port)] : false;
+                            
+                            // Port gilt als aktiv, wenn in HA-Optionen aktiv ODER wenn aktuell Spannung > 10V anliegt
+                            const isActive = isConfiguredActive || v > 10.0;
+                            
+                            const cfg = moduleConfigs[port];
+                            const peak = cfg?.peak || 0;
+                            const efficiency = peak > 0 ? (w / peak) * 100 : 0;
+
+                            return (
+                                <div key={port} className={`bg-[#0c121d] border border-slate-800/80 p-4 rounded-xl flex flex-col justify-between ${!isActive ? 'opacity-40' : ''}`}>
+                                    <div>
+                                        <div className="flex items-center justify-between mb-3">
+                                            <span className="text-xs font-bold text-slate-200">Eingang PV {port}</span>
+                                            {isActive ? (
+                                                <span className="text-[8px] font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-900/60 uppercase">Aktiv</span>
+                                            ) : (
+                                                <span className="text-[8px] font-bold text-slate-500 bg-slate-800/40 px-2 py-0.5 rounded border border-slate-850 uppercase">Inaktiv</span>
+                                            )}
+                                        </div>
+
+                                        {editingPort === port ? (
+                                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2 mb-3">
+                                                <input
+                                                    type="text"
+                                                    placeholder="Modul-Modell (z.B. Trina 440W)"
+                                                    value={tempModel}
+                                                    onChange={(e) => setTempModel(e.target.value)}
+                                                    className="w-full bg-slate-950 border border-slate-700 text-slate-100 text-xs px-2 py-1 rounded outline-none focus:border-amber-500"
+                                                />
+                                                <input
+                                                    type="number"
+                                                    placeholder="Nennleistung in W (z.B. 440)"
+                                                    value={tempPeak}
+                                                    onChange={(e) => setTempPeak(e.target.value)}
+                                                    className="w-full bg-slate-950 border border-slate-700 text-slate-100 text-xs px-2 py-1 rounded outline-none focus:border-amber-500"
+                                                />
+                                                <div className="flex justify-end gap-2 pt-1">
+                                                    <button onClick={() => setEditingPort(null)} className="text-[10px] text-slate-400 hover:text-slate-200 px-2 py-0.5">Abbrechen</button>
+                                                    <button onClick={() => handleSave(port)} className="text-[10px] bg-amber-500 text-slate-950 font-bold px-2.5 py-0.5 rounded">Speichern</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center justify-between text-[10px] text-slate-400 border-b border-slate-900 pb-2 mb-3">
+                                                <span className="truncate max-w-[120px] font-medium text-slate-300">{cfg?.model || "Keine Moduldaten"}</span>
+                                                <button onClick={() => handleStartEdit(port)} className="text-amber-500 hover:text-amber-400 font-bold text-[9px] uppercase tracking-wide">Edit</button>
+                                            </div>
+                                        )}
+
+                                        <div className="space-y-2">
+                                            {/* Spannung */}
+                                            <div className="flex justify-between items-center text-[11px]">
+                                                <span className="text-slate-450">Spannung</span>
+                                                <span className="font-bold text-slate-200">{v.toFixed(1)} V</span>
+                                            </div>
+                                            {/* Strom */}
+                                            <div className="flex justify-between items-center text-[11px]">
+                                                <span className="text-slate-450">Strom</span>
+                                                <span className="font-bold text-slate-200">{a.toFixed(2)} A</span>
+                                            </div>
+                                            {/* Leistung */}
+                                            <div className="flex justify-between items-center text-[11px]">
+                                                <span className="text-slate-450">Leistung</span>
+                                                <span className="font-bold text-amber-500">{w.toFixed(0)} W</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Effizienz / Auslastung */}
+                                    {isActive && peak > 0 && (
+                                        <div className="mt-4 pt-3 border-t border-slate-900/60">
+                                            <div className="flex justify-between items-center text-[10px] text-slate-400 mb-1">
+                                                <span>Auslastung ({peak}Wp)</span>
+                                                <span className="font-bold text-slate-200">{efficiency.toFixed(1)}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
+                                                <div 
+                                                    className="bg-amber-500 h-full rounded-full transition-all duration-500" 
+                                                    style={{ width: `${Math.min(100, efficiency)}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
         // --- Hauptanwendung ---
         const App = () => {
             const [rawData, setRawData] = useState(null);
@@ -134,6 +274,12 @@
             const [activeTab, setActiveTab] = useState('overview'); // overview | solar | precision | battery | smartplug | table
             const [isLoading, setIsLoading] = useState(false);
             
+            const [liveState, setLiveState] = useState(null);
+            const [textLog, setTextLog] = useState("");
+            const [autoScrollLog, setAutoScrollLog] = useState(true);
+            const [logSearch, setLogSearch] = useState("");
+            const terminalEndRef = useRef(null);
+
             // Einstellungen
             const [energyPrice, setEnergyPrice] = useState(0.35);
             const [systemCost, setSystemCost] = useState(1500);
@@ -196,6 +342,11 @@
                     const targetIdx = headers.indexOf("is_target");
                     const hms2000Idx = headers.indexOf("hms_2000");
                     const hms1600Idx = headers.indexOf("hms_1600");
+                    const socL2Idx = headers.indexOf("soc_l2");
+                    const opL2Idx = headers.indexOf("op_l2");
+                    const pvL2Idx = headers.indexOf("pv_l2");
+                    const gsL1Idx = headers.indexOf("gs_l1");
+                    const gsL2Idx = headers.indexOf("gs_l2");
 
                     for (let i = 1; i < lines.length; i++) {
                         const rawLine = lines[i].trim(); if (!rawLine) continue;
@@ -209,18 +360,28 @@
                         const opVal = parseNum(cols[opIdx]);
                         const pvVal = parseNum(cols[pvIdx]);
 
+                        const socL2Val = socL2Idx !== -1 ? parseNum(cols[socL2Idx]) : 0;
+                        const opL2Val = opL2Idx !== -1 ? parseNum(cols[opL2Idx]) : 0;
+                        const pvL2Val = pvL2Idx !== -1 ? parseNum(cols[pvL2Idx]) : 0;
+
                         processedRows.push({
                             ts: dateStr,
                             timestamp,
                             mode: cols[modeIdx] || 'inactive',
                             soc: parseNum(cols[socIdx]),
+                            soc_l2: socL2Val,
                             grid_p: gridVal,
                             haus_p: parseNum(cols[hausIdx]),
                             solar_p: parseNum(cols[solarIdx]), // Hoymiles Summe
                             gs: parseNum(cols[gsIdx]),
+                            gs_l1: gsL1Idx !== -1 ? parseNum(cols[gsL1Idx]) : 0,
+                            gs_l2: gsL2Idx !== -1 ? parseNum(cols[gsL2Idx]) : 0,
                             op: opVal,
                             pv: pvVal,
-                            pb: pvVal - opVal, // Netto Batterieladeleistung
+                            op_l2: opL2Val,
+                            pv_l2: pvL2Val,
+                            pb: pvVal - opVal, // Netto Batterieladeleistung L1
+                            pb_l2: pvL2Val - opL2Val, // Netto Batterieladeleistung L2
                             is_target: parseNum(cols[targetIdx]),
                             hms_2000: hms2000Idx !== -1 ? parseNum(cols[hms2000Idx]) : 0,
                             hms_1600: hms1600Idx !== -1 ? parseNum(cols[hms1600Idx]) : 0,
@@ -342,6 +503,42 @@
                     });
             }, []);
 
+            // Live-Status und Live-Log Polling (alle 5 Sekunden)
+            useEffect(() => {
+                const fetchState = () => {
+                    fetch('state')
+                        .then(r => r.ok ? r.json() : null)
+                        .then(data => {
+                            if (data) setLiveState(data);
+                        })
+                        .catch(err => console.error("Error fetching live state:", err));
+                };
+
+                const fetchTextLog = () => {
+                    fetch('api/textlog')
+                        .then(r => r.ok ? r.text() : "")
+                        .then(text => {
+                            setTextLog(text);
+                        })
+                        .catch(err => console.error("Error fetching text log:", err));
+                };
+
+                fetchState();
+                fetchTextLog();
+                const interval = setInterval(() => {
+                    fetchState();
+                    fetchTextLog();
+                }, 5000);
+
+                return () => clearInterval(interval);
+            }, []);
+
+            useEffect(() => {
+                if (autoScrollLog && terminalEndRef.current) {
+                    terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+                }
+            }, [textLog, autoScrollLog]);
+
             // Downsampling für High-Res Diagramme (Verringerung der Datenmenge zur Browser-Schonung)
             const downsampledData = useMemo(() => {
                 if (!rawData || fileType !== "highres") return rawData;
@@ -374,13 +571,19 @@
                                 timestamp: new Date(currentBucketTime),
                                 mode: first.mode,
                                 soc: avg("soc"),
+                                soc_l2: avg("soc_l2"),
                                 grid_p: avg("grid_p"),
                                 haus_p: avg("haus_p"),
                                 solar_p: avg("solar_p"),
                                 gs: avg("gs"),
+                                gs_l1: avg("gs_l1"),
+                                gs_l2: avg("gs_l2"),
                                 op: avg("op"),
+                                op_l2: avg("op_l2"),
                                 pv: avg("pv"),
+                                pv_l2: avg("pv_l2"),
                                 pb: avg("pb"),
+                                pb_l2: avg("pb_l2"),
                                 is_target: avg("is_target"),
                                 hms_2000: avg("hms_2000"),
                                 hms_1600: avg("hms_1600")
@@ -404,18 +607,24 @@
                         timestamp: new Date(currentBucketTime),
                         mode: first.mode,
                         soc: avg("soc"),
+                        soc_l2: avg("soc_l2"),
                         grid_p: avg("grid_p"),
                         haus_p: avg("haus_p"),
                         solar_p: avg("solar_p"),
                         gs: avg("gs"),
+                        gs_l1: avg("gs_l1"),
+                        gs_l2: avg("gs_l2"),
                         op: avg("op"),
+                        op_l2: avg("op_l2"),
                         pv: avg("pv"),
+                        pv_l2: avg("pv_l2"),
                         pb: avg("pb"),
+                        pb_l2: avg("pb_l2"),
                         is_target: avg("is_target")
                     });
                 }
                 return result;
-            }, [rawData, fileType]);
+            }, [rawData, fileType]);ta, fileType]);
 
             // Diagrammdaten ermitteln
             const chartData = useMemo(() => {
@@ -445,6 +654,8 @@
                     let totalWhExp = 0;
                     let totalWhCharge = 0;
                     let totalWhDischarge = 0;
+                    let totalWhChargeL2 = 0;
+                    let totalWhDischargeL2 = 0;
 
                     // Präzisionszähler für Nulleinspeisung
                     let activePointsCount = 0;
@@ -478,6 +689,12 @@
                             totalWhDischarge += -curr.pb * dtHours;
                         }
 
+                        if (curr.pb_l2 > 0) {
+                            totalWhChargeL2 += curr.pb_l2 * dtHours;
+                        } else {
+                            totalWhDischargeL2 += -curr.pb_l2 * dtHours;
+                        }
+
                         // Regelungspräzision im aktiven oder Nacht-Modus (nur wenn Regelung aktiv steuern kann, d.h. Akku nicht leer)
                         const isRegulating = (curr.mode === "active" || curr.mode === "night") && (curr.soc > 10.5 || curr.op > 2);
                         if (isRegulating) {
@@ -502,7 +719,10 @@
                     
                     // Wirkungsgrad-Prüfung auf Plausibilität (Inkompletter Lade/Entladezyklus führt sonst zu Extremwerten)
                     const storageEffRaw = totalWhCharge > 0.05 ? (totalWhDischarge / totalWhCharge) * 100 : 0;
-                    const storageEff = (storageEffRaw >= 40 && storageEffRaw <= 110) ? storageEffRaw.toFixed(1) + "%" : "N/A (unvollst. Zyklus)";
+                    const storageEff = (storageEffRaw >= 40 && storageEffRaw <= 110) ? storageEffRaw.toFixed(1) + "%" : "N/A";
+                    
+                    const storageEffRawL2 = totalWhChargeL2 > 0.05 ? (totalWhDischargeL2 / totalWhChargeL2) * 100 : 0;
+                    const storageEffL2 = (storageEffRawL2 >= 40 && storageEffRawL2 <= 110) ? storageEffRawL2.toFixed(1) + "%" : "N/A";
 
                     return {
                         totalSolarKwh: (totalWhSolar / 1000).toFixed(2),
@@ -513,6 +733,8 @@
                         totalExpKwh: (totalWhExp / 1000).toFixed(2),
                         totalChargeKwh: (totalWhCharge / 1000).toFixed(2),
                         totalDischargeKwh: (totalWhDischarge / 1000).toFixed(2),
+                        totalChargeKwhL2: (totalWhChargeL2 / 1000).toFixed(2),
+                        totalDischargeKwhL2: (totalWhDischargeL2 / 1000).toFixed(2),
                         savings: savings.toFixed(2),
                         feedInEarnings: feedInEarnings.toFixed(2),
                         totalEarnings: totalEarnings.toFixed(2),
@@ -520,6 +742,7 @@
                         autarkie: autarkie.toFixed(1),
                         eigenverbrauchPct: eigenverbrauchPct.toFixed(1),
                         storageEff: storageEff,
+                        storageEffL2: storageEffL2,
                         co2: ((totalWhSolar / 1000) * 0.363).toFixed(1),
                         
                         // Regelungsspezifisch
@@ -693,6 +916,7 @@
             // Tabs definieren
             const tabs = [
                 { id: 'overview', label: 'Übersicht', icon: 'layout-dashboard' },
+                ...(fileType === 'highres' ? [{ id: 'pvmodules', label: 'PV Module', icon: 'sliders-horizontal' }] : []),
                 { id: 'solar', label: 'Solarfluss', icon: 'sun' },
                 ...(fileType === 'highres' ? [
                     { id: 'precision', label: 'Regler-Präzision', icon: 'activity' },
@@ -724,7 +948,29 @@
                                         {fileType === 'highres' ? 'Regler-Log (5s)' : 'Tagesbericht (10m)'} · {rawData.length} Einträge
                                     </span>
                                 </p>
-                            </div>
+                            {liveState && (
+                                <div className="flex items-center gap-3 bg-[#111822] border border-[#1e2d3d] px-4 py-2 rounded-xl text-xs">
+                                    <div className="flex items-center gap-1.5">
+                                        <Icon name="battery" size={14} className="text-emerald-400" />
+                                        <span className="font-bold text-slate-200">L1: {liveState.soc != null ? liveState.soc.toFixed(0) : "0"}%</span>
+                                        <span className="text-[10px] text-slate-500">
+                                            {liveState.op_l1 > 0 ? `-${liveState.op_l1.toFixed(0)}W` : (liveState.pb_l1 > 0 ? `+${liveState.pb_l1.toFixed(0)}W` : '0W')}
+                                        </span>
+                                    </div>
+                                    {hasL2 && (
+                                        <>
+                                            <div className="w-px h-4 bg-slate-800" />
+                                            <div className="flex items-center gap-1.5">
+                                                <Icon name="battery" size={14} className="text-emerald-400" />
+                                                <span className="font-bold text-slate-200">L2: {liveState.soc_l2 != null ? liveState.soc_l2.toFixed(0) : "0"}%</span>
+                                                <span className="text-[10px] text-slate-500">
+                                                    {liveState.op_l2 > 0 ? `-${liveState.op_l2.toFixed(0)}W` : (liveState.pb_l2 > 0 ? `+${liveState.pb_l2.toFixed(0)}W` : '0W')}
+                                                </span>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            )}
                             <div className="flex flex-wrap items-center gap-2 no-export">
                                 <a href="." className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold bg-[#111822] border border-[#1e2d3d] text-slate-300 hover:border-amber-500 hover:text-amber-500 transition-all">
                                     <Icon name="arrow-left" size={15} /> Live-Dashboard
@@ -833,6 +1079,30 @@
                                     </div>
                                 )}
 
+                                {/* ===== TAB: PV MODULE ===== */}
+                                {activeTab === 'pvmodules' && (
+                                    <div className="space-y-6 animate-in">
+                                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                            {/* Speicher 1 (L1) PV Module */}
+                                            <DevicePVPanel 
+                                                title="Speicher L1 (Phase 1)" 
+                                                details={liveState?.pv_details_l1}
+                                                activePorts={liveState?.active_inputs?.L1}
+                                                deviceId="L1"
+                                            />
+                                            {/* Speicher 2 (L2) PV Module */}
+                                            {hasL2 && (
+                                                <DevicePVPanel 
+                                                    title="Speicher L2 (Phase 2)" 
+                                                    details={liveState?.pv_details_l2}
+                                                    activePorts={liveState?.active_inputs?.L2}
+                                                    deviceId="L2"
+                                                />
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* ===== TAB: ÜBERSICHT ===== */}
                                 {activeTab === 'overview' && (
                                     <div className="space-y-6 animate-in">
@@ -858,7 +1128,8 @@
                                                             <Area type="monotone" name="Hoymiles PV" dataKey="solar_p" stroke="#f0a500" fill="url(#gGen)" strokeWidth={2.5} isAnimationActive={false} />
                                                             <Area type="monotone" name="Hausverbrauch" dataKey="haus_p" stroke="#00c2ff" fill="url(#gCons)" strokeWidth={2.5} isAnimationActive={false} />
                                                             <Area type="monotone" name="Netzleistung" dataKey="grid_p" stroke="#f43f5e" fill="url(#gImp)" strokeDasharray="5 5" strokeWidth={2} isAnimationActive={false} />
-                                                            {fileType === 'highres' && <Area type="monotone" name="SunEnergy AC Out" dataKey="op" stroke="#10B981" strokeWidth={2} fill="transparent" isAnimationActive={false} />}
+                                                            {fileType === 'highres' && <Area type="monotone" name="SunEnergy L1 AC Out" dataKey="op" stroke="#10B981" strokeWidth={2} fill="transparent" isAnimationActive={false} />}
+                                                            {fileType === 'highres' && hasL2 && <Area type="monotone" name="SunEnergy L2 AC Out" dataKey="op_l2" stroke="#818CF8" strokeWidth={2} fill="transparent" isAnimationActive={false} />}
                                                         </AreaChart>
                                                     </ResponsiveContainer>
                                                 </div>
@@ -875,23 +1146,33 @@
                                                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e2d3d" />
                                                             <XAxis dataKey={fileType === 'highres' ? "ts" : "category"} fontSize={9} stroke="#4a5568" />
                                                             <YAxis fontSize={9} stroke="#4a5568" unit="%" domain={[0, 100]} />
-                                                            <Tooltip formatter={(v) => [`${v.toFixed(1)}%`]} />
-                                                            <Line type="monotone" name="SOC" dataKey="soc" stroke="#10B981" strokeWidth={3} dot={false} isAnimationActive={false} />
+                                                            <Tooltip formatter={(v, name) => [`${v.toFixed(1)}%`, name]} />
+                                                            <Line type="monotone" name="SOC L1" dataKey="soc" stroke="#10B981" strokeWidth={3} dot={false} isAnimationActive={false} />
+                                                            {hasL2 && <Line type="monotone" name="SOC L2" dataKey="soc_l2" stroke="#818CF8" strokeWidth={3} dot={false} isAnimationActive={false} />}
                                                         </LineChart>
                                                     </ResponsiveContainer>
                                                 </div>
                                                 <div className="mt-4 pt-4 border-t border-slate-800 space-y-3">
                                                     <div className="flex justify-between items-center text-xs text-slate-400">
-                                                        <span>Maximale Akku-Ladung</span>
-                                                        <span className="font-bold text-slate-100">{Math.max(...chartData.map(d => d.soc || 0)).toFixed(0)}%</span>
+                                                        <span>Maximale Akku-Ladung L1 {hasL2 && "/ L2"}</span>
+                                                        <span className="font-bold text-slate-100">
+                                                            {Math.max(...chartData.map(d => d.soc || 0)).toFixed(0)}%
+                                                            {hasL2 && ` / ${Math.max(...chartData.map(d => d.soc_l2 || 0)).toFixed(0)}%`}
+                                                        </span>
                                                     </div>
                                                     <div className="flex justify-between items-center text-xs text-slate-400">
-                                                        <span>Minimale Akku-Ladung</span>
-                                                        <span className="font-bold text-slate-100">{Math.min(...chartData.map(d => d.soc || 100)).toFixed(0)}%</span>
+                                                        <span>Minimale Akku-Ladung L1 {hasL2 && "/ L2"}</span>
+                                                        <span className="font-bold text-slate-100">
+                                                            {Math.min(...chartData.map(d => d.soc || 100)).toFixed(0)}%
+                                                            {hasL2 && ` / ${Math.min(...chartData.map(d => d.soc_l2 || 100)).toFixed(0)}%`}
+                                                        </span>
                                                     </div>
                                                     <div className="flex justify-between items-center text-xs text-slate-400">
-                                                        <span>Durchschnittlicher SoC</span>
-                                                        <span className="font-bold text-slate-100">{(chartData.reduce((acc, c) => acc + c.soc, 0) / chartData.length).toFixed(1)}%</span>
+                                                        <span>Durchschnittlicher SoC L1 {hasL2 && "/ L2"}</span>
+                                                        <span className="font-bold text-slate-100">
+                                                            {(chartData.reduce((acc, c) => acc + (c.soc || 0), 0) / chartData.length).toFixed(1)}%
+                                                            {hasL2 && ` / ${(chartData.reduce((acc, c) => acc + (c.soc_l2 || 0), 0) / chartData.length).toFixed(1)}%`}
+                                                        </span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1034,9 +1315,12 @@
                                                             <YAxis yAxisId="right" orientation="right" stroke="#4a5568" unit="%" domain={[0, 100]} fontSize={10} />
                                                             <Tooltip content={<CustomTooltip unit="W" />} />
                                                             <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
-                                                            <Bar yAxisId="left" name="Laden (W)" dataKey={(d) => d.pb > 0 ? d.pb : 0} fill="#10B981" opacity={0.6} isAnimationActive={false} />
-                                                            <Bar yAxisId="left" name="Entladen (W)" dataKey={(d) => d.pb < 0 ? -d.pb : 0} fill="#f0a500" opacity={0.6} isAnimationActive={false} />
-                                                            <Line yAxisId="right" type="monotone" name="SOC (%)" dataKey="soc" stroke="#00c2ff" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                                                            <Bar yAxisId="left" name="L1 Laden (W)" dataKey={(d) => d.pb > 0 ? d.pb : 0} fill="#10B981" opacity={0.6} isAnimationActive={false} />
+                                                            <Bar yAxisId="left" name="L1 Entladen (W)" dataKey={(d) => d.pb < 0 ? -d.pb : 0} fill="#f0a500" opacity={0.6} isAnimationActive={false} />
+                                                            {hasL2 && <Bar yAxisId="left" name="L2 Laden (W)" dataKey={(d) => d.pb_l2 > 0 ? d.pb_l2 : 0} fill="#34D399" opacity={0.4} isAnimationActive={false} />}
+                                                            {hasL2 && <Bar yAxisId="left" name="L2 Entladen (W)" dataKey={(d) => d.pb_l2 < 0 ? -d.pb_l2 : 0} fill="#FBBF24" opacity={0.4} isAnimationActive={false} />}
+                                                            <Line yAxisId="right" type="monotone" name="L1 SOC (%)" dataKey="soc" stroke="#00c2ff" strokeWidth={2.5} dot={false} isAnimationActive={false} />
+                                                            {hasL2 && <Line yAxisId="right" type="monotone" name="L2 SOC (%)" dataKey="soc_l2" stroke="#818CF8" strokeWidth={2.5} dot={false} isAnimationActive={false} />}
                                                         </ComposedChart>
                                                     </ResponsiveContainer>
                                                 </div>
@@ -1053,23 +1337,35 @@
                                                     </p>
                                                     <div className="space-y-4">
                                                         <div className="flex justify-between items-center p-3 rounded-xl bg-slate-800/30 border border-slate-800">
-                                                            <span className="text-xs text-slate-400">Gesamte Ladeenergie (DC)</span>
-                                                            <span className="font-bold text-slate-100">{stats.totalChargeKwh} kWh</span>
+                                                            <span className="text-xs text-slate-400">Gesamte Ladeenergie (DC) L1 {hasL2 && "/ L2"}</span>
+                                                            <span className="font-bold text-slate-100 font-mono">
+                                                                {stats.totalChargeKwh} kWh
+                                                                {hasL2 && ` / ${stats.totalChargeKwhL2} kWh`}
+                                                            </span>
                                                         </div>
                                                         <div className="flex justify-between items-center p-3 rounded-xl bg-slate-800/30 border border-slate-800">
-                                                            <span className="text-xs text-slate-400">Gesamte Entladeenergie (AC)</span>
-                                                            <span className="font-bold text-slate-100">{stats.totalDischargeKwh} kWh</span>
+                                                            <span className="text-xs text-slate-400">Gesamte Entladeenergie (AC) L1 {hasL2 && "/ L2"}</span>
+                                                            <span className="font-bold text-slate-100 font-mono">
+                                                                {stats.totalDischargeKwh} kWh
+                                                                {hasL2 && ` / ${stats.totalDischargeKwhL2} kWh`}
+                                                            </span>
                                                         </div>
                                                         <div className="flex justify-between items-center p-3 rounded-xl bg-slate-800/30 border border-slate-800">
-                                                            <span className="text-xs text-slate-400">Verluste (Wärme/Umwandlung)</span>
-                                                            <span className="font-bold text-rose-400">{(parseFloat(stats.totalChargeKwh) - parseFloat(stats.totalDischargeKwh)).toFixed(2)} kWh</span>
+                                                            <span className="text-xs text-slate-400">Verluste L1 {hasL2 && "/ L2"}</span>
+                                                            <span className="font-bold text-rose-400 font-mono">
+                                                                {(parseFloat(stats.totalChargeKwh) - parseFloat(stats.totalDischargeKwh)).toFixed(2)} kWh
+                                                                {hasL2 && ` / ${(parseFloat(stats.totalChargeKwhL2) - parseFloat(stats.totalDischargeKwhL2)).toFixed(2)} kWh`}
+                                                            </span>
                                                         </div>
                                                     </div>
                                                 </div>
                                                 <div className="pt-6 border-t border-slate-800">
                                                     <div className="flex justify-between items-center">
-                                                        <span className="text-xs text-slate-300 font-bold">Wirkungsgrad (AC / DC)</span>
-                                                        <span className="text-lg font-black text-emerald-400">{stats.storageEff}</span>
+                                                        <span className="text-xs text-slate-300 font-bold">Wirkungsgrad L1 {hasL2 && "/ L2"}</span>
+                                                        <span className="text-lg font-black text-emerald-400 font-mono">
+                                                            {stats.storageEff}
+                                                            {hasL2 && ` / ${stats.storageEffL2}`}
+                                                        </span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1223,6 +1519,54 @@
                                         </div>
                                     </div>
                                 )}
+
+                                {/* Live Log Terminal */}
+                                <div className={`mt-8 ${cardBg} p-5 rounded-2xl shadow-sm border border-[#1e2d3d] no-export`}>
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <span className="relative flex h-2 w-2">
+                                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                                            </span>
+                                            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Controller Live Log</h3>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <input
+                                                type="text"
+                                                placeholder="Suchen..."
+                                                value={logSearch}
+                                                onChange={(e) => setLogSearch(e.target.value)}
+                                                className="bg-slate-900 border border-slate-700 text-slate-200 text-xs px-3 py-1 rounded-xl outline-none focus:border-amber-500"
+                                            />
+                                            <button
+                                                onClick={() => setAutoScrollLog(!autoScrollLog)}
+                                                className={`text-[10px] px-3 py-1 rounded-xl font-bold transition-all ${autoScrollLog ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' : 'bg-slate-800 text-slate-400 border border-slate-700'}`}
+                                            >
+                                                Auto-Scroll: {autoScrollLog ? "AN" : "AUS"}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="bg-[#070a13] border border-slate-950 p-4 rounded-xl font-mono text-[10px] md:text-xs text-slate-350 h-60 overflow-y-auto custom-scrollbar">
+                                        {textLog ? (
+                                            textLog.split("\n")
+                                                .filter(line => line.toLowerCase().includes(logSearch.toLowerCase()))
+                                                .map((line, idx) => {
+                                                    let colorClass = "text-slate-400";
+                                                    if (line.includes("[ERROR]")) colorClass = "text-rose-400 font-bold";
+                                                    else if (line.includes("[WARNING]")) colorClass = "text-amber-400 font-bold";
+                                                    else if (line.includes("[INFO]")) colorClass = "text-emerald-450";
+                                                    return (
+                                                        <div key={idx} className={`${colorClass} py-0.5 border-b border-slate-900/40`}>
+                                                            {line}
+                                                        </div>
+                                                    );
+                                                })
+                                        ) : (
+                                            <div className="text-slate-500 text-center py-10">Lade Logdaten... (Stelle sicher, dass Version 2.7.6+ läuft)</div>
+                                        )}
+                                        <div ref={terminalEndRef}></div>
+                                    </div>
+                                </div>
 
                                 {/* Footer */}
                                 <footer className="mt-8 pt-6 border-t border-slate-800 text-center text-[10px] text-slate-600">
