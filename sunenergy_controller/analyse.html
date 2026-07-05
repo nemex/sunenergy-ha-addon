@@ -43,8 +43,32 @@
 
         // --- Ikonen-Komponente ---
         const Icon = ({ name, size = 18, className = "" }) => {
-            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
-            return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
+            const containerRef = useRef(null);
+
+            useEffect(() => {
+                if (!containerRef.current) return;
+                containerRef.current.innerHTML = '';
+                
+                const iElem = document.createElement('i');
+                iElem.setAttribute('data-lucide', name);
+                iElem.style.width = `${size}px`;
+                iElem.style.height = `${size}px`;
+                iElem.className = `inline-block ${className}`;
+                
+                containerRef.current.appendChild(iElem);
+                
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+                
+                return () => {
+                    if (containerRef.current) {
+                        containerRef.current.innerHTML = '';
+                    }
+                };
+            }, [name, size, className]);
+
+            return <span ref={containerRef} className="inline-flex items-center justify-center"></span>;
         };
 
         const SunEnergyLogo = () => (
