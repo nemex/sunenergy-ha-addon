@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.7.7
+- **Fehlerbehebung Blank-Page-Crash**: Ein Syntaxfehler (doppelter Code am Ende des Daten-Filters in `analyse.html`), welcher beim Mergen von `v2.7.6` aufgetreten war und zu einer leeren weißen Seite führte, wurde behoben.
+
 ## v2.7.6
 - **Zwei-Speicher-Unterstützung im UI**: Die Systemanalyse (inkl. Übersichtskarten, Batterietab und Verlaufsdiagrammen) erkennt und visualisiert nun vollautomatisch die Daten beider Speicher (L1 und L2), sofern ein zweiter Speicher aktiv ist. Ladezustand (SoC), Lade-/Entladeleistungen und Wirkungsgrade beider Speicher werden nun side-by-side angezeigt.
 - **PV Module Überwachungs-Tab**: Ein neuer Reiter „PV Module“ wurde zwischen Übersicht und Solarfluss hinzugefügt. Er stellt die Live-Werte (Spannung, Strom, Leistung) aller 4 MPPT-Eingänge beider Speicher dar. Der Benutzer kann für jeden Eingang die Moduldaten (Name, Nennleistung) einstellen und die Auslastung (W/Wp) prozentual visualisieren lassen. Die Einstellungen werden lokal im Browser persistiert.
