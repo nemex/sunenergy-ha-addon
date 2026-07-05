@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.7.8
+- **Fehlerbehebung ungeschlossenes Div im Header**: Ein nicht geschlossenes `<div>`-Element in der Kopfzeile, welches mit der Einbindung der Speicher-Live-Statusanzeige eingeführt wurde und einen JSX-Kompilierungsfehler auslöste, wurde behoben.
+
 ## v2.7.7
 - **Fehlerbehebung Blank-Page-Crash**: Ein Syntaxfehler (doppelter Code am Ende des Daten-Filters in `analyse.html`), welcher beim Mergen von `v2.7.6` aufgetreten war und zu einer leeren weißen Seite führte, wurde behoben.
 
