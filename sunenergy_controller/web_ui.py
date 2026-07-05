@@ -677,6 +677,22 @@ class UIHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(b"Analyse-Datei nicht gefunden")
 
+        elif "/lib/" in self.path:
+            # Lokale Bibliotheken ausliefern, um Ingress-CSP-Blockaden zu umgehen
+            lib_name = self.path.split("/lib/")[-1]
+            lib_path = Path(__file__).parent / "lib" / lib_name
+            if lib_path.exists() and ".." not in lib_name:
+                self.send_response(200)
+                if lib_name.endswith(".js"):
+                    self.send_header("Content-Type", "application/javascript; charset=utf-8")
+                self.end_headers()
+                with open(lib_path, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Library not found")
+
         elif self.path == "/":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
