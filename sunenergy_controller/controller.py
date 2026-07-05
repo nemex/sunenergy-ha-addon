@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.7.2
+SunEnergy XT Controller v2.7.3
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -450,7 +450,7 @@ def send_telegram_alert(token, chat_id, message):
         log.error("Telegram Fehler: %s", e)
 
 
-def calc_adaptive_gs_delta(error, has_l2=False, ki_min=0.15, ki_max=0.5, ki_error_scale=600.0):
+def calc_adaptive_gs_delta(error, has_l2=False, ki_min=0.30, ki_max=0.60, ki_error_scale=400.0):
     # Exponent 0.7 bewirkt progressiven Anstieg bei mittleren Fehlern
     ki_err_factor = min(1.0, (abs(error) / ki_error_scale) ** 0.7)
     ki_eff = ki_min + (ki_max - ki_min) * ki_err_factor
@@ -497,7 +497,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.7.2 startet...")
+    log.info("SunEnergy XT Controller v2.7.3 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
