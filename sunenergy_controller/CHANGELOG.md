@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.8.0
+- **Skalierung von PV-Spannung und Stromstärke**: Die vom SunEnergy-Speicher gelieferten Rohwerte für Spannung (V) und Strom (A) der PV-Eingänge (z.B. 368 für 36.8V und 51 für 5.1A) werden nun im Dashboard-Tab „PV Module“ korrekt durch 10.0 geteilt, um die realen Werte mit Dezimalstelle anzuzeigen.
+
 ## v2.7.9
 - **Fehlerbehebung hasL2 Definition**: Die Variable `hasL2` wurde im JSX-Code an mehreren Stellen referenziert, war aber im übergeordneten JavaScript-Scope nicht deklariert. Dies führte zu einem Laufzeitfehler (`ReferenceError: hasL2 is not defined`) und einer leeren weißen Seite. Die Variable wird nun über einen reaktiven `useMemo`-Hook dynamisch abgeleitet und deklariert.
 

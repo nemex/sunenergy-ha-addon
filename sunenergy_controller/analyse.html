@@ -167,8 +167,8 @@
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         {[1, 2, 3, 4].map(port => {
-                            const v = details ? (details[`pv${port}_v`] || 0) : 0;
-                            const a = details ? (details[`pv${port}_a`] || 0) : 0;
+                            const v = details ? (details[`pv${port}_v`] || 0) / 10.0 : 0;
+                            const a = details ? (details[`pv${port}_a`] || 0) / 10.0 : 0;
                             const w = details ? (details[`pv${port}_w`] || 0) : 0;
                             const isConfiguredActive = activePorts ? !!activePorts[String(port)] : false;
                             
