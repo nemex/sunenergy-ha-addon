@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.8.2
+- **Zwangsladung CSV-Logging & Sensor-Freeze behoben**: Während der automatischen Akku-Zwangsladung (Kalibrierung auf 100%) wurde das Schreiben in das CSV-Log sowie das Live-Update der virtuellen Home Assistant-Sensoren fälschlicherweise übersprungen. Dies führte zu großen Lücken in den Auswertungsdaten und zu eingefrorenen Sensorwerten. Beides aktualisiert sich nun auch während der Zwangsladungsphase ordnungsgemäß alle 5 Sekunden.
+
 ## v2.8.1
 - **Serverseitige Speicherung der PV-Modulkonfigurationen**: Die eingetragenen Daten der PV-Module (Modell, Nennleistung) werden nun dauerhaft in der Datei `/data/pv_modules.json` auf dem Server gesichert. Dies verhindert Datenverluste bei Add-on-Updates oder Cache-Löschungen.
 - **Null-Linie im Live-Dashboard**: Im Haupt-Dashboard wurde im Netzleistungsdiagramm eine gestrichelte, weiße Referenzlinie bei `0 W` hinzugefügt, um die Regelungspräzision der Nulleinspeisung visuell besser beurteilen zu können.

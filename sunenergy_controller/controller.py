@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.8.1
+SunEnergy XT Controller v2.8.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -510,7 +510,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.8.1 startet...")
+    log.info("SunEnergy XT Controller v2.8.2 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1322,6 +1322,42 @@ def main():
                         state["last_device_mm_l2"] = 0
                         state["last_gs_written_l2"] = -2400
                         save_state(state)
+
+                # CSV schreiben während der Zwangsladung
+                csv_log({
+                    "ts":       time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "mode":     "calibration",
+                    "soc":      round(curr_soc, 1),
+                    "grid_p":   round(grid_p_raw, 1),
+                    "haus_p":   round(haus_p, 1),
+                    "solar_p":  round(solar_p, 1),
+                    "gs":       round(-2400.0 * (2 if has_l2 else 1), 0),
+                    "op":       round(op_current, 1),
+                    "pv":       round(pv_current, 1),
+                    "is_target": 2400,
+                    "hms_limit": 3600,
+                    "hms_2000":  round(solar_p_2000, 1),
+                    "hms_1600":  round(solar_p_1600, 1),
+                    "hms_2000_lim": 2000,
+                    "hms_1600_lim": 1600,
+                    "soc_l2":    round(curr_soc_l2, 1) if has_l2 else 0.0,
+                    "op_l2":     round(op_l2, 1) if has_l2 else 0.0,
+                    "pv_l2":     round(pv_l2, 1) if has_l2 else 0.0,
+                    "gs_l1":     -2400,
+                    "gs_l2":     -2400 if has_l2 else 0,
+                })
+
+                # Virtuelle HA-Sensoren pushen
+                ha_push_sensor("sensor.sunenergy_hausverbrauch",  haus_p,      "W", "power",  "Hausverbrauch (Controller)")
+                ha_push_sensor("sensor.sunenergy_grid_p",         grid_p_raw,  "W", "power",  "Netz aktuell (Controller)")
+                ha_push_sensor("sensor.sunenergy_solar_p",        solar_p,     "W", "power",  "Solar gesamt (Controller)")
+                ha_push_sensor("sensor.sunenergy_battery_ac",     battery_ac_est, "W", "power", "Batterie AC (Controller)")
+                ha_push_sensor("sensor.sunenergy_battery_ac_l1",  battery_ac_est_l1, "W", "power", "Batterie L1 AC (Controller)")
+                ha_push_sensor("sensor.sunenergy_battery_ac_l2",  battery_ac_est_l2, "W", "power", "Batterie L2 AC (Controller)")
+
+                state["grid_p_filtered"] = grid_p_raw
+                save_state_throttled(state)
+
                 sleep_tick(TICK_S)
                 continue
 
