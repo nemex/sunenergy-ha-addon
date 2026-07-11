@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.8.8
+SunEnergy XT Controller v3.0.0
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -101,6 +101,7 @@ def load_options() -> dict:
             "regulation_manual_feed_in_target": "manual_feed_in_target",
             "regulation_manual_feed_in_min_soc": "manual_feed_in_min_soc",
             "regulation_manual_feed_in_power": "manual_feed_in_power",
+            "regulation_grid_target": "grid_target",
         }
         
         for new_k, legacy_k in legacy_mappings.items():
@@ -204,8 +205,8 @@ def csv_log(row: dict):
                 w.writeheader()
             w.writerow(row)
         # Nach dem Schreiben: nur wenn Datei zu groß, kürzen (billiger getsize-Check)
-        # if os.path.getsize(CSV_PATH) > CSV_MAX_BYTES:
-        #     trim_csv(CSV_PATH)
+        if os.path.getsize(CSV_PATH) > CSV_MAX_BYTES:
+            trim_csv(CSV_PATH)
     except Exception as e:
         log.debug("CSV log Fehler: %s", e)
 
@@ -510,11 +511,11 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.8.8 startet...")
-    signal.signal(signal.SIGTERM, _handle_term)
-    signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
     state = load_state()
+    # Reboot-Sicherheit: hold_until verwerfen, da time.monotonic() nach System-Reboot zurückgesetzt wird
+    state.pop("hold_until", None)
+    log.info("SunEnergy XT Controller v3.0.0 startet...")
 
     # Reset and initialize watchdog configuration on startup using boolean toggle switches
     state["active_inputs"] = {
@@ -821,7 +822,7 @@ def main():
                 pb_current = float(se_data.get("BP", 0))
                 iw_current = float(se_data.get("IW", 0))
                 state["l1_polling_ok"] = True
-                state["last_poll_l1_ts"] = time.time()
+                state["last_read_l1_ts"] = time.time()
                 state["consecutive_polls_l1"] = state.get("consecutive_polls_l1", 0) + 1
                 
                 # MM Self-healing
@@ -867,7 +868,7 @@ def main():
                     iw_l2 = float(se_data_l2.get("IW", 0))
                     state["pv_last_l2"] = pv_l2
                     state["l2_polling_ok"] = True
-                    state["last_poll_l2_ts"] = time.time()
+                    state["last_read_l2_ts"] = time.time()
                     state["consecutive_polls_l2"] = state.get("consecutive_polls_l2", 0) + 1
                     
                     # v2.5.1: L2 Lade-Blockade-Erkennung (BMS voll, App-Limit oder unplugged)
@@ -938,6 +939,7 @@ def main():
                 state["last_gs"] = 0.0
             if has_l2 and prev_op_l2 > 100.0 and op_l2 < 10.0:
                 log.warning("L2 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l2, op_l2)
+                state["last_gs"] = 0.0
 
             # Speicher-Leistungswerte im Zustand sichern
             state["op_l1"] = op_current
@@ -1079,16 +1081,18 @@ def main():
                 state["kreuzladung_hold_until"] = time.time() + 30  # 30s warten
                 
                 # Direkt schreiben, nicht auf nächsten Zyklus warten
-                sunenergy_write(sunenergy_ip, {"GS": 0, "IS": max(200, int(haus_p))})
+                # Direkt schreiben, nicht auf nächsten Zyklus warten
+                is_val = min(2400, max(200, int(haus_p)))
+                sunenergy_write(sunenergy_ip, {"GS": 0, "IS": is_val})
                 if has_l2:
-                    sunenergy_write(sunenergy_ip_l2, {"GS": 0, "IS": max(200, int(haus_p))})
+                    sunenergy_write(sunenergy_ip_l2, {"GS": 0, "IS": is_val})
                 
                 # State synchronisieren
                 state["last_device_gs"] = 0
                 state["last_device_gs_l2"] = 0
-                state["last_device_is"] = max(200, int(haus_p))
+                state["last_device_is"] = is_val
                 if has_l2:
-                    state["last_device_is_l2"] = max(200, int(haus_p))
+                    state["last_device_is_l2"] = is_val
                 
                 save_state(state)
 
@@ -1294,7 +1298,39 @@ def main():
             if zwangsladung_trigger:
                 log.info("Zwangsladung gestartet! %.1f Tage seit letzter Vollladung", tage_seit)
                 set_active_mode(state, "calibration")
+                state["calibration_start_ts"] = time.time()
                 save_state(state)
+
+            if state["active_mode"] == "calibration":
+                # Sicherheits-Timeout (12h) für Zwangsladung prüfen
+                calib_start = state.get("calibration_start_ts")
+                if calib_start is None:
+                    state["calibration_start_ts"] = time.time()
+                    calib_start = time.time()
+                if time.time() - calib_start > 12 * 3600:
+                    log.warning("⚠️ Zwangsladung abgebrochen wegen Timeout (> 12h)!")
+                    state["last_calibration_ts"] = time.time()
+                    set_active_mode(state, "night")
+                    ha_set_number(sa_entity, soc_normal_max)
+                    ha_switch(mm_switch, True)
+                    ha_set_number(gs_entity, 0)
+                    sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
+                    state["last_written_sa"] = soc_normal_max
+                    state["last_device_gs"] = None
+                    state["last_device_mm"] = 1
+                    if has_l2:
+                        if sa_entity_l2:
+                            ha_set_number(sa_entity_l2, soc_normal_max)
+                        if mm_switch_l2:
+                            ha_switch(mm_switch_l2, True)
+                        if gs_entity_l2:
+                            ha_set_number(gs_entity_l2, 0)
+                        sunenergy_write(sunenergy_ip_l2, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
+                        state["last_device_gs_l2"] = None
+                        state["last_device_mm_l2"] = 1
+                    save_state(state)
+                    sleep_tick(TICK_S)
+                    continue
 
             if state["active_mode"] == "calibration" and (curr_soc < 100 or (has_l2 and curr_soc_l2 < 100)):
                 log.info("Zwangsladung läuft... SOC_L1=%.1f%% SOC_L2=%.1f%%", curr_soc, curr_soc_l2)
@@ -1469,7 +1505,9 @@ def main():
                     # GS nachts aktiv regeln
                     max_gs = 4800.0 if has_l2 else 2400.0
                     gs_last = safe_float(state, "last_gs", 0.0)
-                    _delta_night = calc_adaptive_gs_delta(grid_p_raw, has_l2=has_l2)
+                    grid_target = float(opts.get("grid_target", 0.0))
+                    grid_error = grid_p_raw - grid_target
+                    _delta_night = calc_adaptive_gs_delta(grid_error, has_l2=has_l2)
                     gs_new = gs_last + _delta_night
 
                     hold_until = state.get("hold_until", 0.0)

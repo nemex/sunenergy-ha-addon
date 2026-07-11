@@ -99,6 +99,7 @@ def load_options() -> dict:
                 "regulation_manual_feed_in_target": "manual_feed_in_target",
                 "regulation_manual_feed_in_min_soc": "manual_feed_in_min_soc",
                 "regulation_manual_feed_in_power": "manual_feed_in_power",
+                "regulation_grid_target": "grid_target",
             }
             
             for new_k, legacy_k in legacy_mappings.items():
@@ -125,6 +126,10 @@ def get_shelly_power(shelly_ip: str) -> float:
             return val
     except Exception:
         pass
+        
+    if now - _SHELLY_CACHE["time"] > 30.0:
+        raise RuntimeError("Shelly power value is stale (> 30s)")
+        
     return _SHELLY_CACHE["value"]
 
 def get_csv_data(n=100) -> list:
@@ -145,7 +150,7 @@ HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SunEnergy XT Controller</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="/lib/chart.umd.min.js"></script>
 <style>
   :root {
     --bg: #0a0e14; --surface: #111822; --border: #1e2d3d;
@@ -614,7 +619,8 @@ def get_split_power(requester_ip, real_grid_power, opts) -> float:
                 return min(-200.0, real_grid_power)
             else:
                 return max(200.0, real_grid_power)
-    elif real_grid_power > 0:
+                
+    if real_grid_power > 0:
         usable_l1 = max(0.0, soc_l1 - soc_min)
         usable_l2 = max(0.0, soc_l2 - soc_min)
         total = usable_l1 + usable_l2
@@ -646,7 +652,13 @@ class UIHandler(BaseHTTPRequestHandler):
         shelly_ip = opts.get("shelly_ip", "192.168.178.98")
 
         if self.path == "/meter":
-            power = get_shelly_power(shelly_ip)
+            try:
+                power = get_shelly_power(shelly_ip)
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(f"Error: {e}".encode("utf-8"))
+                return
             
             client_ip = self.client_address[0]
             ip_l1 = opts.get("sunenergy_ip", "192.168.178.94")

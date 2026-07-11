@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.0.0
+- **Fehlerbehebungen (Stabilität & Cleanup)**:
+  - **`grid_target` Mapping-Fix**: Behebung des fehlenden Mappings für `grid_target` in den `legacy_mappings` von `controller.py` und `web_ui.py`. Der eingestellte Nulleinspeisungs-Offset wird nun korrekt geladen.
+  - **Reboot-Sicherheit**: Die Hold-Time `hold_until` wird beim Controller-Startup aus dem State verworfen. Dies verhindert ein tagelanges Einfrieren der Regelung nach Host-Reboots aufgrund der zurückgesetzten System-Uptime (`time.monotonic()`).
+  - **NameError Absturz-Fix**: Behebung eines NameErrors (nicht definierte Variable `anteil_l1`/`l2`) im `/meter` Endpoint von `web_ui.py`, wenn kein Transfer oder Kreuzladung vorliegt.
+  - **Begrenzung CSV-Wachstum**: Reaktivierung des automatischen Trimmens der CSV-Logdatei auf 2.000 Zeilen bei Überschreitung von 2 MB (RAM- & Speicherplatzschutz).
+  - **L2 Integrator Reset**: Behebung des fehlenden Integrator-Resets (`state["last_gs"] = 0.0`) im L2-OP-Einbruchszweig.
+  - **Diagramm-CSP-Fix**: Chart.js wird nun lokal unter `/lib/chart.umd.min.js` ausgeliefert, um Ingress-CSP-Sperren bei Nabu Casa zu umgehen.
+- **Regelungs-Verbesserungen**:
+  - **Zwangsladungs-Timeout**: Automatische Begrenzung der Kalibrierung (Zwangsladung auf 100%) auf maximal 12 Stunden, um BMS-Hänger bei 99% SOC abzufangen und teuren Netzbezug zu verhindern.
+  - **Nachtregelung mit `grid_target`**: Der Nulleinspeisungs-Offset wird nun auch nachts konsistent auf die Regelung angewendet.
+  - **Shelly-Staleness-Timeout**: Der `/meter` Proxy liefert bei einem Shelly-Ausfall nach 30 Sekunden ein HTTP-500 anstatt des alten Cache-Werts, um die automatische Regelung des Speichers kontrolliert zu stoppen.
+  - **Trennung von Poll- und Read-Timestamps**: Die Ticks des Controllers werden in getrennten Keys gesichert, um Fehlalarm-Szenarien bei der Erkennung verlorener MD-Verbindungen zu vermeiden.
+  - **IS-Korrektur-Klemmen**: Begrenzung der IS-Sofortkorrektur bei Kreuzladung auf den API-Grenzbereich `[200, 2400]`.
+- **Changelog-Kürzung**: Entfernung aller Changelog-Einträge älter als `v2.8.0` zur Bereinigung der Dateigröße.
+
 ## v2.8.8
 - **Rückgängig Behebung Doppelzählung Hausverbrauch (Revert)**: Die Akku-Entladeleistung fließt wieder voll in die Berechnung des Hausverbrauchs ein, da der Speicher ein AC-gekoppeltes Entladesystem verwendet, dessen AC-Leistung nicht in den Hoymiles-Erzeugungswerten (`solar_p`) enthalten ist. Dies stellt die physikalisch korrekte Berechnung des Hausverbrauchs wieder her.
 - **AC-Lade-Drosselungs-Fix**: Die Ladekapazitäten `charge_capacity_l1` und `charge_capacity_l2` werden bei aktivem AC-Laden (`gs_new_rounded < 0`) auf `0.0 W` gesetzt. Dies ermöglicht es dem Regler, die Hoymiles während des Ladevorgangs korrekt zu drosseln, und behebt die ungewollte Dauereinspeisung/Entladung bei hohem SOC.
@@ -29,27 +45,3 @@
 
 ## v2.8.0
 - **Skalierung von PV-Spannung und Stromstärke**: Die vom SunEnergy-Speicher gelieferten Rohwerte für Spannung (V) und Strom (A) der PV-Eingänge (z.B. 368 für 36.8V und 51 für 5.1A) werden nun im Dashboard-Tab „PV Module“ korrekt durch 10.0 geteilt, um die realen Werte mit Dezimalstelle anzuzeigen.
-
-## v2.7.9
-- **Fehlerbehebung hasL2 Definition**: Die Variable `hasL2` wurde im JSX-Code an mehreren Stellen referenziert, war aber im übergeordneten JavaScript-Scope nicht deklariert. Dies führte zu einem Laufzeitfehler (`ReferenceError: hasL2 is not defined`) und einer leeren weißen Seite. Die Variable wird nun über einen reaktiven `useMemo`-Hook dynamisch abgeleitet und deklariert.
-
-## v2.7.8
-- **Fehlerbehebung ungeschlossenes Div im Header**: Ein nicht geschlossenes `<div>`-Element in der Kopfzeile, welches mit der Einbindung der Speicher-Live-Statusanzeige eingeführt wurde und einen JSX-Kompilierungsfehler auslöste, wurde behoben.
-
-## v2.7.7
-- **Fehlerbehebung Blank-Page-Crash**: Ein Syntaxfehler (doppelter Code am Ende des Daten-Filters in `analyse.html`), welcher beim Mergen von `v2.7.6` aufgetreten war und zu einer leeren weißen Seite führte, wurde behoben.
-
-## v2.7.6
-- **Zwei-Speicher-Unterstützung im UI**: Die Systemanalyse (inkl. Übersichtskarten, Batterietab und Verlaufsdiagrammen) erkennt und visualisiert nun vollautomatisch die Daten beider Speicher (L1 und L2), sofern ein zweiter Speicher aktiv ist. Ladezustand (SoC), Lade-/Entladeleistungen und Wirkungsgrade beider Speicher werden nun side-by-side angezeigt.
-- **PV Module Überwachungs-Tab**: Ein neuer Reiter „PV Module“ wurde zwischen Übersicht und Solarfluss hinzugefügt. Er stellt die Live-Werte (Spannung, Strom, Leistung) aller 4 MPPT-Eingänge beider Speicher dar. Der Benutzer kann für jeden Eingang die Moduldaten (Name, Nennleistung) einstellen und die Auslastung (W/Wp) prozentual visualisieren lassen. Die Einstellungen werden lokal im Browser persistiert.
-- **Controller Live Log**: Ein interaktives, farbcodiertes Terminal am Ende der Analyse-Seite zeigt die Live-Ausgaben des Controllers in Echtzeit an. Es verfügt über eine Auto-Scroll-Funktion, Log-Ebenen-Farbcodierung (Grün für Info, Gelb für Warnung, Rot für Fehler) und einen Echtzeit-Textfilter.
-- **API-Erweiterung & Text-Log Ring-Buffer**: Der Controller sichert nun die detaillierten MPPT-Messwerte der einzelnen PV-Eingänge (`pv_details_l1` und `pv_details_l2`) im Global State, und die API stellt die Logs über einen neuen Endpoint `/api/textlog` mit einem rotierenden Logfile (max. 200 KB) bereit.
-
-## v2.7.5
-- **Fehlerbehebung Lucide React Crash (Systemanalyse rendering fix)**: Die `Icon`-Komponente der Systemanalyse wurde neu strukturiert. Sie isoliert die DOM-manipulierende Funktion von Lucide (`createIcons()`) nun vollständig über einen React `useRef`-Container. Dies verhindert, dass Lucide direkt den von React kontrollierten Virtual DOM überschreibt, was zuvor zu einem fatalen React-Absturz (`NotFoundError: Failed to execute 'removeChild' on 'Node'`) und einer komplett leeren/weißen Seite führte.
-
-## v2.7.4
-- **Lokale Auslieferung von Frontend-Bibliotheken (Ingress CSP Fix)**: Alle externen Javascript-Bibliotheken (React, Recharts, Tailwind CSS, Lucide, Babel Standalone und HTML2Canvas) werden nun lokal aus dem Addon-Verzeichnis heraus ausgeliefert. Dies behebt die leere/weiße Seite bei der Systemanalyse im Home Assistant Ingress, welche durch die restriktive Content-Security-Policy (CSP) der Benutzeroberfläche verursacht wurde. Die Systemanalyse ist nun auch vollständig offline lauffähig.
-
-## v2.7.3
-- **Verdoppelte Regelgeschwindigkeit für mittlere Lastabweichungen**: Der minimale Regler-Verstärkungsfaktor `ki_min` wurde von `0.15` auf `0.30` angehoben (und `ki_max` auf `0.60`), während die Skalierung `ki_error_scale` von `600` auf `400` verkleinert wurde. Dies verdoppelt die Regelgeschwindigkeit bei anhaltenden mittleren Netzabweichungen (z. B. 70W bis 300W Bezug/Einspeisung) und verkürzt die Ausregelzeit von vormals fast 2 Minuten auf unter 40 Sekunden, während Kleinstabweichungen weiterhin ruhig ausgeregelt werden.
