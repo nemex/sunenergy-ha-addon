@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.8.6
+- **Freigabe AC-Laden & Schwellenwert-Korrektur**: In den normalen Regelungsmodi für Tag (`active`) und Nacht (`night`) wird die Untergrenze des berechneten Sollwerts `gs_new` wieder auf `-max_gs` freigegeben, um das Laden der Akkus aus dem AC-Überschuss der Hoymiles zu ermöglichen. Gleichzeitig wird die hardcodierte Drosselgrenze von `-2350 W` (für einen Speicher) dynamisch an die Gesamtkapazität angepasst (`-max_gs + 50.0 W`), um Fehl-Drosselungen und Schwingungen bei hoher PV-Leistung und zwei installierten Speichern (L2) zu beheben.
+
 ## v2.8.5
 - **Dämpfung von Regelkreis-Oszillationen**: In den normalen Regelungsmodi für Tag (`active`) und Nacht (`night`) wird die Untergrenze des berechneten Sollwerts `gs_new` nun starr auf `0.0 W` begrenzt. Dies verhindert unerwünschte negative Stellwerte (AC-Netzladung) und unterbricht selbstverstärkende Schwingungen, die durch plötzliche Lastwechsel (z. B. nach dem Kaffeekochen) unter klarem Himmel ausgelöst werden können.
 
