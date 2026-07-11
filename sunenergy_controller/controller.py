@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.8.7
+SunEnergy XT Controller v2.8.8
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -510,7 +510,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.8.7 startet...")
+    log.info("SunEnergy XT Controller v2.8.8 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1042,7 +1042,7 @@ def main():
 
             # Gesamt-Batterieleistung
             battery_ac_est = battery_ac_est_l1 + battery_ac_est_l2
-            haus_p = max(0.0, grid_p_raw + solar_p + min(0.0, battery_ac_est))
+            haus_p = max(0.0, grid_p_raw + solar_p + battery_ac_est)
 
             # Plausibilitätsfilter für haus_p Aussetzer (max. 3 Ticks / 15s überbrücken)
             last_haus_p = state.get("last_haus_p", haus_p)
@@ -1855,8 +1855,8 @@ def main():
                 hms_limit_new = min(3600.0, haus_p + p_transfer)
 
             # v2.3.6: Ladekapazität ab 1% unter dem Limit auf 0 setzen, da das BMS dort bereits abriegelt
-            charge_capacity_l1 = 2400.0 if curr_soc < (soc_max_limit - 1.0) else 0.0
-            charge_capacity_l2 = 2400.0 if (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 1.0)) else 0.0
+            charge_capacity_l1 = 2400.0 if (curr_soc < (soc_max_limit - 1.0) and gs_new_rounded >= 0) else 0.0
+            charge_capacity_l2 = 2400.0 if (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 1.0) and gs_new_rounded >= 0) else 0.0
             hms_limit_new = max(hms_limit_new, haus_p + charge_capacity_l1 + charge_capacity_l2)
 
             hms_limit_new = max(0.0, min(3600.0, hms_limit_new))

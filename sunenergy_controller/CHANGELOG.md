@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.8.8
+- **Rückgängig Behebung Doppelzählung Hausverbrauch (Revert)**: Die Akku-Entladeleistung fließt wieder voll in die Berechnung des Hausverbrauchs ein, da der Speicher ein AC-gekoppeltes Entladesystem verwendet, dessen AC-Leistung nicht in den Hoymiles-Erzeugungswerten (`solar_p`) enthalten ist. Dies stellt die physikalisch korrekte Berechnung des Hausverbrauchs wieder her.
+- **AC-Lade-Drosselungs-Fix**: Die Ladekapazitäten `charge_capacity_l1` und `charge_capacity_l2` werden bei aktivem AC-Laden (`gs_new_rounded < 0`) auf `0.0 W` gesetzt. Dies ermöglicht es dem Regler, die Hoymiles während des Ladevorgangs korrekt zu drosseln, und behebt die ungewollte Dauereinspeisung/Entladung bei hohem SOC.
+
 ## v2.8.7
 - **Behebung Doppelzählung Hausverbrauch**: Bei der Berechnung des Hausverbrauchs wird die Akku-Entladeleistung nun korrekt ignoriert, da diese bereits in der Hoymiles-AC-Leistung (`solar_p`) enthalten ist. Die Akku-Leistung fließt nur noch in die Formel ein, wenn sie negativ ist (AC-Laden aus dem Netz), um eine Doppelzählung während der Entladungsphasen zu verhindern und den Hausverbrauch im Dashboard physikalisch korrekt anzuzeigen.
 
