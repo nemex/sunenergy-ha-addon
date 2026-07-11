@@ -1,6 +1,6 @@
 # Changelog
 
-## v3.0.0
+## v3.0.1
 - **Fehlerbehebungen (Stabilität & Cleanup)**:
   - **`grid_target` Mapping-Fix**: Behebung des fehlenden Mappings für `grid_target` in den `legacy_mappings` von `controller.py` und `web_ui.py`. Der eingestellte Nulleinspeisungs-Offset wird nun korrekt geladen.
   - **Reboot-Sicherheit**: Die Hold-Time `hold_until` wird beim Controller-Startup aus dem State verworfen. Dies verhindert ein tagelanges Einfrieren der Regelung nach Host-Reboots aufgrund der zurückgesetzten System-Uptime (`time.monotonic()`).
