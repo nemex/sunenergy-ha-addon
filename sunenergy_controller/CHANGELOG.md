@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.8.5
+- **Dämpfung von Regelkreis-Oszillationen**: In den normalen Regelungsmodi für Tag (`active`) und Nacht (`night`) wird die Untergrenze des berechneten Sollwerts `gs_new` nun starr auf `0.0 W` begrenzt. Dies verhindert unerwünschte negative Stellwerte (AC-Netzladung) und unterbricht selbstverstärkende Schwingungen, die durch plötzliche Lastwechsel (z. B. nach dem Kaffeekochen) unter klarem Himmel ausgelöst werden können.
+
 ## v2.8.4
 - **Einstellbarer Netz-Sollwert (Grid Target Offset)**: Eine neue Option `grid_target` in den Add-on-Einstellungen (Allgemeine Regelungs-Konfiguration) ermöglicht es, einen Offset für die Nulleinspeisung festzulegen (z. B. `-40.0 W` für ständige leichte Einspeisung). Dies puffert die Regellatenz ab und minimiert den Zählerbezug bei schnellen, taktenen Lasten wie 3D-Druckern oder Kühlschränken.
 
