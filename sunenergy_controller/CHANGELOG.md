@@ -7,12 +7,14 @@
   - **NameError Absturz-Fix**: Behebung eines NameErrors (nicht definierte Variable `anteil_l1`/`l2`) im `/meter` Endpoint von `web_ui.py`, wenn kein Transfer oder Kreuzladung vorliegt.
   - **Begrenzung CSV-Wachstum**: Reaktivierung des automatischen Trimmens der CSV-Logdatei auf 2.000 Zeilen bei Überschreitung von 2 MB (RAM- & Speicherplatzschutz).
   - **L2 Integrator Reset**: Behebung des fehlenden Integrator-Resets (`state["last_gs"] = 0.0`) im L2-OP-Einbruchszweig.
-  - **Diagramm-CSP-Fix**: Chart.js wird nun lokal unter `/lib/chart.umd.min.js` ausgeliefert, um Ingress-CSP-Sperren bei Nabu Casa zu umgehen.
+  - **Diagramm-CSP-Fix**: Chart.js wird nun lokal unter `lib/chart.umd.min.js` ausgeliefert, um Ingress-CSP-Sperren bei Nabu Casa zu umgehen.
 - **Regelungs-Verbesserungen**:
-  - **Zwangsladungs-Timeout**: Automatische Begrenzung der Kalibrierung (Zwangsladung auf 100%) auf maximal 12 Stunden, um BMS-Hänger bei 99% SOC abzufangen und teuren Netzbezug zu verhindern.
+  - **Thread-Safety für `/meter` Proxy**: Thread-sicheres Schreiben des Proxy-States mit Mutex-Lock zur Vermeidung von Lost-Updates bei parallelen Anfragen von L1 und L2.
+  - **Fallback-Grace-Periode**: 60-Sekunden-Schonfrist nach dem Start und bei Re-entry-Versuchen, um Falsch-Auslösungen der Fallback-Regelung zu verhindern, bis die Speicher das Polling wieder aufgenommen haben.
+  - **Zwangsladungs-Timeout**: Automatische Begrenzung der Kalibrierung (Zwangsladung auf 100%) auf maximal 12 Stunden, um BMS-Hänger bei 99% SOC abzufangen und teuren Netzbezug zu verhindern, inklusive Telegram-Benachrichtigung bei Abbruch.
   - **Nachtregelung mit `grid_target`**: Der Nulleinspeisungs-Offset wird nun auch nachts konsistent auf die Regelung angewendet.
-  - **Shelly-Staleness-Timeout**: Der `/meter` Proxy liefert bei einem Shelly-Ausfall nach 30 Sekunden ein HTTP-500 anstatt des alten Cache-Werts, um die automatische Regelung des Speichers kontrolliert zu stoppen.
-  - **Trennung von Poll- und Read-Timestamps**: Die Ticks des Controllers werden in getrennten Keys gesichert, um Fehlalarm-Szenarien bei der Erkennung verlorener MD-Verbindungen zu vermeiden.
+  - **Shelly-Staleness-Timeout**: Der `/meter` Proxy liefert bei einem Shelly-Ausfall nach 30 Sekunden ein HTTP-503 (Service Unavailable) anstatt des alten Cache-Werts, um die automatische Regelung des Speichers kontrolliert zu stoppen.
+  - **Trennung von Poll- und Read-Timestamps**: Die Ticks des Controllers werden in getrennten Keys gesichert, um Fehlalarm-Szenarien bei der Erkennung verlorener MD-Verbindungen (wenn der Speicher nicht mehr pollt) zu vermeiden.
   - **IS-Korrektur-Klemmen**: Begrenzung der IS-Sofortkorrektur bei Kreuzladung auf den API-Grenzbereich `[200, 2400]`.
 - **Changelog-Kürzung**: Entfernung aller Changelog-Einträge älter als `v2.8.0` zur Bereinigung der Dateigröße.
 

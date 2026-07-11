@@ -101,6 +101,7 @@ def load_options() -> dict:
             "regulation_manual_feed_in_target": "manual_feed_in_target",
             "regulation_manual_feed_in_min_soc": "manual_feed_in_min_soc",
             "regulation_manual_feed_in_power": "manual_feed_in_power",
+            # v3.0.0: fehlte — dadurch war die Option grid_target (v2.8.4) wirkungslos
             "regulation_grid_target": "grid_target",
         }
         
@@ -205,6 +206,8 @@ def csv_log(row: dict):
                 w.writeheader()
             w.writerow(row)
         # Nach dem Schreiben: nur wenn Datei zu groß, kürzen (billiger getsize-Check)
+        # v3.0.0: wieder aktiviert — sonst wächst die CSV unbegrenzt (~1.5 MB/Tag)
+        # und die Web-UI liest bei jedem /api-Aufruf die gesamte Datei in den RAM.
         if os.path.getsize(CSV_PATH) > CSV_MAX_BYTES:
             trim_csv(CSV_PATH)
     except Exception as e:
@@ -239,10 +242,6 @@ def sleep_tick(seconds: float):
     end = time.monotonic() + max(0.0, seconds)
     while RUNNING and time.monotonic() < end:
         time.sleep(0.2)
-
-# v2.1.5: Sofortiges Speichern für Echtzeit-Proxy-Aufteilung
-def save_state_throttled(state: dict, every: int = 6):
-    save_state(state)
 
 def ha_get_state(entity_id: str, default=None):
     try:
@@ -511,11 +510,16 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
+    log.info("SunEnergy XT Controller v3.0.0 startet...")
+    signal.signal(signal.SIGTERM, _handle_term)
+    signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
     state = load_state()
-    # Reboot-Sicherheit: hold_until verwerfen, da time.monotonic() nach System-Reboot zurückgesetzt wird
+
+    # v3.0.0: hold_until basiert auf time.monotonic() und darf einen Host-Reboot nicht
+    # überleben — monotonic startet dann wieder bei ~0 und ein alter (großer) Wert würde
+    # die GS-Regelung bis zum nächsten Tag/Nacht-Wechsel einfrieren.
     state.pop("hold_until", None)
-    log.info("SunEnergy XT Controller v3.0.0 startet...")
 
     # Reset and initialize watchdog configuration on startup using boolean toggle switches
     state["active_inputs"] = {
@@ -630,6 +634,9 @@ def main():
     save_state(state)
     log.info("Addon gestartet, SA=%s%%, HMS-Limit=%sW, Speicher L2 aktiv: %s, Natives Polling: %s", 
              soc_normal_max, state["last_hms_limit"], "Ja" if has_l2 else "Nein", "Ja" if use_native_pid else "Nein")
+
+    # v3.0.0: Startzeitpunkt für die Fallback-Grace-Periode (natives Polling)
+    startup_mono = time.monotonic()
 
     # Lokaler Cache für SunEnergyXT Daten zur Entlastung bei API-Ausfällen (Option C)
     op_current = 0.0
@@ -822,8 +829,9 @@ def main():
                 pb_current = float(se_data.get("BP", 0))
                 iw_current = float(se_data.get("IW", 0))
                 state["l1_polling_ok"] = True
-                state["last_read_l1_ts"] = time.time()
-                state["consecutive_polls_l1"] = state.get("consecutive_polls_l1", 0) + 1
+                # v3.0.0: last_poll_l1_ts / consecutive_polls_l1 gehören dem Meter-Proxy
+                # (echte /meter-Polls des Speichers) und werden hier nicht mehr überschrieben —
+                # sonst ist die Stale-Erkennung des nativen Modus wirkungslos.
                 
                 # MM Self-healing
                 mm_val = se_data.get("MM")
@@ -868,8 +876,7 @@ def main():
                     iw_l2 = float(se_data_l2.get("IW", 0))
                     state["pv_last_l2"] = pv_l2
                     state["l2_polling_ok"] = True
-                    state["last_read_l2_ts"] = time.time()
-                    state["consecutive_polls_l2"] = state.get("consecutive_polls_l2", 0) + 1
+                    # v3.0.0: Poll-Zeitstempel/-Zähler kommen nur noch vom Meter-Proxy (s. L1)
                     
                     # v2.5.1: L2 Lade-Blockade-Erkennung (BMS voll, App-Limit oder unplugged)
                     last_gs_l2 = safe_float(state, "last_device_gs_l2", 0.0)
@@ -939,6 +946,7 @@ def main():
                 state["last_gs"] = 0.0
             if has_l2 and prev_op_l2 > 100.0 and op_l2 < 10.0:
                 log.warning("L2 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l2, op_l2)
+                # v3.0.0: Reset fehlte hier — das Log behauptete ihn nur
                 state["last_gs"] = 0.0
 
             # Speicher-Leistungswerte im Zustand sichern
@@ -1081,18 +1089,19 @@ def main():
                 state["kreuzladung_hold_until"] = time.time() + 30  # 30s warten
                 
                 # Direkt schreiben, nicht auf nächsten Zyklus warten
-                # Direkt schreiben, nicht auf nächsten Zyklus warten
-                is_val = min(2400, max(200, int(haus_p)))
-                sunenergy_write(sunenergy_ip, {"GS": 0, "IS": is_val})
+                # v3.0.0: auf 2400W (Geräte-Maximum) klemmen — bei hohem Hausverbrauch
+                # ging sonst ein ungültiger IS-Wert ans Gerät.
+                is_emergency = min(2400, max(200, int(haus_p)))
+                sunenergy_write(sunenergy_ip, {"GS": 0, "IS": is_emergency})
                 if has_l2:
-                    sunenergy_write(sunenergy_ip_l2, {"GS": 0, "IS": is_val})
-                
+                    sunenergy_write(sunenergy_ip_l2, {"GS": 0, "IS": is_emergency})
+
                 # State synchronisieren
                 state["last_device_gs"] = 0
                 state["last_device_gs_l2"] = 0
-                state["last_device_is"] = is_val
+                state["last_device_is"] = is_emergency
                 if has_l2:
-                    state["last_device_is_l2"] = is_val
+                    state["last_device_is_l2"] = is_emergency
                 
                 save_state(state)
 
@@ -1107,17 +1116,24 @@ def main():
                 l1_failed = not state.get("l1_polling_ok", True)
                 l2_failed = has_l2 and not state.get("l2_polling_ok", True)
                 
-                needs_fallback = l1_stale or l2_stale or l1_failed or l2_failed
+                # v3.0.0: Die Poll-Zeitstempel stammen jetzt ausschließlich vom Meter-Proxy
+                # (echte /meter-Polls der Speicher). Nach Start bzw. Wiederanlauf-Versuch
+                # eine Grace-Periode geben, bis die Speicher den Proxy wieder pollen.
+                in_grace = ((time.monotonic() - startup_mono) < 60.0
+                            or time.time() < state.get("native_retry_grace_until", 0.0))
+                needs_fallback = (l1_stale or l2_stale or l1_failed or l2_failed) and not in_grace
                 in_fallback = state.get("in_fallback_mode", False)
-                
-                if needs_fallback:
-                    if not in_fallback:
-                        log.warning("⚠️ Fallback auslösen! Grund: "
-                                    f"L1_stale={l1_stale} L2_stale={l2_stale} "
-                                    f"L1_failed={l1_failed} L2_failed={l2_failed}")
-                        state["in_fallback_mode"] = True
-                        state["consecutive_polls_l1"] = 0
-                        state["consecutive_polls_l2"] = 0
+
+                if needs_fallback and not in_fallback:
+                    log.warning("⚠️ Fallback auslösen! Grund: "
+                                f"L1_stale={l1_stale} L2_stale={l2_stale} "
+                                f"L1_failed={l1_failed} L2_failed={l2_failed}")
+                    state["in_fallback_mode"] = True
+                    state["fallback_entered_ts"] = time.time()
+                    state["consecutive_polls_l1"] = 0
+                    state["consecutive_polls_l2"] = 0
+                    # v3.0.0: Telegram-Spam-Schutz — Alarm max. alle 30 Minuten
+                    if time.time() - state.get("last_fallback_alert_ts", 0.0) > 1800.0:
                         send_telegram_alert(
                             telegram_token,
                             telegram_chat_id,
@@ -1126,33 +1142,44 @@ def main():
                             f"- L1_stale: {l1_stale}, L2_stale: {l2_stale}\n"
                             f"- L1_failed: {l1_failed}, L2_failed: {l2_failed}"
                         )
-                        
-                        # Sofort auf MM=0 schalten, um manuelle Kontrolle zu erzwingen
-                        ha_switch(mm_switch, False)
-                        if has_l2 and mm_switch_l2:
-                            ha_switch(mm_switch_l2, False)
-                        sunenergy_write(sunenergy_ip, {"MM": 0})
-                        if has_l2:
-                            sunenergy_write(sunenergy_ip_l2, {"MM": 0})
-                            
-                        state["last_device_mm"] = None
-                        state["last_device_mm_l2"] = None
-                        save_state(state)
-                else:
+                        state["last_fallback_alert_ts"] = time.time()
+
+                    # Sofort auf MM=0 schalten, um manuelle Kontrolle zu erzwingen
+                    ha_switch(mm_switch, False)
+                    if has_l2 and mm_switch_l2:
+                        ha_switch(mm_switch_l2, False)
+                    sunenergy_write(sunenergy_ip, {"MM": 0})
+                    if has_l2:
+                        sunenergy_write(sunenergy_ip_l2, {"MM": 0})
+
+                    state["last_device_mm"] = None
+                    state["last_device_mm_l2"] = None
+                    save_state(state)
+                elif in_fallback:
+                    polls_fresh = not needs_fallback
                     polls_ok_l1 = state.get("consecutive_polls_l1", 0) >= 3
                     polls_ok_l2 = not has_l2 or state.get("consecutive_polls_l2", 0) >= 3
-                    
-                    if in_fallback and polls_ok_l1 and polls_ok_l2:
-                        log.info("🟢 Rückkehr zum nativen PID-Modus. Hysterese-Polls ok (L1=%d, L2=%d).",
-                                 state.get("consecutive_polls_l1", 0), state.get("consecutive_polls_l2", 0))
+                    # v3.0.0: Wiederanlauf-Versuch alle 10 Minuten — die Speicher pollen den
+                    # Proxy im manuellen Modus (MM=0) evtl. nicht von selbst wieder.
+                    retry_due = ((time.time() - state.get("fallback_entered_ts", 0.0)) > 600.0
+                                 and not l1_failed and not l2_failed)
+
+                    if (polls_fresh and polls_ok_l1 and polls_ok_l2) or retry_due:
+                        if polls_fresh and polls_ok_l1 and polls_ok_l2:
+                            log.info("🟢 Rückkehr zum nativen PID-Modus. Hysterese-Polls ok (L1=%d, L2=%d).",
+                                     state.get("consecutive_polls_l1", 0), state.get("consecutive_polls_l2", 0))
+                            send_telegram_alert(
+                                telegram_token,
+                                telegram_chat_id,
+                                "🟢 <b>SunEnergy XT Controller: Fallback beendet.</b>\n"
+                                "Die Regelung läuft wieder normal im aktiven Modus."
+                            )
+                        else:
+                            log.info("🔁 Fallback: Wiederanlauf-Versuch — schreibe Zähler-Bindung und MM=1 erneut.")
                         state["in_fallback_mode"] = False
-                        send_telegram_alert(
-                            telegram_token,
-                            telegram_chat_id,
-                            "🟢 <b>SunEnergy XT Controller: Fallback beendet.</b>\n"
-                            "Die Regelung läuft wieder normal im aktiven Modus."
-                        )
-                        
+                        # Grace, damit die Stale-Erkennung dem Speicher Zeit lässt, das Polling aufzunehmen
+                        state["native_retry_grace_until"] = time.time() + 30.0
+
                         # Wieder Zählerbindung und MM=1 schreiben
                         ha_ip = opts.get("ha_ip", "192.168.178.132")
                         md_payload = {
@@ -1161,11 +1188,11 @@ def main():
                             "dat_str": {"pwr": "total_act_power"}
                         }
                         md_str = json.dumps(md_payload)
-                        
+
                         sunenergy_write(sunenergy_ip, {"MD": md_str, "MM": 1, "GS": 0})
                         if has_l2:
                             sunenergy_write(sunenergy_ip_l2, {"MD": md_str, "MM": 1, "GS": 0})
-                            
+
                         state["last_device_gs"] = None
                         state["last_device_mm"] = None
                         state["last_device_gs_l2"] = None
@@ -1298,41 +1325,19 @@ def main():
             if zwangsladung_trigger:
                 log.info("Zwangsladung gestartet! %.1f Tage seit letzter Vollladung", tage_seit)
                 set_active_mode(state, "calibration")
-                state["calibration_start_ts"] = time.time()
+                state["calibration_started_ts"] = time.time()
                 save_state(state)
 
-            if state["active_mode"] == "calibration":
-                # Sicherheits-Timeout (12h) für Zwangsladung prüfen
-                calib_start = state.get("calibration_start_ts")
-                if calib_start is None:
-                    state["calibration_start_ts"] = time.time()
-                    calib_start = time.time()
-                if time.time() - calib_start > 12 * 3600:
-                    log.warning("⚠️ Zwangsladung abgebrochen wegen Timeout (> 12h)!")
-                    state["last_calibration_ts"] = time.time()
-                    set_active_mode(state, "night")
-                    ha_set_number(sa_entity, soc_normal_max)
-                    ha_switch(mm_switch, True)
-                    ha_set_number(gs_entity, 0)
-                    sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
-                    state["last_written_sa"] = soc_normal_max
-                    state["last_device_gs"] = None
-                    state["last_device_mm"] = 1
-                    if has_l2:
-                        if sa_entity_l2:
-                            ha_set_number(sa_entity_l2, soc_normal_max)
-                        if mm_switch_l2:
-                            ha_switch(mm_switch_l2, True)
-                        if gs_entity_l2:
-                            ha_set_number(gs_entity_l2, 0)
-                        sunenergy_write(sunenergy_ip_l2, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
-                        state["last_device_gs_l2"] = None
-                        state["last_device_mm_l2"] = 1
-                    save_state(state)
-                    sleep_tick(TICK_S)
-                    continue
+            # v3.0.0: Sicherheitsnetz — Zwangsladung nach 12h abbrechen (z.B. wenn das BMS
+            # nie exakt 100% meldet), sonst droht endloser Netzbezug mit -2400W.
+            if state["active_mode"] == "calibration" and "calibration_started_ts" not in state:
+                state["calibration_started_ts"] = time.time()
+            calibration_timeout = (
+                state["active_mode"] == "calibration"
+                and (time.time() - state.get("calibration_started_ts", time.time())) > 12 * 3600
+            )
 
-            if state["active_mode"] == "calibration" and (curr_soc < 100 or (has_l2 and curr_soc_l2 < 100)):
+            if state["active_mode"] == "calibration" and not calibration_timeout and (curr_soc < 100 or (has_l2 and curr_soc_l2 < 100)):
                 log.info("Zwangsladung läuft... SOC_L1=%.1f%% SOC_L2=%.1f%%", curr_soc, curr_soc_l2)
                 # v1.9.2: Spam-Schutz — nur beim Eintritt/nach Drift schreiben,
                 # nicht jeden Tick (HA + Geräte-Flash schonen)
@@ -1392,13 +1397,23 @@ def main():
                 ha_push_sensor("sensor.sunenergy_battery_ac_l2",  battery_ac_est_l2, "W", "power", "Batterie L2 AC (Controller)")
 
                 state["grid_p_filtered"] = grid_p_raw
-                save_state_throttled(state)
+                save_state(state)
 
                 sleep_tick(TICK_S)
                 continue
 
-            if state["active_mode"] == "calibration" and curr_soc >= 100 and (not has_l2 or curr_soc_l2 >= 100):
-                log.info("Zwangsladung abgeschlossen!")
+            if state["active_mode"] == "calibration" and (calibration_timeout or (curr_soc >= 100 and (not has_l2 or curr_soc_l2 >= 100))):
+                if calibration_timeout:
+                    log.warning("⚠️ Zwangsladung nach 12h Timeout abgebrochen (SOC_L1=%.1f%%, SOC_L2=%.1f%%).", curr_soc, curr_soc_l2)
+                    send_telegram_alert(
+                        telegram_token,
+                        telegram_chat_id,
+                        f"⚠️ <b>SunEnergy XT Controller:</b> Zwangsladung nach 12h abgebrochen, "
+                        f"ohne dass 100% erreicht wurden (SOC L1: {curr_soc:.1f}%, L2: {curr_soc_l2:.1f}%)."
+                    )
+                else:
+                    log.info("Zwangsladung abgeschlossen!")
+                state.pop("calibration_started_ts", None)
                 state["last_calibration_ts"] = time.time()
                 set_active_mode(state, "night")
                 
@@ -1505,9 +1520,8 @@ def main():
                     # GS nachts aktiv regeln
                     max_gs = 4800.0 if has_l2 else 2400.0
                     gs_last = safe_float(state, "last_gs", 0.0)
-                    grid_target = float(opts.get("grid_target", 0.0))
-                    grid_error = grid_p_raw - grid_target
-                    _delta_night = calc_adaptive_gs_delta(grid_error, has_l2=has_l2)
+                    # v3.0.0: grid_target-Offset auch nachts anwenden (konsistent zur Tagregelung)
+                    _delta_night = calc_adaptive_gs_delta(grid_p_raw - grid_target, has_l2=has_l2)
                     gs_new = gs_last + _delta_night
 
                     hold_until = state.get("hold_until", 0.0)
@@ -1672,7 +1686,7 @@ def main():
 
                 state["grid_p_filtered"] = grid_p_raw
                 state["last_gs"]         = gs_new
-                save_state_throttled(state)
+                save_state(state)
                 sleep_tick(TICK_S)
                 continue
 
@@ -2281,7 +2295,7 @@ def main():
             state["last_gs"]         = gs_new
             state["solar_p_2000_last"] = solar_p_2000
             state["solar_p_1600_last"] = solar_p_1600
-            save_state_throttled(state)
+            save_state(state)
 
         except Exception as e:
             log.error("Fehler im Regelzyklus: %s", e, exc_info=True)

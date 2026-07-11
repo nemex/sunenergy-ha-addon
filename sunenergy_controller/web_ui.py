@@ -12,6 +12,7 @@ Port 8765:
 import csv
 import json
 import os
+import threading
 import time
 import requests
 from pathlib import Path
@@ -40,14 +41,27 @@ def load_proxy_state() -> dict:
         pass
     return {}
 
-def save_proxy_state(updates: dict):
+# v2.8.9: Lock gegen Lost-Updates — ThreadingHTTPServer bedient parallele
+# /meter-Polls von L1 und L2 in getrennten Threads.
+_PROXY_LOCK = threading.Lock()
+
+def record_meter_poll(client_ip: str, ip_l1: str, ip_l2: str):
+    """Registriert einen /meter-Poll eines Speichers threadsicher."""
     try:
-        st = load_proxy_state()
-        st.update(updates)
-        temp_path = PROXY_STATE_PATH + ".tmp"
-        with open(temp_path, "w") as f:
-            json.dump(st, f)
-        os.replace(temp_path, PROXY_STATE_PATH)
+        with _PROXY_LOCK:
+            st = load_proxy_state()
+            if client_ip == ip_l1:
+                st["last_poll_l1_ts"] = time.time()
+                st["consecutive_polls_l1"] = st.get("consecutive_polls_l1", 0) + 1
+            elif ip_l2 and client_ip == ip_l2:
+                st["last_poll_l2_ts"] = time.time()
+                st["consecutive_polls_l2"] = st.get("consecutive_polls_l2", 0) + 1
+            else:
+                return
+            temp_path = PROXY_STATE_PATH + ".tmp"
+            with open(temp_path, "w") as f:
+                json.dump(st, f)
+            os.replace(temp_path, PROXY_STATE_PATH)
     except Exception:
         pass
 
@@ -99,6 +113,7 @@ def load_options() -> dict:
                 "regulation_manual_feed_in_target": "manual_feed_in_target",
                 "regulation_manual_feed_in_min_soc": "manual_feed_in_min_soc",
                 "regulation_manual_feed_in_power": "manual_feed_in_power",
+                # v2.8.9: Konsistenz zum Controller
                 "regulation_grid_target": "grid_target",
             }
             
@@ -111,9 +126,13 @@ def load_options() -> dict:
         pass
     return {}
 
-_SHELLY_CACHE = {"time": 0.0, "value": 0.0}
+_SHELLY_CACHE = {"time": 0.0, "value": 0.0, "last_success": 0.0}
+SHELLY_STALE_S = 30.0
 
-def get_shelly_power(shelly_ip: str) -> float:
+def get_shelly_power(shelly_ip: str):
+    """Netzleistung vom Shelly. Liefert None, wenn der Shelly länger als
+    SHELLY_STALE_S nicht erreichbar war (v2.8.9) — statt ewig den letzten
+    Konservenwert an die regelnden Speicher auszuliefern."""
     now = time.time()
     if now - _SHELLY_CACHE["time"] < 0.5:
         return _SHELLY_CACHE["value"]
@@ -123,13 +142,12 @@ def get_shelly_power(shelly_ip: str) -> float:
             val = float(r.json().get("total_act_power", 0))
             _SHELLY_CACHE["time"] = now
             _SHELLY_CACHE["value"] = val
+            _SHELLY_CACHE["last_success"] = now
             return val
     except Exception:
         pass
-        
-    if now - _SHELLY_CACHE["time"] > 30.0:
-        raise RuntimeError("Shelly power value is stale (> 30s)")
-        
+    if now - _SHELLY_CACHE["last_success"] > SHELLY_STALE_S:
+        return None
     return _SHELLY_CACHE["value"]
 
 def get_csv_data(n=100) -> list:
@@ -150,7 +168,8 @@ HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SunEnergy XT Controller</title>
-<script src="/lib/chart.umd.min.js"></script>
+<!-- v2.8.9: Chart.js lokal ausliefern (Ingress-CSP blockiert externe CDNs, s. v2.7.4) -->
+<script src="lib/chart.umd.min.js"></script>
 <style>
   :root {
     --bg: #0a0e14; --surface: #111822; --border: #1e2d3d;
@@ -172,6 +191,7 @@ HTML = """<!DOCTYPE html>
   .mode.active { background: rgba(0,230,118,0.15); color: var(--green); border: 1px solid var(--green); }
   .mode.soc_full { background: rgba(240,165,0,0.15); color: var(--accent); border: 1px solid var(--accent); }
   .mode.night { background: rgba(74,85,104,0.3); color: var(--muted); border: 1px solid var(--muted); }
+  .mode.calibration { background: rgba(240,165,0,0.15); color: var(--accent); border: 1px solid var(--accent); }
   .mode.feed_in { background: rgba(0,194,255,0.15); color: var(--blue); border: 1px solid var(--blue); }
   .mode.feed_in_standby { background: rgba(240,165,0,0.15); color: var(--accent); border: 1px solid var(--accent); }
   .mode.bypass { background: rgba(236,72,153,0.15); color: #ec4899; border: 1px solid #ec4899; }
@@ -619,7 +639,9 @@ def get_split_power(requester_ip, real_grid_power, opts) -> float:
                 return min(-200.0, real_grid_power)
             else:
                 return max(200.0, real_grid_power)
-                
+    # v2.8.9: Anteilsberechnung gilt für ALLE Fälle. Vorher war dieser Zweig per elif an
+    # die Transfer-Bedingung gekettet — ohne aktiven Transfer und ohne Kreuzladung
+    # (der Normalfall!) blieben anteil_l1/anteil_l2 undefiniert (NameError beim /meter-Poll).
     if real_grid_power > 0:
         usable_l1 = max(0.0, soc_l1 - soc_min)
         usable_l2 = max(0.0, soc_l2 - soc_min)
@@ -652,30 +674,23 @@ class UIHandler(BaseHTTPRequestHandler):
         shelly_ip = opts.get("shelly_ip", "192.168.178.98")
 
         if self.path == "/meter":
-            try:
-                power = get_shelly_power(shelly_ip)
-            except Exception as e:
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(f"Error: {e}".encode("utf-8"))
-                return
-            
             client_ip = self.client_address[0]
             ip_l1 = opts.get("sunenergy_ip", "192.168.178.94")
             ip_l2 = opts.get("sunenergy_ip_l2", "")
-            
-            proxy_st = load_proxy_state()
-            updates = {}
-            if client_ip == ip_l1:
-                updates["last_poll_l1_ts"] = time.time()
-                updates["consecutive_polls_l1"] = proxy_st.get("consecutive_polls_l1", 0) + 1
-            elif ip_l2 and client_ip == ip_l2:
-                updates["last_poll_l2_ts"] = time.time()
-                updates["consecutive_polls_l2"] = proxy_st.get("consecutive_polls_l2", 0) + 1
-                
-            if updates:
-                save_proxy_state(updates)
-                
+
+            # Poll registrieren, bevor das Ergebnis feststeht — das Gerät HAT gepollt.
+            record_meter_poll(client_ip, ip_l1, ip_l2)
+
+            power = get_shelly_power(shelly_ip)
+            if power is None:
+                # v2.8.9: Shelly >30s nicht erreichbar — Fehler melden statt
+                # Konservenwerte auszuliefern; das Gerät behandelt den Ausfall selbst.
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"Shelly meter unreachable")
+                return
+
             if opts.get("use_native_pid", False):
                 power = get_split_power(client_ip, power, opts)
 
