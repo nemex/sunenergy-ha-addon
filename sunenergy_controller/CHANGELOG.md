@@ -1,5 +1,8 @@
 # Changelog
 
+## v2.8.7
+- **Behebung Doppelzählung Hausverbrauch**: Bei der Berechnung des Hausverbrauchs wird die Akku-Entladeleistung nun korrekt ignoriert, da diese bereits in der Hoymiles-AC-Leistung (`solar_p`) enthalten ist. Die Akku-Leistung fließt nur noch in die Formel ein, wenn sie negativ ist (AC-Laden aus dem Netz), um eine Doppelzählung während der Entladungsphasen zu verhindern und den Hausverbrauch im Dashboard physikalisch korrekt anzuzeigen.
+
 ## v2.8.6
 - **Freigabe AC-Laden & Schwellenwert-Korrektur**: In den normalen Regelungsmodi für Tag (`active`) und Nacht (`night`) wird die Untergrenze des berechneten Sollwerts `gs_new` wieder auf `-max_gs` freigegeben, um das Laden der Akkus aus dem AC-Überschuss der Hoymiles zu ermöglichen. Gleichzeitig wird die hardcodierte Drosselgrenze von `-2350 W` (für einen Speicher) dynamisch an die Gesamtkapazität angepasst (`-max_gs + 50.0 W`), um Fehl-Drosselungen und Schwingungen bei hoher PV-Leistung und zwei installierten Speichern (L2) zu beheben.
 

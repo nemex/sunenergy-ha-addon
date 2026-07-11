@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.8.6
+SunEnergy XT Controller v2.8.7
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -510,7 +510,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.8.6 startet...")
+    log.info("SunEnergy XT Controller v2.8.7 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1042,7 +1042,7 @@ def main():
 
             # Gesamt-Batterieleistung
             battery_ac_est = battery_ac_est_l1 + battery_ac_est_l2
-            haus_p = max(0.0, grid_p_raw + solar_p + battery_ac_est)
+            haus_p = max(0.0, grid_p_raw + solar_p + min(0.0, battery_ac_est))
 
             # Plausibilitätsfilter für haus_p Aussetzer (max. 3 Ticks / 15s überbrücken)
             last_haus_p = state.get("last_haus_p", haus_p)
