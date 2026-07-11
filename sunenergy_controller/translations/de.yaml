@@ -148,3 +148,6 @@ configuration:
       manual_feed_in_power:
         name: "Manuelle Einspeisung Leistung (W)"
         description: "Konstante Leistung für die manuelle Einspeisung"
+      grid_target:
+        name: "Netz-Sollwert (Offset)"
+        description: "Zielwert für den Netzanschluss in Watt. Ein negativer Wert (z. B. -40) erzwingt eine permanente leichte Einspeisung, um kurze Lastspitzen (z. B. Kühlschrank-PWM oder 3D-Drucker) abzufedern und Zählerbezug zu vermeiden."

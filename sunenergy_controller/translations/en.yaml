@@ -148,3 +148,6 @@ configuration:
       manual_feed_in_power:
         name: "Manual Feed-In Power (W)"
         description: "Constant power target for manual feed-in"
+      grid_target:
+        name: "Grid Power Target (Offset)"
+        description: "Target value for grid connection in Watts. A negative value (e.g. -40) enforces a permanent slight feed-in to buffer short load spikes (e.g. fridge PWM or 3D printers) and prevent grid import."

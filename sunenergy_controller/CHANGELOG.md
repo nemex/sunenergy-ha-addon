@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.8.4
+- **Einstellbarer Netz-Sollwert (Grid Target Offset)**: Eine neue Option `grid_target` in den Add-on-Einstellungen (Allgemeine Regelungs-Konfiguration) ermöglicht es, einen Offset für die Nulleinspeisung festzulegen (z. B. `-40.0 W` für ständige leichte Einspeisung). Dies puffert die Regellatenz ab und minimiert den Zählerbezug bei schnellen, taktenen Lasten wie 3D-Druckern oder Kühlschränken.
+
+## v2.8.3
+- **Bypass-Modus Sollwert-Begrenzung**: Im Bypass-Modus wird die Untergrenze des Sollwerts `gs_new` nun korrekt auf `0.0` begrenzt, um unerwünschte negative Stellwerte zu verhindern.
+
 ## v2.8.2
 - **Zwangsladung CSV-Logging & Sensor-Freeze behoben**: Während der automatischen Akku-Zwangsladung (Kalibrierung auf 100%) wurde das Schreiben in das CSV-Log sowie das Live-Update der virtuellen Home Assistant-Sensoren fälschlicherweise übersprungen. Dies führte zu großen Lücken in den Auswertungsdaten und zu eingefrorenen Sensorwerten. Beides aktualisiert sich nun auch während der Zwangsladungsphase ordnungsgemäß alle 5 Sekunden.
 

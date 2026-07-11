@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v2.8.3
+SunEnergy XT Controller v2.8.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -510,7 +510,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v2.8.3 startet...")
+    log.info("SunEnergy XT Controller v2.8.4 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1183,7 +1183,7 @@ def main():
                 feed_in_state = ha_get_state(manual_feed_in_switch, "off")
                 feed_in_active = (feed_in_state == "on")
 
-            grid_target = 0.0
+            grid_target = float(opts.get("grid_target", 0.0))
             is_actively_feeding_in = False
 
             if feed_in_active:
@@ -1225,7 +1225,7 @@ def main():
                     state["manual_feed_in_accumulated_kwh"] = 0.0
                     feed_in_active = False
                     is_actively_feeding_in = False
-                    grid_target = 0.0
+                    grid_target = float(opts.get("grid_target", 0.0))
             else:
                 if state.get("manual_feed_in_active", False):
                     # Transition von An auf Aus
