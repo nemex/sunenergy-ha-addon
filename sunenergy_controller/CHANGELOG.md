@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.0.2
+- **Anti-Schwingungs-Release**: Behebt den am 12.07. gemessenen Regelkreis-Limit-Cycle (222 HMS-Limit-Flaps/Tag, Netz-Pendeln ±1900 W, Hausverbrauchs-Sprünge 800→1600 W im 15-Sekunden-Takt), der auftrat, sobald ein Speicher fast voll war und die SOC-Angleichung lief:
+  - **Transfer-HMS-Override entschärft**: Bei aktivem SOC-Transfer wird das Hoymiles-Limit nicht mehr hart auf `haus_p + p_transfer` gesetzt (Drosselung an das verrauschte `haus_p` gekoppelt), sondern dieser Wert wirkt nur noch als Untergrenze. Der Transfer läuft über AC zwischen den Speichern und erzeugt keinen Netz-Export, den man wegdrosseln müsste.
+  - **Ladekapazität proportional statt binär**: Der v2.8.8-Kippschalter (`gs_new_rounded >= 0`) ließ das HMS-Limit bei jedem Nulldurchgang der GS-Summe um bis zu 2000 W springen — genau das passiert während der SOC-Angleichung ständig (ein Speicher lädt, einer entlädt). Die bereits genutzte AC-Ladeleistung wird jetzt stufenlos von der verbleibenden Kapazität abgezogen.
+  - **HMS-Limit-Slew + Richtungs-Hysterese**: Das Limit ändert sich nur noch um max. ±200 W/Tick (Notabsenkung 600 W/Tick bei Einspeisung > 600 W) und wechselt die Richtung frühestens alle 30 s. Die schnelle Nulleinspeisungs-Korrektur übernimmt die Batterie (GS), das HMS-Limit ist der langsame Trimm-Regler. Bypass und manuelle Einspeisung sind ausgenommen.
+  - **SOC-Angleichung mit Hysterese, Netz-Gate und Cooldown**: Start erst ab >5 % SOC-Differenz bei ruhigem Netz (|Netz| ≤ 300 W); ein laufender Transfer darf bis 2 % Differenz weiterlaufen und wird von Netzspitzen nicht abgewürgt. Nach Transfer-Ende gilt ein 120-s-Cooldown gegen Sekundentakt-Flattern.
+  - **MPPT-Schutz für fast volle Speicher**: Einem Speicher ≥ (Limit − 3 %) mit aktivem PV-Ertrag wird kein AC-Laden mehr aufgezwungen (GS ≥ 0) und sein GS-Sollwert sinkt nur noch mit max. 250 W/Tick. Vorher wurde der AC-Ausgang des vollen Speichers im 5-s-Takt zwischen −90 und +650 W hin- und hergerissen, worauf das Gerät seine eigenen MPPTs abwürgte (gemessen: 42 `pv_l2`-Einbrüche ≥ 200 W in 2 h bei L2 = 92 %).
+  - **`is_l2` im CSV-Log**: Das IS-Limit des zweiten Speichers wird jetzt mitgeloggt (war bei der Diagnose ein blinder Fleck). Hinweis: Durch die neue Spalte wird die bestehende CSV beim ersten Start einmalig neu angelegt.
+
 ## v3.0.1
 - **Fehlerbehebungen (Stabilität & Cleanup)**:
   - **`grid_target` Mapping-Fix**: Behebung des fehlenden Mappings für `grid_target` in den `legacy_mappings` von `controller.py` und `web_ui.py`. Der eingestellte Nulleinspeisungs-Offset wird nun korrekt geladen.

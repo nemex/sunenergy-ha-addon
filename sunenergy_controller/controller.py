@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.0.1
+SunEnergy XT Controller v3.0.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -164,7 +164,8 @@ def save_state(state: dict):
 CSV_FIELDS = [
     "ts", "mode", "soc", "grid_p", "haus_p", "solar_p",
     "gs", "op", "pv", "is_target", "hms_limit", "hms_2000", "hms_1600",
-    "hms_2000_lim", "hms_1600_lim", "soc_l2", "op_l2", "pv_l2", "gs_l1", "gs_l2"
+    "hms_2000_lim", "hms_1600_lim", "soc_l2", "op_l2", "pv_l2", "gs_l1", "gs_l2",
+    "is_l2"  # v3.0.2: IS-Limit L2 mitloggen (war bisher ein blinder Fleck)
 ]
 
 CSV_MAX_BYTES = 2 * 1024 * 1024   # 2 MB
@@ -510,7 +511,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.0.1 startet...")
+    log.info("SunEnergy XT Controller v3.0.2 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1386,6 +1387,7 @@ def main():
                     "pv_l2":     round(pv_l2, 1) if has_l2 else 0.0,
                     "gs_l1":     -2400,
                     "gs_l2":     -2400 if has_l2 else 0,
+                    "is_l2":     2400,
                 })
 
                 # Virtuelle HA-Sensoren pushen
@@ -1674,6 +1676,7 @@ def main():
                     "pv_l2":     round(pv_l2, 1) if has_l2 else 0.0,
                     "gs_l1":     round(gs_l1_rounded, 0),
                     "gs_l2":     round(gs_l2_rounded, 0),
+                    "is_l2":     round(safe_float(state, "last_device_is_l2", 2400.0), 0) if has_l2 else 2400,
                 })
 
                 # v1.8.5: Berechnete Werte als virtuelle HA-Sensoren pushen
@@ -1903,15 +1906,56 @@ def main():
 
             hms_limit_new = max(0.0, min(3600.0, hms_limit_new))
             # Fix 2 — HMS-Anpassung bei aktivem Transfer:
+            # v3.0.2: nur noch als UNTERGRENZE (Hoymiles müssen Haus + Transfer decken können),
+            # nicht mehr als harte Zuweisung — der Transfer läuft L1<->L2 über AC und erzeugt
+            # keinen Netz-Export. Das Setzen auf haus_p+p_transfer koppelte das HMS-Limit an
+            # das verrauschte haus_p und war Haupttreiber des Limit-Flatterns (222 Flaps/Tag).
             if p_transfer > 10.0:
-                hms_limit_new = min(3600.0, haus_p + p_transfer)
+                hms_limit_new = max(hms_limit_new, min(3600.0, haus_p + p_transfer))
 
             # v2.3.6: Ladekapazität ab 1% unter dem Limit auf 0 setzen, da das BMS dort bereits abriegelt
-            charge_capacity_l1 = 2400.0 if (curr_soc < (soc_max_limit - 1.0) and gs_new_rounded >= 0) else 0.0
-            charge_capacity_l2 = 2400.0 if (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 1.0) and gs_new_rounded >= 0) else 0.0
-            hms_limit_new = max(hms_limit_new, haus_p + charge_capacity_l1 + charge_capacity_l2)
+            # v3.0.2: proportional statt binär — der harte gs_new_rounded>=0-Schalter (v2.8.8)
+            # ließ das HMS-Limit bei jedem GS-Nulldurchgang um bis zu 2000W springen.
+            # Jetzt zählt die bereits genutzte AC-Ladeleistung (negatives GS) stufenlos
+            # gegen die verbleibende Kapazität.
+            charge_capacity_l1 = 2400.0 if curr_soc < (soc_max_limit - 1.0) else 0.0
+            charge_capacity_l2 = 2400.0 if (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 1.0)) else 0.0
+            charge_capacity = max(0.0, charge_capacity_l1 + charge_capacity_l2 + min(0.0, gs_new_rounded))
+            hms_limit_new = max(hms_limit_new, haus_p + charge_capacity)
 
             hms_limit_new = max(0.0, min(3600.0, hms_limit_new))
+
+            # v3.0.2: Slew-Begrenzung + Richtungs-Hysterese gegen HMS-Limit-Flattern.
+            # Die schnelle Nulleinspeisungs-Korrektur übernimmt die Batterie (GS);
+            # das HMS-Limit ist der langsame Trimm-Regler: max ±200W/Tick (Notabsenkung
+            # 600W/Tick bei starker Einspeisung), Richtungswechsel frühestens alle 30s.
+            # Bypass/manuelle Einspeisung sind ausgenommen (dort ist Vollgas gewollt).
+            if not (bypass_active or is_actively_feeding_in):
+                max_step_up = 200.0
+                max_step_down = 600.0 if grid_p_raw < -600.0 else 200.0
+                hms_limit_new = max(hms_limit_last - max_step_down,
+                                    min(hms_limit_last + max_step_up, hms_limit_new))
+
+                new_dir = 0
+                if hms_limit_new > hms_limit_last + 1.0:
+                    new_dir = 1
+                elif hms_limit_new < hms_limit_last - 1.0:
+                    new_dir = -1
+                last_dir = state.get("hms_dir", 0)
+                if new_dir != 0 and last_dir != 0 and new_dir != last_dir:
+                    hold_active = (time.time() - state.get("hms_dir_change_ts", 0.0)) < 30.0
+                    emergency_down = (new_dir == -1 and grid_p_raw < -600.0)
+                    if hold_active and not emergency_down:
+                        # Richtungswechsel zu früh — Limit halten
+                        hms_limit_new = hms_limit_last
+                        new_dir = last_dir
+                    else:
+                        state["hms_dir_change_ts"] = time.time()
+                elif new_dir != 0 and last_dir == 0:
+                    state["hms_dir_change_ts"] = time.time()
+                if new_dir != 0:
+                    state["hms_dir"] = new_dir
+
             state["last_hms_limit"] = hms_limit_new
 
             # HMS Limits berechnen
@@ -2041,11 +2085,20 @@ def main():
             # v2.1.8: SOC-Angleichung für L1/L2 im manuellen Modus via AC-AC-Transfer
             # ==================================================================
             p_transfer = 0.0
+            transfer_was_active = state.get("last_p_transfer", 0.0) > 10.0
             if not is_native and has_l2:
                 soc_max_curr = max(curr_soc, curr_soc_l2)
                 soc_diff = curr_soc - curr_soc_l2
-                
-                if soc_max_curr > 80.0 and abs(soc_diff) > 5.0:
+
+                # v3.0.2: Hysterese + Netz-Gate + Cooldown gegen Transfer-Flattern:
+                # Start erst ab >5% SOC-Differenz, bei ruhigem Netz (|grid| <= 300W) und
+                # abgelaufenem Cooldown. Ein LAUFENDER Transfer darf bis 2% Differenz
+                # weiterlaufen und wird von kurzen Netzspitzen nicht abgewürgt.
+                required_diff = 2.0 if transfer_was_active else 5.0
+                grid_ok = transfer_was_active or abs(grid_p_raw) <= 300.0
+                cooldown_ok = transfer_was_active or time.time() >= state.get("transfer_cooldown_until", 0.0)
+
+                if soc_max_curr > 80.0 and abs(soc_diff) > required_diff and grid_ok and cooldown_ok:
                     if soc_diff > 0.0:
                         # L1 is fuller -> Transfer L1 -> L2
                         src_is_l1 = True
@@ -2122,6 +2175,24 @@ def main():
             else:
                 if "last_p_transfer" in state:
                     state["last_p_transfer"] = 0.0
+
+            # v3.0.2: Cooldown nach Transfer-Ende — frühestens in 120s wieder starten,
+            # damit die Angleichung nicht im Sekundentakt an- und abspringt.
+            if transfer_was_active and state.get("last_p_transfer", 0.0) <= 10.0:
+                state["transfer_cooldown_until"] = time.time() + 120.0
+
+            # v3.0.2: Fast voller Speicher mit aktivem PV-Ertrag: kein AC-Laden mehr
+            # erzwingen (GS >= 0) und GS nur begrenzt schnell absenken (max 250W/Tick).
+            # Sonst würgt das Gerät seine eigenen MPPTs ab und der PV-Ertrag kollabiert
+            # (gemessen am 12.07.: 42 pv_l2-Einbrüche in 2h bei L2=92%) — Schwingungsquelle.
+            if curr_soc >= (soc_max_limit - 3.0) and pv_current > 50.0:
+                gs_l1 = max(gs_l1, 0.0)
+                if state.get("last_device_gs") is not None:
+                    gs_l1 = max(gs_l1, float(state["last_device_gs"]) - 250.0)
+            if has_l2 and curr_soc_l2 >= (soc_max_limit - 3.0) and pv_l2 > 50.0:
+                gs_l2 = max(gs_l2, 0.0)
+                if state.get("last_device_gs_l2") is not None:
+                    gs_l2 = max(gs_l2, float(state["last_device_gs_l2"]) - 250.0)
 
             # Finales Runden der GS-Sollwerte nach Transfer
             gs_l1_rounded = round(gs_l1 / 10) * 10
@@ -2277,6 +2348,7 @@ def main():
                 "pv_l2":     round(pv_l2, 1) if has_l2 else 0.0,
                 "gs_l1":     round(gs_l1_rounded, 0),
                 "gs_l2":     round(gs_l2_rounded, 0),
+                "is_l2":     is_target_l2,
             })
 
             # v1.8.5: Berechnete Werte als virtuelle HA-Sensoren pushen
