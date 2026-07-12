@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.0.2
+SunEnergy XT Controller v3.0.3
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -511,7 +511,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.0.2 startet...")
+    log.info("SunEnergy XT Controller v3.0.3 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -2185,11 +2185,15 @@ def main():
             # erzwingen (GS >= 0) und GS nur begrenzt schnell absenken (max 250W/Tick).
             # Sonst würgt das Gerät seine eigenen MPPTs ab und der PV-Ertrag kollabiert
             # (gemessen am 12.07.: 42 pv_l2-Einbrüche in 2h bei L2=92%) — Schwingungsquelle.
-            if curr_soc >= (soc_max_limit - 3.0) and pv_current > 50.0:
+            # v3.0.3: Schwelle von (Limit-3%) auf (Limit-1%) korrigiert. Die 3%-Schwelle
+            # blockierte auch Speicher mit echtem Ladeheadroom (L1@92% bei Limit 95%) —
+            # der Überschuss konnte nicht absorbiert werden (gemessen: ~400W Dauereinspeisung).
+            # (Limit-1%) ist die BMS-Abriegelgrenze, konsistent mit charge_capacity/headroom.
+            if curr_soc >= (soc_max_limit - 1.0) and pv_current > 50.0:
                 gs_l1 = max(gs_l1, 0.0)
                 if state.get("last_device_gs") is not None:
                     gs_l1 = max(gs_l1, float(state["last_device_gs"]) - 250.0)
-            if has_l2 and curr_soc_l2 >= (soc_max_limit - 3.0) and pv_l2 > 50.0:
+            if has_l2 and curr_soc_l2 >= (soc_max_limit - 1.0) and pv_l2 > 50.0:
                 gs_l2 = max(gs_l2, 0.0)
                 if state.get("last_device_gs_l2") is not None:
                     gs_l2 = max(gs_l2, float(state["last_device_gs_l2"]) - 250.0)
@@ -2204,6 +2208,13 @@ def main():
                 gs_l2_rounded = max(-2400, min(2400, gs_l2_rounded))
 
             gs_new_rounded = gs_l1_rounded + gs_l2_rounded
+
+            # v3.0.3: Anti-Windup — wenn Floors/Klemmen (MPPT-Schutz, Low-SOC,
+            # Kreuzladungs-Hold) die tatsächlich kommandierten GS-Werte vom Integrator
+            # wegziehen, darf der Integrator nicht weiter aufziehen. Sonst steht eine
+            # "gespannte Feder" von bis zu -4800W im Zustand (heute gemessen), die beim
+            # Wegfall der Klemme (z.B. Wolke -> pv<50W) schlagartig freigesetzt würde.
+            gs_new = max(gs_new_rounded - 100.0, min(gs_new_rounded + 100.0, gs_new))
 
             # HA-Schreiben durchführen
             if not is_native:

@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.0.3
+- **Hotfix MPPT-Schutz-Schwelle**: Der in v3.0.2 eingeführte MPPT-Schutz (GS ≥ 0 für fast volle Speicher) griff schon ab `Limit − 3 %` und blockierte damit auch Speicher mit echtem Ladeheadroom — Live-Befund direkt nach dem Update: L1 stand bei 92 % (Limit 95 %), durfte nicht laden, und der Überschuss des vollen L2 (~400 W Durchleitung) floss dauerhaft ins Netz. Die Schwelle liegt jetzt auf `Limit − 1 %` (BMS-Abriegelgrenze, konsistent mit `charge_capacity`/Headroom-Logik).
+- **GS-Integrator Anti-Windup**: Wenn Floors/Klemmen (MPPT-Schutz, Low-SOC, Kreuzladungs-Hold) die tatsächlich kommandierten GS-Werte begrenzen, wird der Integrator jetzt auf ±100 W um die reale Kommandosumme geklemmt. Vorher zog er bei anhaltender Klemmung bis −4800 W auf (live gemessen) — eine „gespannte Feder", die beim Wegfall der Klemme (z. B. Wolkendurchgang) schlagartig als 2400-W-Ladebefehl freigesetzt worden wäre.
+
 ## v3.0.2
 - **Anti-Schwingungs-Release**: Behebt den am 12.07. gemessenen Regelkreis-Limit-Cycle (222 HMS-Limit-Flaps/Tag, Netz-Pendeln ±1900 W, Hausverbrauchs-Sprünge 800→1600 W im 15-Sekunden-Takt), der auftrat, sobald ein Speicher fast voll war und die SOC-Angleichung lief:
   - **Transfer-HMS-Override entschärft**: Bei aktivem SOC-Transfer wird das Hoymiles-Limit nicht mehr hart auf `haus_p + p_transfer` gesetzt (Drosselung an das verrauschte `haus_p` gekoppelt), sondern dieser Wert wirkt nur noch als Untergrenze. Der Transfer läuft über AC zwischen den Speichern und erzeugt keinen Netz-Export, den man wegdrosseln müsste.
