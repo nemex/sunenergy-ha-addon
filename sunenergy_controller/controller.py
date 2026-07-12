@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.0.3
+SunEnergy XT Controller v3.0.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -372,15 +372,19 @@ def shelly_direct_power(ip: str):
 # Sonnenstand
 # ---------------------------------------------------------------------------
 LAST_SUN_STATE = "below_horizon"
+SUN_EVER_READ = False  # v3.0.4: True, sobald sun.sun mindestens einmal gelesen wurde
 
 def get_sun_state() -> dict:
-    global LAST_SUN_STATE
+    global LAST_SUN_STATE, SUN_EVER_READ
     data = ha_get_full("sun.sun")
     if data:
         state_str = data.get("state", "below_horizon")
         LAST_SUN_STATE = state_str
+        SUN_EVER_READ = True
         return data
-    return {"state": LAST_SUN_STATE}
+    # v3.0.4: stale=True nur, wenn sun.sun noch NIE gelesen wurde (Start). Nach dem
+    # ersten Erfolg gilt der letzte bekannte Zustand als valider Fallback (API-Blip).
+    return {"state": LAST_SUN_STATE, "stale": not SUN_EVER_READ}
 
 
 # ---------------------------------------------------------------------------
@@ -511,7 +515,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.0.3 startet...")
+    log.info("SunEnergy XT Controller v3.0.4 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -521,6 +525,12 @@ def main():
     # überleben — monotonic startet dann wieder bei ~0 und ein alter (großer) Wert würde
     # die GS-Regelung bis zum nächsten Tag/Nacht-Wechsel einfrieren.
     state.pop("hold_until", None)
+
+    # v3.0.4: last_gs ist der GS-Integrator. Ein aus einer Vorversion oder einem
+    # fehlerhaften Lauf aufgezogener Wert (gemessen: bis -4800W) würde beim ersten
+    # Tick sofort als harter Ladebefehl ans Gerät geschrieben — genau der 2000W-
+    # Netzbezug direkt nach dem v3.0.3-Update. Integrator sauber bei 0 starten.
+    state["last_gs"] = 0.0
 
     # Reset and initialize watchdog configuration on startup using boolean toggle switches
     state["active_inputs"] = {
@@ -1288,7 +1298,15 @@ def main():
             # ------------------------------------------------------------------
             # 4. Sonnenstand
             # ------------------------------------------------------------------
-            sun_above = get_sun_state().get("state") == "above_horizon"
+            sun_data = get_sun_state()
+            # v3.0.4: Beim allerersten Tick nach dem Start nicht regeln, solange
+            # sun.sun noch nie gelesen wurde — sonst falscher Nacht-Flip (Default
+            # below_horizon) mit hartem GS-Schreibbefehl direkt beim Start.
+            if sun_data.get("stale"):
+                log.warning("sun.sun beim Start noch nicht lesbar — überspringe Tick, bis Sonnenstand bekannt ist.")
+                sleep_tick(TICK_S)
+                continue
+            sun_above = sun_data.get("state") == "above_horizon"
 
             # ------------------------------------------------------------------
             # 5. Zwangsladung prüfen und Ladelimit (SA) anpassen

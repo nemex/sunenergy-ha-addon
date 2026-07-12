@@ -1,5 +1,10 @@
 # Changelog
 
+## v3.0.4
+- **Start-Härtung gegen Netzbezug-Transient**: Direkt nach dem v3.0.3-Update zog der Akku kurzzeitig ~2000 W aus dem Netz. Ursache waren zwei zusammenfallende Startprobleme, die jetzt behoben sind:
+  - **GS-Integrator wird beim Start auf 0 gesetzt**: Ein aus einer Vorversion bzw. einem fehlerhaften Lauf aufgezogener `last_gs`-Wert (gemessen bis −4800 W) wurde beim ersten Tick sofort als harter Ladebefehl ans Gerät geschrieben. Der Integrator startet nun neutral bei 0 (analog zum `hold_until`-Reset).
+  - **Kein Fehl-Nachtflip beim Start**: War der Sensor `sun.sun` beim allerersten Tick noch nicht lesbar, fiel der Controller auf den Default „below_horizon" zurück, flippte für einen Tick in den Nachtmodus und schrieb dabei einen harten GS-Wert. Solange der Sonnenstand nach dem Start noch nie gelesen wurde, wird der Tick jetzt übersprungen (nach dem ersten erfolgreichen Lesen gilt weiterhin der letzte bekannte Zustand als Fallback bei kurzen API-Aussetzern).
+
 ## v3.0.3
 - **Hotfix MPPT-Schutz-Schwelle**: Der in v3.0.2 eingeführte MPPT-Schutz (GS ≥ 0 für fast volle Speicher) griff schon ab `Limit − 3 %` und blockierte damit auch Speicher mit echtem Ladeheadroom — Live-Befund direkt nach dem Update: L1 stand bei 92 % (Limit 95 %), durfte nicht laden, und der Überschuss des vollen L2 (~400 W Durchleitung) floss dauerhaft ins Netz. Die Schwelle liegt jetzt auf `Limit − 1 %` (BMS-Abriegelgrenze, konsistent mit `charge_capacity`/Headroom-Logik).
 - **GS-Integrator Anti-Windup**: Wenn Floors/Klemmen (MPPT-Schutz, Low-SOC, Kreuzladungs-Hold) die tatsächlich kommandierten GS-Werte begrenzen, wird der Integrator jetzt auf ±100 W um die reale Kommandosumme geklemmt. Vorher zog er bei anhaltender Klemmung bis −4800 W auf (live gemessen) — eine „gespannte Feder", die beim Wegfall der Klemme (z. B. Wolkendurchgang) schlagartig als 2400-W-Ladebefehl freigesetzt worden wäre.
