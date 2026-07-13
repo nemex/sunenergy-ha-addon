@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.0.4
+SunEnergy XT Controller v3.0.5
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -103,6 +103,8 @@ def load_options() -> dict:
             "regulation_manual_feed_in_power": "manual_feed_in_power",
             # v3.0.0: fehlte — dadurch war die Option grid_target (v2.8.4) wirkungslos
             "regulation_grid_target": "grid_target",
+            # v3.0.5: manueller "Jetzt kalibrieren"-Button
+            "regulation_manual_calibration_switch": "manual_calibration_switch",
         }
         
         for new_k, legacy_k in legacy_mappings.items():
@@ -515,7 +517,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.0.4 startet...")
+    log.info("SunEnergy XT Controller v3.0.5 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1323,8 +1325,16 @@ def main():
                 log.error("Fehler bei Kalibrierungszeit-Berechnung: %s", e)
                 calibration_due = tage_seit > calib_days
 
-            # Kalibrierungs-Ladelimit bestimmen: 100% wenn fällig (erlaubt solares Laden), sonst soc_normal_max
-            target_sa = 100 if calibration_due else soc_normal_max
+            # v3.0.5: Manueller "Jetzt kalibrieren"-Button — erzwingt die Kalibrierung
+            # sofort (Tag wie Nacht), unabhängig vom 7-Tage-Timer.
+            manual_calibration_switch = opts.get("manual_calibration_switch", "input_boolean.sunenergy_calibrate_now")
+            manual_calibrate_active = False
+            if manual_calibration_switch:
+                manual_calibrate_active = (ha_get_state(manual_calibration_switch, "off") == "on")
+            calibration_requested = calibration_due or manual_calibrate_active
+
+            # Kalibrierungs-Ladelimit bestimmen: 100% wenn fällig/manuell (erlaubt solares Laden), sonst soc_normal_max
+            target_sa = 100 if calibration_requested else soc_normal_max
             if state.get("last_written_sa") != target_sa:
                 log.info("Setze Ladelimit SA auf %d%% (Kalibrierung fällig: %s)", target_sa, "Ja" if calibration_due else "Nein")
                 ha_set_number(sa_entity, target_sa)
@@ -1335,14 +1345,18 @@ def main():
             # Verwende target_sa (100 oder 95) als dynamische SOC-Grenze in der Regelung
             soc_max_limit = float(target_sa)
 
+            # v3.0.5: zeitgesteuert weiterhin nur nachts (tagsüber solar laden),
+            # manuell erzwungen sofort — auch tagsüber (Netz + PV, dem Nutzer egal).
             zwangsladung_trigger = (
-                calibration_due
-                and not sun_above
+                ((calibration_due and not sun_above) or manual_calibrate_active)
                 and (curr_soc < 100 or (has_l2 and curr_soc_l2 < 100))
                 and state["active_mode"] != "calibration"
             )
             if zwangsladung_trigger:
-                log.info("Zwangsladung gestartet! %.1f Tage seit letzter Vollladung", tage_seit)
+                if manual_calibrate_active:
+                    log.info("Manuelle Kalibrierung gestartet (Button). SOC_L1=%.1f%% SOC_L2=%.1f%%", curr_soc, curr_soc_l2)
+                else:
+                    log.info("Zwangsladung gestartet! %.1f Tage seit letzter Vollladung", tage_seit)
                 set_active_mode(state, "calibration")
                 state["calibration_started_ts"] = time.time()
                 save_state(state)
@@ -1356,7 +1370,14 @@ def main():
                 and (time.time() - state.get("calibration_started_ts", time.time())) > 12 * 3600
             )
 
-            if state["active_mode"] == "calibration" and not calibration_timeout and (curr_soc < 100 or (has_l2 and curr_soc_l2 < 100)):
+            # v3.0.5: Manuelle Kalibrierung abgebrochen — Button aus UND nicht zeitlich fällig.
+            calibration_cancelled = (
+                state["active_mode"] == "calibration"
+                and not calibration_due
+                and not manual_calibrate_active
+            )
+
+            if state["active_mode"] == "calibration" and not calibration_timeout and not calibration_cancelled and (curr_soc < 100 or (has_l2 and curr_soc_l2 < 100)):
                 log.info("Zwangsladung läuft... SOC_L1=%.1f%% SOC_L2=%.1f%%", curr_soc, curr_soc_l2)
                 # v1.9.2: Spam-Schutz — nur beim Eintritt/nach Drift schreiben,
                 # nicht jeden Tick (HA + Geräte-Flash schonen)
@@ -1422,7 +1443,7 @@ def main():
                 sleep_tick(TICK_S)
                 continue
 
-            if state["active_mode"] == "calibration" and (calibration_timeout or (curr_soc >= 100 and (not has_l2 or curr_soc_l2 >= 100))):
+            if state["active_mode"] == "calibration" and (calibration_timeout or calibration_cancelled or (curr_soc >= 100 and (not has_l2 or curr_soc_l2 >= 100))):
                 if calibration_timeout:
                     log.warning("⚠️ Zwangsladung nach 12h Timeout abgebrochen (SOC_L1=%.1f%%, SOC_L2=%.1f%%).", curr_soc, curr_soc_l2)
                     send_telegram_alert(
@@ -1431,10 +1452,25 @@ def main():
                         f"⚠️ <b>SunEnergy XT Controller:</b> Zwangsladung nach 12h abgebrochen, "
                         f"ohne dass 100% erreicht wurden (SOC L1: {curr_soc:.1f}%, L2: {curr_soc_l2:.1f}%)."
                     )
+                elif calibration_cancelled:
+                    log.info("Manuelle Kalibrierung abgebrochen (Button ausgeschaltet). SOC_L1=%.1f%% SOC_L2=%.1f%%", curr_soc, curr_soc_l2)
                 else:
-                    log.info("Zwangsladung abgeschlossen!")
+                    log.info("Kalibrierung abgeschlossen! Beide Speicher auf 100%%.")
+                # v3.0.5: manuellen Kalibrier-Button ausschalten, falls noch aktiv
+                if manual_calibrate_active and manual_calibration_switch and not DRY_RUN:
+                    try:
+                        HA_SESSION.post(
+                            f"{HA_URL}/api/services/input_boolean/turn_off",
+                            json={"entity_id": manual_calibration_switch},
+                            timeout=5,
+                        )
+                    except Exception as e:
+                        log.debug("Konnte Kalibrier-Button nicht ausschalten: %s", e)
                 state.pop("calibration_started_ts", None)
-                state["last_calibration_ts"] = time.time()
+                # v3.0.5: Timer nur bei echtem Abschluss/Timeout zurücksetzen,
+                # nicht bei manuellem Abbruch (7-Tage-Automatik unberührt lassen).
+                if not calibration_cancelled:
+                    state["last_calibration_ts"] = time.time()
                 set_active_mode(state, "night")
                 
                 # L1 zurücksetzen
@@ -2352,7 +2388,10 @@ def main():
                      grid_p_raw, haus_p, solar_p, curr_soc)
 
             # Vollladung erkennen
-            if curr_soc >= 100:
+            # v3.0.5: Timer erst zurücksetzen, wenn BEIDE Speicher 100% erreicht haben —
+            # sonst wird die Kalibrierung abgebrochen, sobald L1 voll ist, und L2 bleibt
+            # unkalibriert bei ~95% hängen (Befund 13.07.).
+            if curr_soc >= 100 and (not has_l2 or curr_soc_l2 >= 100):
                 state["last_calibration_ts"] = time.time()
 
             # CSV schreiben am Tag

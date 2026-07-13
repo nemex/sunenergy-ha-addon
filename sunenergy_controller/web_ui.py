@@ -115,6 +115,8 @@ def load_options() -> dict:
                 "regulation_manual_feed_in_power": "manual_feed_in_power",
                 # v2.8.9: Konsistenz zum Controller
                 "regulation_grid_target": "grid_target",
+                # v3.0.5: manueller Kalibrier-Button
+                "regulation_manual_calibration_switch": "manual_calibration_switch",
             }
             
             for new_k, legacy_k in legacy_mappings.items():

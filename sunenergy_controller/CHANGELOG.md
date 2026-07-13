@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.0.5
+- **Fix: Kalibrierung endet erst, wenn BEIDE Speicher 100 % haben**: Bisher setzte die „Vollladung erkennen"-Logik den Kalibrierungs-Timer bereits zurück, sobald L1 100 % erreichte (`if curr_soc >= 100`). Dadurch wurde die Zwangsladung abgebrochen und das Ladelimit `SA` fiel auf `soc_normal_max` (95 %) zurück, bevor L2 fertig war — L2 blieb unkalibriert bei ~95 % hängen (Befund 13.07.: L1 = 100 %, L2 = 95 %). Der Timer wird jetzt nur zurückgesetzt, wenn beide Speicher 100 % erreicht haben. Der automatische 7-/15-Tage-Zyklus bringt damit zuverlässig beide Speicher gemeinsam auf 100 %.
+- **Neu: Manueller „Jetzt kalibrieren"-Button**: Eine neue Option `manual_calibration_switch` (Standard `input_boolean.sunenergy_calibrate_now`) erlaubt es, die Kalibrierung jederzeit manuell auszulösen — Tag wie Nacht, unabhängig vom Timer. Beim Einschalten lädt der Controller beide Speicher sofort auf 100 % (tagsüber solar, nachts per Netz), schaltet den Button nach Abschluss automatisch wieder aus und setzt `SA` auf 95 % zurück. Wird der Button vor Erreichen der 100 % wieder ausgeschaltet, bricht die manuelle Kalibrierung sauber ab, ohne den automatischen 7-Tage-Zyklus zu beeinflussen. Das 12h-Sicherheitsnetz bleibt als Notaus aktiv.
+
 ## v3.0.4
 - **Start-Härtung gegen Netzbezug-Transient**: Direkt nach dem v3.0.3-Update zog der Akku kurzzeitig ~2000 W aus dem Netz. Ursache waren zwei zusammenfallende Startprobleme, die jetzt behoben sind:
   - **GS-Integrator wird beim Start auf 0 gesetzt**: Ein aus einer Vorversion bzw. einem fehlerhaften Lauf aufgezogener `last_gs`-Wert (gemessen bis −4800 W) wurde beim ersten Tick sofort als harter Ladebefehl ans Gerät geschrieben. Der Integrator startet nun neutral bei 0 (analog zum `hold_until`-Reset).
