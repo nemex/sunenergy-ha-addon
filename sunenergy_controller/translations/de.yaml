@@ -1,4 +1,17 @@
 configuration:
+  storages:
+    name: "Speicher-Aktivierung"
+    fields:
+      L1:
+        name: "Speicher L1"
+        description: "Speicher L1 aktiv. Zum Deaktivieren während Reparatur/Abwesenheit ausschalten — L1 wird dann nicht gepollt, geregelt oder in Hausverbrauch/Balancing einbezogen."
+      L2:
+        name: "Speicher L2"
+        description: "Speicher L2 aktiv. Zum Deaktivieren während Reparatur/Abwesenheit ausschalten."
+      L3:
+        name: "Speicher L3"
+        description: "Speicher L3 aktiv (für zukünftige Erweiterung; aktuell ohne eigene Regel-/Balancing-Logik)."
+
   speicher1:
     name: "Speicher 1 (L1) Konfiguration"
     fields:

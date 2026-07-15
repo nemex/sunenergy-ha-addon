@@ -117,6 +117,10 @@ def load_options() -> dict:
                 "regulation_grid_target": "grid_target",
                 # v3.0.5: manueller Kalibrier-Button
                 "regulation_manual_calibration_switch": "manual_calibration_switch",
+                # v3.1.0: Speicher einzeln ein-/ausschaltbar
+                "storages_L1_enabled": "l1_enabled",
+                "storages_L2_enabled": "l2_enabled",
+                "storages_L3_enabled": "l3_enabled",
             }
             
             for new_k, legacy_k in legacy_mappings.items():
@@ -494,6 +498,18 @@ function updateCards(state, csv) {
   }
   setInv('inv-2000', h2000Ist, lim2000, 2000);
   setInv('inv-1600', h1600Ist, lim1600, 1600);
+
+  // v3.1.0: L1 deaktiviert (z.B. während Reparatur) — Karten neutralisieren, damit
+  // 0-Werte nicht als echter L1-Zustand missdeutet werden.
+  if (state.has_l1 === false) {
+    document.getElementById('inv-se-title').textContent = 'SunEnergyXT L1 (deaktiviert)';
+    document.getElementById('inv-se-reason').textContent = '⏸ deaktiviert';
+    setCard('c-gs', '– W', '');
+    setCard('c-is', '– W', '');
+    setCard('c-soc', '– %', '');
+    document.getElementById('c-soc-bar').style.width = '0%';
+    setInv('inv-se', 0, 0, 2400);
+  }
 }
 
 function setInv(prefix, ist, lim, max) {
@@ -574,9 +590,12 @@ def get_split_power(requester_ip, real_grid_power, opts) -> float:
     state = load_state()
     ip_l1 = opts.get("sunenergy_ip", "192.168.178.94")
     ip_l2 = opts.get("sunenergy_ip_l2", "")
-    has_l2 = bool(ip_l2)
-    
-    if not has_l2:
+    # v3.1.0: deaktivierte Speicher nehmen nicht am Grid-Split teil.
+    has_l1 = bool(opts.get("l1_enabled", True))
+    has_l2 = bool(opts.get("l2_enabled", True)) and bool(ip_l2)
+
+    # Nur ein aktiver Speicher → er trägt die volle Netzleistung (kein Split nötig).
+    if not (has_l1 and has_l2):
         return real_grid_power
 
     if requester_ip not in (ip_l1, ip_l2):
@@ -755,7 +774,9 @@ class UIHandler(BaseHTTPRequestHandler):
                 st["soc_normal_max"] = float(opts.get("soc_normal_max", 95))
             except Exception:
                 st["soc_normal_max"] = 95
-            st["has_l2"] = bool(opts.get("sunenergy_ip_l2", ""))
+            st["has_l2"] = bool(opts.get("l2_enabled", True)) and bool(opts.get("sunenergy_ip_l2", ""))
+            # v3.1.0: L1-Aktiv-Status ans Frontend (z.B. Reparaturfall)
+            st["has_l1"] = bool(opts.get("l1_enabled", True))
             self._json(st)
 
         elif self.path == "/debug_l2":

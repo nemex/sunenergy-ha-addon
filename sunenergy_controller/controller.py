@@ -105,6 +105,10 @@ def load_options() -> dict:
             "regulation_grid_target": "grid_target",
             # v3.0.5: manueller "Jetzt kalibrieren"-Button
             "regulation_manual_calibration_switch": "manual_calibration_switch",
+            # v3.1.0: Speicher einzeln ein-/ausschaltbar
+            "storages_L1_enabled": "l1_enabled",
+            "storages_L2_enabled": "l2_enabled",
+            "storages_L3_enabled": "l3_enabled",
         }
         
         for new_k, legacy_k in legacy_mappings.items():
@@ -576,8 +580,19 @@ def main():
     mm_switch_l2    = opts.get("mm_switch_l2", "")
     sa_entity_l2    = opts.get("sa_entity_l2", "")
     op_l2_sensor    = opts.get("op_l2_sensor", "")
-    has_l2          = bool(sunenergy_ip_l2)
-    
+
+    # v3.1.0: Speicher einzeln ein-/ausschaltbar (Default true = rückwärtskompatibel,
+    # falls der storages-Block in einer alten options.json fehlt). Bei has_l1=False wird
+    # L1 nach demselben Neutral-Muster wie L2 (has_l2=False) komplett aus Polling, Regelung,
+    # Hausverbrauch, Balancing und MPPT-Watchdog herausgenommen — z.B. während der Reparatur.
+    l1_enabled = bool(opts.get("l1_enabled", True))
+    l2_enabled = bool(opts.get("l2_enabled", True))
+    has_l1     = l1_enabled
+    has_l2     = l2_enabled and bool(sunenergy_ip_l2)
+    if not has_l1 and not has_l2:
+        log.error("KEIN Speicher aktiv (L1 und L2 deaktiviert) — es wird nichts geregelt. "
+                  "Bitte mindestens einen Speicher in der storages-Config aktivieren.")
+
     # Neue konfigurierbare Sensoren
     haus_power_sensor     = opts.get("haus_power_sensor", "sensor.hausverbrauch_aktuell")
     hms_2000_power_sensor = opts.get("hms_2000_power_sensor", "sensor.hoymiles_hms_2000_4t_power")
@@ -594,8 +609,9 @@ def main():
     sunenergy_ip    = opts.get("sunenergy_ip", "192.168.178.94")
     
     # SA auf Normalwert setzen beim Start
-    ha_set_number(sa_entity, soc_normal_max)
-    sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max)})
+    if has_l1:
+        ha_set_number(sa_entity, soc_normal_max)
+        sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max)})
     if has_l2 and sa_entity_l2:
         ha_set_number(sa_entity_l2, soc_normal_max)
         sunenergy_write(sunenergy_ip_l2, {"SA": int(soc_normal_max)})
@@ -610,7 +626,8 @@ def main():
         }
         md_str = json.dumps(md_payload)
         log.info("Schreibe Zähler-Bindung (MD) für natives Polling...")
-        sunenergy_write(sunenergy_ip, {"MD": md_str, "MM": 1})
+        if has_l1:
+            sunenergy_write(sunenergy_ip, {"MD": md_str, "MM": 1})
         if has_l2:
             sunenergy_write(sunenergy_ip_l2, {"MD": md_str, "MM": 1})
         state["in_fallback_mode"] = False
@@ -645,8 +662,8 @@ def main():
 
     set_active_mode(state, "night")
     save_state(state)
-    log.info("Addon gestartet, SA=%s%%, HMS-Limit=%sW, Speicher L2 aktiv: %s, Natives Polling: %s", 
-             soc_normal_max, state["last_hms_limit"], "Ja" if has_l2 else "Nein", "Ja" if use_native_pid else "Nein")
+    log.info("Addon gestartet, SA=%s%%, HMS-Limit=%sW, Speicher L1 aktiv: %s, Speicher L2 aktiv: %s, Natives Polling: %s",
+             soc_normal_max, state["last_hms_limit"], "Ja" if has_l1 else "Nein", "Ja" if has_l2 else "Nein", "Ja" if use_native_pid else "Nein")
 
     # v3.0.0: Startzeitpunkt für die Fallback-Grace-Periode (natives Polling)
     startup_mono = time.monotonic()
@@ -693,13 +710,17 @@ def main():
                     grid_p_raw = safe_float(state, "grid_p_filtered", 0.0)
                     log.warning("Grid-Sensor (%s) offline — verwende letzten Wert %.0fW", grid_sensor, grid_p_raw)
 
-            soc_val = ha_get_state(soc_sensor)
-            if soc_val not in (None, "unknown", "unavailable"):
-                curr_soc = float(soc_val)
-                state["soc"] = curr_soc
-            else:
-                curr_soc = safe_float(state, "soc", 0.0)
-                log.warning("SOC-Sensor (%s) offline — verwende letzten Wert %.0f%%", soc_sensor, curr_soc)
+            # v3.1.0: L1 SOC nur lesen, wenn L1 aktiv ist. Bei deaktiviertem L1 neutral 0.0
+            # (analog zur L2-Behandlung bei has_l2=False) — kein Poll gegen ein abwesendes Gerät.
+            curr_soc = 0.0
+            if has_l1:
+                soc_val = ha_get_state(soc_sensor)
+                if soc_val not in (None, "unknown", "unavailable"):
+                    curr_soc = float(soc_val)
+                    state["soc"] = curr_soc
+                else:
+                    curr_soc = safe_float(state, "soc", 0.0)
+                    log.warning("SOC-Sensor (%s) offline — verwende letzten Wert %.0f%%", soc_sensor, curr_soc)
 
             # L2 SOC einlesen
             curr_soc_l2 = 0.0
@@ -714,7 +735,11 @@ def main():
 
             # Hysteresis für niedrigen SOC (Entladeschutz) L1
             low_soc_active_l1 = state.get("low_soc_active_l1", False)
-            if curr_soc <= soc_min:
+            if not has_l1:
+                # v3.1.0: deaktiviertes L1 gilt als "leer" — nimmt an keiner Entladung teil
+                # (analog zum else-Zweig von L2). Damit fällt L1 aus usable_soc/gs-Split heraus.
+                low_soc_active_l1 = True
+            elif curr_soc <= soc_min:
                 low_soc_active_l1 = True
             elif curr_soc >= (soc_min + 2.0):
                 low_soc_active_l1 = False
@@ -807,14 +832,15 @@ def main():
 
             if not watchdog_ok:
                 log.warning("Watchdog Fehler! Grid-Sensor UND Shelly-Direktzugriff offline — Sicherheits-Stopp (IS=10, MM=1).")
-                ha_switch(mm_switch, True)
-                ha_set_number(gs_entity, 0)
-                sunenergy_write(sunenergy_ip, {"IS": 10, "MM": 1, "GS": 0})
-                state["last_device_gs"] = None
-                state["last_device_mm"] = None
-                state["last_device_is"] = None
-                state["last_gs_written"] = None
-                
+                if has_l1:
+                    ha_switch(mm_switch, True)
+                    ha_set_number(gs_entity, 0)
+                    sunenergy_write(sunenergy_ip, {"IS": 10, "MM": 1, "GS": 0})
+                    state["last_device_gs"] = None
+                    state["last_device_mm"] = None
+                    state["last_device_is"] = None
+                    state["last_gs_written"] = None
+
                 if has_l2 and mm_switch_l2 and gs_entity_l2:
                     ha_switch(mm_switch_l2, True)
                     ha_set_number(gs_entity_l2, 0)
@@ -835,41 +861,52 @@ def main():
             prev_l1_ok = state.get("l1_polling_ok", True)
             prev_l2_ok = state.get("l2_polling_ok", True)
 
-            se_data = sunenergy_read(sunenergy_ip)
-            if se_data:
-                op_current = float(se_data.get("OP", 0))
-                pv_current = float(se_data.get("PV", 0))
-                pb_current = float(se_data.get("BP", 0))
-                iw_current = float(se_data.get("IW", 0))
+            # v3.1.0: L1 nur pollen, wenn aktiv. Bei deaktiviertem L1 neutrale Nullwerte
+            # (kein Poll gegen ein abwesendes Gerät, keine Fehler-Logs, kein Fake-Ausfall
+            # Richtung Proxy — l1_polling_ok bleibt True, analog zum has_l2=False-Zweig).
+            if not has_l1:
+                se_data = None
+                op_current = 0.0
+                pv_current = 0.0
+                pb_current = 0.0
+                iw_current = 0.0
                 state["l1_polling_ok"] = True
-                # v3.0.0: last_poll_l1_ts / consecutive_polls_l1 gehören dem Meter-Proxy
-                # (echte /meter-Polls des Speichers) und werden hier nicht mehr überschrieben —
-                # sonst ist die Stale-Erkennung des nativen Modus wirkungslos.
-                
-                # MM Self-healing
-                mm_val = se_data.get("MM")
-                target_mm = 1 if is_native else 0
-                if mm_val is not None and str(mm_val) != str(target_mm):
-                    log.warning("L1 MM state mismatch: reported=%s, target=%s. Enforcing...", mm_val, target_mm)
-                    if target_mm == 1:
-                        ha_ip = opts.get("ha_ip", "192.168.178.132")
-                        md_payload = {
-                            "mode": "direct",
-                            "direct": {"dat_url": f"http://{ha_ip}:8765/meter"},
-                            "dat_str": {"pwr": "total_act_power"}
-                        }
-                        md_str = json.dumps(md_payload)
-                        sunenergy_write(sunenergy_ip, {"MD": md_str, "MM": 1, "GS": 0})
-                    else:
-                        sunenergy_write(sunenergy_ip, {"MM": 0})
-                    state["last_device_mm"] = target_mm
-                    state["last_device_is"] = state.get("last_device_is") or 2400
-                    state["last_device_gs"] = state.get("last_device_gs") or 0
             else:
-                state["l1_polling_ok"] = False
-                state["consecutive_polls_l1"] = 0
-                log.warning("SunEnergyXT L1 API nicht erreichbar, verwende letzte Werte (OP=%.1fW, PV=%.1fW, BP=%.1fW)", 
-                            op_current, pv_current, pb_current)
+                se_data = sunenergy_read(sunenergy_ip)
+                if se_data:
+                    op_current = float(se_data.get("OP", 0))
+                    pv_current = float(se_data.get("PV", 0))
+                    pb_current = float(se_data.get("BP", 0))
+                    iw_current = float(se_data.get("IW", 0))
+                    state["l1_polling_ok"] = True
+                    # v3.0.0: last_poll_l1_ts / consecutive_polls_l1 gehören dem Meter-Proxy
+                    # (echte /meter-Polls des Speichers) und werden hier nicht mehr überschrieben —
+                    # sonst ist die Stale-Erkennung des nativen Modus wirkungslos.
+
+                    # MM Self-healing
+                    mm_val = se_data.get("MM")
+                    target_mm = 1 if is_native else 0
+                    if mm_val is not None and str(mm_val) != str(target_mm):
+                        log.warning("L1 MM state mismatch: reported=%s, target=%s. Enforcing...", mm_val, target_mm)
+                        if target_mm == 1:
+                            ha_ip = opts.get("ha_ip", "192.168.178.132")
+                            md_payload = {
+                                "mode": "direct",
+                                "direct": {"dat_url": f"http://{ha_ip}:8765/meter"},
+                                "dat_str": {"pwr": "total_act_power"}
+                            }
+                            md_str = json.dumps(md_payload)
+                            sunenergy_write(sunenergy_ip, {"MD": md_str, "MM": 1, "GS": 0})
+                        else:
+                            sunenergy_write(sunenergy_ip, {"MM": 0})
+                        state["last_device_mm"] = target_mm
+                        state["last_device_is"] = state.get("last_device_is") or 2400
+                        state["last_device_gs"] = state.get("last_device_gs") or 0
+                else:
+                    state["l1_polling_ok"] = False
+                    state["consecutive_polls_l1"] = 0
+                    log.warning("SunEnergyXT L1 API nicht erreichbar, verwende letzte Werte (OP=%.1fW, PV=%.1fW, BP=%.1fW)",
+                                op_current, pv_current, pb_current)
             
             state["soc"] = curr_soc
             state["pv_last"] = pv_current
@@ -954,7 +991,7 @@ def main():
             # Verhindert Windup wenn die Batterie kurz abschaltet und dann mit falschem GS wiederkommt
             prev_op_l1 = safe_float(state, "op_l1", op_current)
             prev_op_l2 = safe_float(state, "op_l2", op_l2)
-            if prev_op_l1 > 100.0 and op_current < 10.0:
+            if has_l1 and prev_op_l1 > 100.0 and op_current < 10.0:
                 log.warning("L1 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l1, op_current)
                 state["last_gs"] = 0.0
             if has_l2 and prev_op_l2 > 100.0 and op_l2 < 10.0:
@@ -1040,7 +1077,8 @@ def main():
                                     del state["sent_alerts"][alert_key]
                                     log.info("PV-Watchdog: Entwarnung gesendet für %s Port PV%d.", device_name, i)
 
-            monitor_device_pvs("L1", se_data, pv_current)
+            if has_l1 and se_data:
+                monitor_device_pvs("L1", se_data, pv_current)
             if has_l2 and se_data_l2:
                 monitor_device_pvs("L2", se_data_l2, pv_l2)
 
@@ -1050,7 +1088,11 @@ def main():
             SE_CHARGER_EFF = 0.9
             
             # L1 AC-Leistung schätzen
-            if op_current > 5.0:
+            # v3.1.0: deaktiviertes L1 trägt 0W bei — damit reduziert sich der Hausverbrauch
+            # sauber auf Netz + L2 - Hoymiles (keine Schätzung aus veralteten L1-Werten).
+            if not has_l1:
+                battery_ac_est_l1 = 0.0
+            elif op_current > 5.0:
                 battery_ac_est_l1 = op_current
             else:
                 dc_from_ac_l1 = max(0.0, pb_current - pv_current)
@@ -1105,15 +1147,13 @@ def main():
                 # v3.0.0: auf 2400W (Geräte-Maximum) klemmen — bei hohem Hausverbrauch
                 # ging sonst ein ungültiger IS-Wert ans Gerät.
                 is_emergency = min(2400, max(200, int(haus_p)))
-                sunenergy_write(sunenergy_ip, {"GS": 0, "IS": is_emergency})
+                if has_l1:
+                    sunenergy_write(sunenergy_ip, {"GS": 0, "IS": is_emergency})
+                    state["last_device_gs"] = 0
+                    state["last_device_is"] = is_emergency
                 if has_l2:
                     sunenergy_write(sunenergy_ip_l2, {"GS": 0, "IS": is_emergency})
-
-                # State synchronisieren
-                state["last_device_gs"] = 0
-                state["last_device_gs_l2"] = 0
-                state["last_device_is"] = is_emergency
-                if has_l2:
+                    state["last_device_gs_l2"] = 0
                     state["last_device_is_l2"] = is_emergency
                 
                 save_state(state)
@@ -1123,10 +1163,12 @@ def main():
                 l1_poll_age = time.time() - state.get("last_poll_l1_ts", 0)
                 l2_poll_age = time.time() - state.get("last_poll_l2_ts", 0)
                 
-                l1_stale = l1_poll_age > 15
+                # v3.1.0: deaktivierte Speicher lösen keinen Fallback aus (ihr Poll-Alter
+                # wächst zwangsläufig, weil das abwesende Gerät den Proxy nicht mehr pollt).
+                l1_stale = has_l1 and l1_poll_age > 15
                 l2_stale = has_l2 and l2_poll_age > 15
-                
-                l1_failed = not state.get("l1_polling_ok", True)
+
+                l1_failed = has_l1 and not state.get("l1_polling_ok", True)
                 l2_failed = has_l2 and not state.get("l2_polling_ok", True)
                 
                 # v3.0.0: Die Poll-Zeitstempel stammen jetzt ausschließlich vom Meter-Proxy
@@ -1158,10 +1200,11 @@ def main():
                         state["last_fallback_alert_ts"] = time.time()
 
                     # Sofort auf MM=0 schalten, um manuelle Kontrolle zu erzwingen
-                    ha_switch(mm_switch, False)
+                    if has_l1:
+                        ha_switch(mm_switch, False)
+                        sunenergy_write(sunenergy_ip, {"MM": 0})
                     if has_l2 and mm_switch_l2:
                         ha_switch(mm_switch_l2, False)
-                    sunenergy_write(sunenergy_ip, {"MM": 0})
                     if has_l2:
                         sunenergy_write(sunenergy_ip_l2, {"MM": 0})
 
@@ -1202,7 +1245,8 @@ def main():
                         }
                         md_str = json.dumps(md_payload)
 
-                        sunenergy_write(sunenergy_ip, {"MD": md_str, "MM": 1, "GS": 0})
+                        if has_l1:
+                            sunenergy_write(sunenergy_ip, {"MD": md_str, "MM": 1, "GS": 0})
                         if has_l2:
                             sunenergy_write(sunenergy_ip_l2, {"MD": md_str, "MM": 1, "GS": 0})
 
@@ -1337,8 +1381,11 @@ def main():
             target_sa = 100 if calibration_requested else soc_normal_max
             if state.get("last_written_sa") != target_sa:
                 log.info("Setze Ladelimit SA auf %d%% (Kalibrierung fällig: %s)", target_sa, "Ja" if calibration_due else "Nein")
-                ha_set_number(sa_entity, target_sa)
-                sunenergy_write(sunenergy_ip, {"SA": int(target_sa)})
+                if has_l1:
+                    ha_set_number(sa_entity, target_sa)
+                    sunenergy_write(sunenergy_ip, {"SA": int(target_sa)})
+                # last_written_sa bleibt die gemeinsame SOC-Obergrenze (auch für L2), daher
+                # immer aktualisieren — auch wenn L1 deaktiviert ist.
                 state["last_written_sa"] = target_sa
                 save_state(state)
 
@@ -1347,9 +1394,13 @@ def main():
 
             # v3.0.5: zeitgesteuert weiterhin nur nachts (tagsüber solar laden),
             # manuell erzwungen sofort — auch tagsüber (Netz + PV, dem Nutzer egal).
+            # v3.1.0: Nur aktive Speicher zählen — sonst triggert ein deaktiviertes L1
+            # (curr_soc=0) die Zwangsladung dauerhaft.
+            any_below_100 = (has_l1 and curr_soc < 100) or (has_l2 and curr_soc_l2 < 100)
+            all_at_100 = (not has_l1 or curr_soc >= 100) and (not has_l2 or curr_soc_l2 >= 100)
             zwangsladung_trigger = (
                 ((calibration_due and not sun_above) or manual_calibrate_active)
-                and (curr_soc < 100 or (has_l2 and curr_soc_l2 < 100))
+                and any_below_100
                 and state["active_mode"] != "calibration"
             )
             if zwangsladung_trigger:
@@ -1377,11 +1428,11 @@ def main():
                 and not manual_calibrate_active
             )
 
-            if state["active_mode"] == "calibration" and not calibration_timeout and not calibration_cancelled and (curr_soc < 100 or (has_l2 and curr_soc_l2 < 100)):
+            if state["active_mode"] == "calibration" and not calibration_timeout and not calibration_cancelled and any_below_100:
                 log.info("Zwangsladung läuft... SOC_L1=%.1f%% SOC_L2=%.1f%%", curr_soc, curr_soc_l2)
                 # v1.9.2: Spam-Schutz — nur beim Eintritt/nach Drift schreiben,
                 # nicht jeden Tick (HA + Geräte-Flash schonen)
-                if state.get("last_device_gs") != -2400 or state.get("last_device_mm") != 0:
+                if has_l1 and (state.get("last_device_gs") != -2400 or state.get("last_device_mm") != 0):
                     ha_set_number(sa_entity, 100)
                     ha_switch(mm_switch, False)
                     ha_set_number(gs_entity, -2400)
@@ -1412,7 +1463,7 @@ def main():
                     "grid_p":   round(grid_p_raw, 1),
                     "haus_p":   round(haus_p, 1),
                     "solar_p":  round(solar_p, 1),
-                    "gs":       round(-2400.0 * (2 if has_l2 else 1), 0),
+                    "gs":       round(-2400.0 * ((1 if has_l1 else 0) + (1 if has_l2 else 0)), 0),
                     "op":       round(op_current, 1),
                     "pv":       round(pv_current, 1),
                     "is_target": 2400,
@@ -1424,7 +1475,7 @@ def main():
                     "soc_l2":    round(curr_soc_l2, 1) if has_l2 else 0.0,
                     "op_l2":     round(op_l2, 1) if has_l2 else 0.0,
                     "pv_l2":     round(pv_l2, 1) if has_l2 else 0.0,
-                    "gs_l1":     -2400,
+                    "gs_l1":     -2400 if has_l1 else 0,
                     "gs_l2":     -2400 if has_l2 else 0,
                     "is_l2":     2400,
                 })
@@ -1443,7 +1494,7 @@ def main():
                 sleep_tick(TICK_S)
                 continue
 
-            if state["active_mode"] == "calibration" and (calibration_timeout or calibration_cancelled or (curr_soc >= 100 and (not has_l2 or curr_soc_l2 >= 100))):
+            if state["active_mode"] == "calibration" and (calibration_timeout or calibration_cancelled or all_at_100):
                 if calibration_timeout:
                     log.warning("⚠️ Zwangsladung nach 12h Timeout abgebrochen (SOC_L1=%.1f%%, SOC_L2=%.1f%%).", curr_soc, curr_soc_l2)
                     send_telegram_alert(
@@ -1474,15 +1525,16 @@ def main():
                 set_active_mode(state, "night")
                 
                 # L1 zurücksetzen
-                ha_set_number(sa_entity, soc_normal_max)
-                ha_switch(mm_switch, True)
-                ha_set_number(gs_entity, 0)
-                sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
+                if has_l1:
+                    ha_set_number(sa_entity, soc_normal_max)
+                    ha_switch(mm_switch, True)
+                    ha_set_number(gs_entity, 0)
+                    sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
+                    state["last_device_gs"] = None
+                    state["last_device_mm"] = None
+                    state["last_device_is"] = None
                 state["last_written_sa"] = soc_normal_max
-                state["last_device_gs"] = None
-                state["last_device_mm"] = None
-                state["last_device_is"] = None
-                
+
                 # L2 zurücksetzen
                 if has_l2:
                     if sa_entity_l2:
@@ -1511,28 +1563,31 @@ def main():
                     
                     if not is_native:
                         # MM ausschalten (für manuelle Regelung über GS)
-                        current_mm_state = ha_get_state(mm_switch, "on")
-                        if current_mm_state != "off":
-                            ha_switch(mm_switch, False)
+                        if has_l1:
+                            current_mm_state = ha_get_state(mm_switch, "on")
+                            if current_mm_state != "off":
+                                ha_switch(mm_switch, False)
                         if has_l2 and mm_switch_l2:
                             current_mm_state_l2 = ha_get_state(mm_switch_l2, "on")
                             if current_mm_state_l2 != "off":
                                 ha_switch(mm_switch_l2, False)
-                    
+
                     # Hoymiles auf Maximum setzen
                     ha_set_number(hms_2000_entity, 2000)
                     ha_set_number(hms_1600_entity, 1600)
-                    
+
                     # IS auf Maximum
-                    sunenergy_write(sunenergy_ip, {"IS": 2400})
+                    if has_l1:
+                        sunenergy_write(sunenergy_ip, {"IS": 2400})
                     if has_l2:
                         sunenergy_write(sunenergy_ip_l2, {"IS": 2400})
-                    
+
                     if not is_native:
-                        sunenergy_write(sunenergy_ip, {"MM": 0})
+                        if has_l1:
+                            sunenergy_write(sunenergy_ip, {"MM": 0})
                         if has_l2:
                             sunenergy_write(sunenergy_ip_l2, {"MM": 0})
-                    
+
                     set_active_mode(state, "night")
                     state["last_device_mm"] = 0 if not is_native else None
                     state["last_device_is"] = 2400
@@ -1548,22 +1603,22 @@ def main():
                 if is_native:
                     # Im nativen Modus schreiben wir nur IS als Schutz, kein GS
                     is_target_night_l1 = 10 if low_soc_active_l1 else 2400
-                    if state.get("last_device_is") != is_target_night_l1:
+                    if has_l1 and state.get("last_device_is") != is_target_night_l1:
                         sunenergy_write(sunenergy_ip, {"IS": is_target_night_l1})
                         state["last_device_is"] = is_target_night_l1
-                        
+
                     is_target_night_l2 = 2400
                     if has_l2:
                         is_target_night_l2 = 10 if low_soc_active_l2 else 2400
                         if state.get("last_device_is_l2") != is_target_night_l2:
                             sunenergy_write(sunenergy_ip_l2, {"IS": is_target_night_l2})
                             state["last_device_is_l2"] = is_target_night_l2
-                            
+
                     gs_l1_rounded = 0
                     gs_l2_rounded = 0
                     gs_new_rounded = 0
-                    
-                    if state.get("last_gs_written") != 0:
+
+                    if has_l1 and state.get("last_gs_written") != 0:
                         ha_set_number(gs_entity, 0)
                         state["last_gs_written"] = 0
                     if has_l2 and gs_entity_l2 and state.get("last_gs_written_l2") != 0:
@@ -1585,7 +1640,7 @@ def main():
                         gs_new = gs_last
 
                     # Anti-Windup bei vollen/nicht ladbaren Batterien (nachts)
-                    headroom_l1 = max(0.0, soc_max_limit - curr_soc)
+                    headroom_l1 = max(0.0, soc_max_limit - curr_soc) if has_l1 else 0.0
                     l2_charge_blocked = state.get("l2_charge_blocked", False)
                     headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
                     total_headroom = headroom_l1 + headroom_l2
@@ -1658,26 +1713,27 @@ def main():
                         gs_l2_rounded = max(-2400, min(2400, gs_l2_rounded))
 
                     # L1 schreiben
-                    device_payload_night_l1 = {}
-                    if state.get("last_device_gs") != gs_l1_rounded:
-                        device_payload_night_l1["GS"] = gs_l1_rounded
-                        state["last_device_gs"] = gs_l1_rounded
-                    
                     is_target_night_l1 = 10 if low_soc_active_l1 else 2400
-                    if state.get("last_device_is") != is_target_night_l1:
-                        device_payload_night_l1["IS"] = is_target_night_l1
-                        state["last_device_is"] = is_target_night_l1
-                        
-                    if state.get("last_device_mm") != 0:
-                        device_payload_night_l1["MM"] = 0
-                        state["last_device_mm"] = 0
-                        
-                    if device_payload_night_l1:
-                        sunenergy_write(sunenergy_ip, device_payload_night_l1)
+                    if has_l1:
+                        device_payload_night_l1 = {}
+                        if state.get("last_device_gs") != gs_l1_rounded:
+                            device_payload_night_l1["GS"] = gs_l1_rounded
+                            state["last_device_gs"] = gs_l1_rounded
 
-                    if state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_l1_rounded) >= 10:
-                        ha_set_number(gs_entity, gs_l1_rounded)
-                        state["last_gs_written"] = gs_l1_rounded
+                        if state.get("last_device_is") != is_target_night_l1:
+                            device_payload_night_l1["IS"] = is_target_night_l1
+                            state["last_device_is"] = is_target_night_l1
+
+                        if state.get("last_device_mm") != 0:
+                            device_payload_night_l1["MM"] = 0
+                            state["last_device_mm"] = 0
+
+                        if device_payload_night_l1:
+                            sunenergy_write(sunenergy_ip, device_payload_night_l1)
+
+                        if state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_l1_rounded) >= 10:
+                            ha_set_number(gs_entity, gs_l1_rounded)
+                            state["last_gs_written"] = gs_l1_rounded
 
                     # L2 schreiben (falls vorhanden)
                     if has_l2:
@@ -1774,13 +1830,13 @@ def main():
                 if time.monotonic() < hold_until:
                     gs_new = gs_last
                 
-                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc)
+                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc) if has_l1 else 0.0
                 l2_charge_blocked = state.get("l2_charge_blocked", False)
                 headroom_l2 = max(0.0, (soc_max_limit - 1.0) - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
                 total_headroom = headroom_l1 + headroom_l2
                 if total_headroom <= 0.0:
                     gs_new = max(0.0, gs_new)
-                
+
                 gs_new = max(0.0, min(max_gs, gs_new))
                 
                 # Aufteilung unter Berücksichtigung von vollen Batterien (Durchreichen)
@@ -1836,7 +1892,7 @@ def main():
                     gs_new = gs_last
 
                 # Anti-Windup bei vollen/nicht ladbaren Batterien (tagsüber)
-                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc)
+                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc) if has_l1 else 0.0
                 l2_charge_blocked = state.get("l2_charge_blocked", False)
                 headroom_l2 = max(0.0, (soc_max_limit - 1.0) - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
                 total_headroom = headroom_l1 + headroom_l2
@@ -1900,6 +1956,13 @@ def main():
             if low_soc_active_l2:
                 gs_l2 = min(0.0, gs_l2)
 
+            # v3.1.0: deaktivierte Speicher bekommen hart GS=0 (fängt Bypass-Durchreich-
+            # Zweige ab, die gs_l1/gs_l2 sonst indirekt setzen könnten).
+            if not has_l1:
+                gs_l1 = 0.0
+            if not has_l2:
+                gs_l2 = 0.0
+
             # Vorläufiges Runden für Schutzlogiken (HMS- und IS-Drosselung)
             gs_l1_rounded = round(gs_l1 / 10) * 10
             gs_l1_rounded = max(-2400, min(2400, gs_l1_rounded))
@@ -1920,7 +1983,7 @@ def main():
                 hms_limit_new = 3600.0
             elif is_actively_feeding_in:
                 hms_limit_new = 3600.0
-            elif (curr_soc < (soc_max_limit - 3.0) or (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 3.0))) and gs_new_rounded > (-max_gs + 50.0):
+            elif ((has_l1 and curr_soc < (soc_max_limit - 3.0)) or (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 3.0))) and gs_new_rounded > (-max_gs + 50.0):
                 # Akku nicht voll und lädt nicht am Limit (IS): Hoymiles voll öffnen,
                 # damit jegliche Solarleistung zum Laden des Akkus genutzt werden kann.
                 hms_limit_new = 3600.0
@@ -1948,7 +2011,7 @@ def main():
                 hms_change = effective_deficit * 0.5
                 hms_change = max(-400.0, min(800.0, hms_change))
                 hms_limit_new = hms_limit_last + hms_change
-            elif curr_soc < soc_max_limit or (has_l2 and not l2_charge_blocked and curr_soc_l2 < soc_max_limit):
+            elif (has_l1 and curr_soc < soc_max_limit) or (has_l2 and not l2_charge_blocked and curr_soc_l2 < soc_max_limit):
                 # Akku nicht voll und keine Abweichung vom Sollwert: stufenlos regeln
                 # um Überschwingen/Oszillationen nahe der Vollladung zu verhindern.
                 if solar_p >= hms_limit_last - 100:
@@ -1972,7 +2035,7 @@ def main():
             # ließ das HMS-Limit bei jedem GS-Nulldurchgang um bis zu 2000W springen.
             # Jetzt zählt die bereits genutzte AC-Ladeleistung (negatives GS) stufenlos
             # gegen die verbleibende Kapazität.
-            charge_capacity_l1 = 2400.0 if curr_soc < (soc_max_limit - 1.0) else 0.0
+            charge_capacity_l1 = 2400.0 if (has_l1 and curr_soc < (soc_max_limit - 1.0)) else 0.0
             charge_capacity_l2 = 2400.0 if (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 1.0)) else 0.0
             charge_capacity = max(0.0, charge_capacity_l1 + charge_capacity_l2 + min(0.0, gs_new_rounded))
             hms_limit_new = max(hms_limit_new, haus_p + charge_capacity)
@@ -2027,7 +2090,10 @@ def main():
             # IS Limit der Batterie anpassen
             # L1
             is_native = use_native_pid and not state.get("in_fallback_mode", False)
-            if low_soc_active_l1:
+            if not has_l1:
+                # v3.1.0: deaktiviertes L1 — neutraler IS-Wert, wird ohnehin nicht geschrieben
+                is_target_l1 = 2400
+            elif low_soc_active_l1:
                 is_target_l1 = 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l1 = 2400
@@ -2091,7 +2157,7 @@ def main():
                     restbedarf = max(0, int(haus_p - solar_p))
                     # v2.1.9: L1-Ladefähigkeit einbeziehen, um L2s AC-Ausgabe für L1-Ladung freizugeben (symmetrischer Deadlock-Schutz)
                     l1_headroom = 0.0
-                    if curr_soc < soc_max_limit:
+                    if has_l1 and curr_soc < soc_max_limit:
                         fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc) / 5.0))
                         l1_headroom = 2400.0 * fade_out
 
@@ -2140,7 +2206,9 @@ def main():
             # ==================================================================
             p_transfer = 0.0
             transfer_was_active = state.get("last_p_transfer", 0.0) > 10.0
-            if not is_native and has_l2:
+            # v3.1.0: SOC-Angleichung/Transfer braucht BEIDE Speicher — bei deaktiviertem
+            # L1 komplett aus (nicht nur "L1 meiden"), sonst Transfer gegen ein totes Gerät.
+            if not is_native and has_l1 and has_l2:
                 soc_max_curr = max(curr_soc, curr_soc_l2)
                 soc_diff = curr_soc - curr_soc_l2
 
@@ -2243,7 +2311,7 @@ def main():
             # blockierte auch Speicher mit echtem Ladeheadroom (L1@92% bei Limit 95%) —
             # der Überschuss konnte nicht absorbiert werden (gemessen: ~400W Dauereinspeisung).
             # (Limit-1%) ist die BMS-Abriegelgrenze, konsistent mit charge_capacity/headroom.
-            if curr_soc >= (soc_max_limit - 1.0) and pv_current > 50.0:
+            if has_l1 and curr_soc >= (soc_max_limit - 1.0) and pv_current > 50.0:
                 gs_l1 = max(gs_l1, 0.0)
                 if state.get("last_device_gs") is not None:
                     gs_l1 = max(gs_l1, float(state["last_device_gs"]) - 250.0)
@@ -2273,26 +2341,27 @@ def main():
             # HA-Schreiben durchführen
             if not is_native:
                 # MM AUS — wir regeln (nur schalten, wenn nicht bereits aus)
-                current_mm_state = ha_get_state(mm_switch, "on")
-                if current_mm_state != "off":
-                    ha_switch(mm_switch, False)
+                if has_l1:
+                    current_mm_state = ha_get_state(mm_switch, "on")
+                    if current_mm_state != "off":
+                        ha_switch(mm_switch, False)
                 if has_l2 and mm_switch_l2:
                     current_mm_state_l2 = ha_get_state(mm_switch_l2, "on")
                     if current_mm_state_l2 != "off":
                         ha_switch(mm_switch_l2, False)
 
                 # GS Sollwert in HA schreiben (nur bei nennenswerten Änderungen)
-                if state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_l1_rounded) >= 10:
+                if has_l1 and (state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_l1_rounded) >= 10):
                     ha_set_number(gs_entity, gs_l1_rounded)
                     state["last_gs_written"] = gs_l1_rounded
-                
+
                 if has_l2 and gs_entity_l2:
                     if state.get("last_gs_written_l2") is None or abs(state["last_gs_written_l2"] - gs_l2_rounded) >= 10:
                         ha_set_number(gs_entity_l2, gs_l2_rounded)
                         state["last_gs_written_l2"] = gs_l2_rounded
             else:
                 # Im nativen Modus schreiben wir GS=0 in HA
-                if state.get("last_gs_written") != 0:
+                if has_l1 and state.get("last_gs_written") != 0:
                     ha_set_number(gs_entity, 0)
                     state["last_gs_written"] = 0
                 if has_l2 and gs_entity_l2 and state.get("last_gs_written_l2") != 0:
@@ -2301,34 +2370,35 @@ def main():
 
             # Direkt ans Gerät schreiben (nur bei Änderungen)
             # L1
-            reported_is = se_data.get("IS") if se_data else None
-            reported_gs = se_data.get("GS") if se_data else None
-            reported_is_f = float(reported_is) if reported_is is not None else None
-            reported_gs_f = float(reported_gs) if reported_gs is not None else None
+            if has_l1:
+                reported_is = se_data.get("IS") if se_data else None
+                reported_gs = se_data.get("GS") if se_data else None
+                reported_is_f = float(reported_is) if reported_is is not None else None
+                reported_gs_f = float(reported_gs) if reported_gs is not None else None
 
-            mismatch_is_l1_log = state.get("last_device_is") == is_target_l1 and reported_is_f is not None and abs(reported_is_f - is_target_l1) >= 10
-            if mismatch_is_l1_log:
-                log.warning("⚠️ L1 IS mismatch: reported=%.0fW, target=%dW. Enforcing...", reported_is_f, is_target_l1)
+                mismatch_is_l1_log = state.get("last_device_is") == is_target_l1 and reported_is_f is not None and abs(reported_is_f - is_target_l1) >= 10
+                if mismatch_is_l1_log:
+                    log.warning("⚠️ L1 IS mismatch: reported=%.0fW, target=%dW. Enforcing...", reported_is_f, is_target_l1)
 
-            device_payload_l1 = {}
-            if (state.get("last_device_is") != is_target_l1) or (reported_is_f is not None and abs(reported_is_f - is_target_l1) >= 10):
-                device_payload_l1["IS"] = is_target_l1
-                state["last_device_is"] = is_target_l1
-            
-            if not is_native:
-                mismatch_gs_l1_log = state.get("last_device_gs") == gs_l1_rounded and reported_gs_f is not None and abs(reported_gs_f - gs_l1_rounded) >= 10
-                if mismatch_gs_l1_log:
-                    log.warning("⚠️ L1 GS mismatch: reported=%.0fW, target=%dW. Enforcing...", reported_gs_f, gs_l1_rounded)
+                device_payload_l1 = {}
+                if (state.get("last_device_is") != is_target_l1) or (reported_is_f is not None and abs(reported_is_f - is_target_l1) >= 10):
+                    device_payload_l1["IS"] = is_target_l1
+                    state["last_device_is"] = is_target_l1
 
-                if state.get("last_device_mm") != 0:
-                    device_payload_l1["MM"] = 0
-                    state["last_device_mm"] = 0
-                if (state.get("last_device_gs") != gs_l1_rounded) or (reported_gs_f is not None and abs(reported_gs_f - gs_l1_rounded) >= 10):
-                    device_payload_l1["GS"] = gs_l1_rounded
-                    state["last_device_gs"] = gs_l1_rounded
-                
-            if device_payload_l1:
-                sunenergy_write(sunenergy_ip, device_payload_l1)
+                if not is_native:
+                    mismatch_gs_l1_log = state.get("last_device_gs") == gs_l1_rounded and reported_gs_f is not None and abs(reported_gs_f - gs_l1_rounded) >= 10
+                    if mismatch_gs_l1_log:
+                        log.warning("⚠️ L1 GS mismatch: reported=%.0fW, target=%dW. Enforcing...", reported_gs_f, gs_l1_rounded)
+
+                    if state.get("last_device_mm") != 0:
+                        device_payload_l1["MM"] = 0
+                        state["last_device_mm"] = 0
+                    if (state.get("last_device_gs") != gs_l1_rounded) or (reported_gs_f is not None and abs(reported_gs_f - gs_l1_rounded) >= 10):
+                        device_payload_l1["GS"] = gs_l1_rounded
+                        state["last_device_gs"] = gs_l1_rounded
+
+                if device_payload_l1:
+                    sunenergy_write(sunenergy_ip, device_payload_l1)
 
             # L2
             if has_l2:
@@ -2450,14 +2520,15 @@ def main():
     # ------------------------------------------------------------------
     log.info("Shutdown — übergebe an Geräte-Selbstregelung (MM=1, GS=0)...")
     try:
-        ha_switch(mm_switch, True)
-        ha_set_number(gs_entity, 0)
-        sunenergy_write(sunenergy_ip, {"MM": 1, "GS": 0})
-        state["last_device_gs"] = None
-        state["last_device_mm"] = None
-        state["last_device_is"] = None
-        state["last_gs_written"] = None
-        
+        if has_l1:
+            ha_switch(mm_switch, True)
+            ha_set_number(gs_entity, 0)
+            sunenergy_write(sunenergy_ip, {"MM": 1, "GS": 0})
+            state["last_device_gs"] = None
+            state["last_device_mm"] = None
+            state["last_device_is"] = None
+            state["last_gs_written"] = None
+
         if has_l2:
             if mm_switch_l2:
                 ha_switch(mm_switch_l2, True)
