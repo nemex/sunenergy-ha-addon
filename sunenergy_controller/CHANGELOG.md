@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.1.0
+- **Neu: Speicher einzeln ein-/ausschaltbar (generische `storages`-Config)**: Ein neuer Konfigurationsblock `storages` mit `L1`/`L2`/`L3` und je einem `enabled`-Schalter erlaubt es, einzelne Kopfspeicher zu deaktivieren — z. B. wenn L1 für 2–3 Wochen zur Garantie-Reparatur abgeholt und komplett vom System getrennt wird. Anlass: L1 (SN TBe072a1edac5c5) mit bestätigtem MPPT-Defekt (Eingänge 1/3/4 dauerhaft 0 V/0 A).
+- **Symmetrisches L1-Gating**: Bislang war L1 der obligatorische Primär-Speicher (immer gepollt/geregelt), nur L2 war optional. Ein deaktiviertes L1 wird jetzt nach demselben Neutral-Muster wie ein fehlendes L2 behandelt:
+  - **Kein Polling** der L1-Sensoren/-Geräte-API mehr → keine Verbindungs-Timeouts, die den Regelzyklus verlangsamen, keine L1-MPPT-Fehl-Alarme.
+  - **Hausverbrauch** reduziert sich sauber auf `Netz + L2 − Hoymiles` (L1-Batterieanteil `battery_ac_est_l1 = 0`), statt aus veralteten L1-Werten zu schätzen.
+  - **SOC-Balancing / AC-AC-Transfer** wird bei fehlendem L1 komplett deaktiviert (nicht nur „L1 als Ziel meiden").
+  - **GS/IS-Drossel-Kette** referenziert L1 nicht mehr (Headroom/Ladekapazität/Splits auf 0 geklemmt, keine L1-Schreibbefehle).
+  - **Zwangsladung/Kalibrierung** triggert nicht mehr auf ein Phantom-L1 und schließt korrekt ab, wenn nur die aktiven Speicher 100 % erreichen.
+- **Web-UI**: Das Dashboard zeigt L1 bei Deaktivierung als „SunEnergyXT L1 (deaktiviert)" mit neutralisierten Karten, statt 0-Werte als echten Zustand darzustellen.
+- **L3-Vorbereitung**: Die `storages`-Struktur ist bereits für einen dritten Kopfspeicher (geplant Herbst 2026) angelegt. Eine eigene L3-Regel-/Balancing-Logik ist bewusst noch nicht enthalten; ein späterer L3-Entity-Block dockt ohne Config-Umstellung an.
+- **Rückwärtskompatibel**: Fehlt der `storages`-Block in einer alten Konfiguration, gelten L1 und L2 als aktiv (Default `true`) — das bisherige Verhalten bleibt unverändert.
+
 ## v3.0.5
 - **Fix: Kalibrierung endet erst, wenn BEIDE Speicher 100 % haben**: Bisher setzte die „Vollladung erkennen"-Logik den Kalibrierungs-Timer bereits zurück, sobald L1 100 % erreichte (`if curr_soc >= 100`). Dadurch wurde die Zwangsladung abgebrochen und das Ladelimit `SA` fiel auf `soc_normal_max` (95 %) zurück, bevor L2 fertig war — L2 blieb unkalibriert bei ~95 % hängen (Befund 13.07.: L1 = 100 %, L2 = 95 %). Der Timer wird jetzt nur zurückgesetzt, wenn beide Speicher 100 % erreicht haben. Der automatische 7-/15-Tage-Zyklus bringt damit zuverlässig beide Speicher gemeinsam auf 100 %.
 - **Neu: Manueller „Jetzt kalibrieren"-Button**: Eine neue Option `manual_calibration_switch` (Standard `input_boolean.sunenergy_calibrate_now`) erlaubt es, die Kalibrierung jederzeit manuell auszulösen — Tag wie Nacht, unabhängig vom Timer. Beim Einschalten lädt der Controller beide Speicher sofort auf 100 % (tagsüber solar, nachts per Netz), schaltet den Button nach Abschluss automatisch wieder aus und setzt `SA` auf 95 % zurück. Wird der Button vor Erreichen der 100 % wieder ausgeschaltet, bricht die manuelle Kalibrierung sauber ab, ohne den automatischen 7-Tage-Zyklus zu beeinflussen. Das 12h-Sicherheitsnetz bleibt als Notaus aktiv.

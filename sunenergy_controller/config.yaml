@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "3.0.5"
+version: "3.1.0"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -29,6 +29,16 @@ ports:
 ports_description:
   8765/tcp: Web UI (direkter Zugriff, optional – Ingress ist aktiv)
 options:
+  # v3.1.0: Speicher einzeln ein-/ausschaltbar (z.B. L1 während Reparatur/Abwesenheit).
+  # Deaktivierte Speicher werden nicht gepollt, nicht geregelt und nicht in Hausverbrauch,
+  # SOC-Balancing oder MPPT-Watchdog einbezogen. Struktur für spätere L3-Erweiterung vorbereitet.
+  storages:
+    L1:
+      enabled: true
+    L2:
+      enabled: true
+    L3:
+      enabled: false
   speicher1:
     pv1_active: true
     pv2_active: true
@@ -80,6 +90,13 @@ options:
     grid_target: 0.0
     manual_calibration_switch: "input_boolean.sunenergy_calibrate_now"
 schema:
+  storages:
+    L1:
+      enabled: bool
+    L2:
+      enabled: bool
+    L3:
+      enabled: bool
   speicher1:
     pv1_active: bool
     pv2_active: bool

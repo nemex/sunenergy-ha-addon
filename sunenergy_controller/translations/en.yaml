@@ -1,4 +1,17 @@
 configuration:
+  storages:
+    name: "Storage Activation"
+    fields:
+      L1:
+        name: "Storage L1"
+        description: "Storage L1 active. Turn off to disable during repair/absence — L1 is then not polled, regulated, or included in house consumption/balancing."
+      L2:
+        name: "Storage L2"
+        description: "Storage L2 active. Turn off to disable during repair/absence."
+      L3:
+        name: "Storage L3"
+        description: "Storage L3 active (for future expansion; currently without its own regulation/balancing logic)."
+
   speicher1:
     name: "Speicher 1 (L1) Configuration"
     fields:
