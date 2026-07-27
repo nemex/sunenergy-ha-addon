@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.1.2
+SunEnergy XT Controller v3.1.3
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -521,7 +521,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.1.2 startet...")
+    log.info("SunEnergy XT Controller v3.1.3 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -649,6 +649,9 @@ def main():
         state["manual_feed_in_accumulated_kwh"] = 0.0
     if "l2_charge_blocked" not in state:
         state["l2_charge_blocked"] = True
+    # v3.1.2: symmetrisch zu L2 (Default False = ladefähig, korrigiert sich im ersten Tick)
+    if "l1_charge_blocked" not in state:
+        state["l1_charge_blocked"] = False
 
     # Fix #4: Device-State explizit auf None setzen damit der erste Tick
     # immer schreibt (None != jeder Wert → Write-Bedingung immer True)
@@ -871,6 +874,7 @@ def main():
                 pb_current = 0.0
                 iw_current = 0.0
                 state["l1_polling_ok"] = True
+                state["l1_charge_blocked"] = True  # deaktiviert = keine Ladekapazität
             else:
                 se_data = sunenergy_read(sunenergy_ip)
                 if se_data:
@@ -879,6 +883,26 @@ def main():
                     pb_current = float(se_data.get("BP", 0))
                     iw_current = float(se_data.get("IW", 0))
                     state["l1_polling_ok"] = True
+
+                    # v3.1.2: L1 Lade-Blockade-Erkennung (symmetrisch zu L2, s.u.). Ohne sie
+                    # würde ein bei ~95 % stehendes L1 (z.B. nach Rückkehr aus der MPPT-Reparatur)
+                    # dieselbe Dauereinspeisung auslösen wie zuvor L2: scheinbarer Headroom, HMS
+                    # drosseln nicht. Referenz für "echten Headroom" ist soc_normal_max (nicht
+                    # last_written_sa=100 an Kalibriertagen) — sonst Entblock-Oszillation.
+                    last_gs_l1 = safe_float(state, "last_device_gs", 0.0)
+                    if last_gs_l1 < -100.0:
+                        if iw_current < 50.0:
+                            if not state.get("l1_charge_blocked", False):
+                                log.warning("⚠️ L1 lädt nicht: angefordert=%.0fW, bezogen=%.1fW. Blockiere L1 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l1, iw_current)
+                            state["l1_charge_blocked"] = True
+                        else:
+                            state["l1_charge_blocked"] = False
+                    else:
+                        if curr_soc < (soc_normal_max - 1.0):
+                            state["l1_charge_blocked"] = False
+                        else:
+                            state["l1_charge_blocked"] = True
+
                     # v3.0.0: last_poll_l1_ts / consecutive_polls_l1 gehören dem Meter-Proxy
                     # (echte /meter-Polls des Speichers) und werden hier nicht mehr überschrieben —
                     # sonst ist die Stale-Erkennung des nativen Modus wirkungslos.
@@ -1663,7 +1687,8 @@ def main():
                         gs_new = gs_last
 
                     # Anti-Windup bei vollen/nicht ladbaren Batterien (nachts)
-                    headroom_l1 = max(0.0, soc_max_limit - curr_soc) if has_l1 else 0.0
+                    l1_charge_blocked = state.get("l1_charge_blocked", False)
+                    headroom_l1 = max(0.0, soc_max_limit - curr_soc) if (has_l1 and not l1_charge_blocked) else 0.0
                     l2_charge_blocked = state.get("l2_charge_blocked", False)
                     headroom_l2 = max(0.0, soc_max_limit - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
                     total_headroom = headroom_l1 + headroom_l2
@@ -1853,7 +1878,8 @@ def main():
                 if time.monotonic() < hold_until:
                     gs_new = gs_last
                 
-                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc) if has_l1 else 0.0
+                l1_charge_blocked = state.get("l1_charge_blocked", False)
+                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc) if (has_l1 and not l1_charge_blocked) else 0.0
                 l2_charge_blocked = state.get("l2_charge_blocked", False)
                 headroom_l2 = max(0.0, (soc_max_limit - 1.0) - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
                 total_headroom = headroom_l1 + headroom_l2
@@ -1915,7 +1941,8 @@ def main():
                     gs_new = gs_last
 
                 # Anti-Windup bei vollen/nicht ladbaren Batterien (tagsüber)
-                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc) if has_l1 else 0.0
+                l1_charge_blocked = state.get("l1_charge_blocked", False)
+                headroom_l1 = max(0.0, (soc_max_limit - 1.0) - curr_soc) if (has_l1 and not l1_charge_blocked) else 0.0
                 l2_charge_blocked = state.get("l2_charge_blocked", False)
                 headroom_l2 = max(0.0, (soc_max_limit - 1.0) - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
                 total_headroom = headroom_l1 + headroom_l2
@@ -2006,7 +2033,7 @@ def main():
                 hms_limit_new = 3600.0
             elif is_actively_feeding_in:
                 hms_limit_new = 3600.0
-            elif ((has_l1 and curr_soc < (soc_max_limit - 3.0)) or (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 3.0))) and gs_new_rounded > (-max_gs + 50.0):
+            elif ((has_l1 and not l1_charge_blocked and curr_soc < (soc_max_limit - 3.0)) or (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 3.0))) and gs_new_rounded > (-max_gs + 50.0):
                 # Akku nicht voll und lädt nicht am Limit (IS): Hoymiles voll öffnen,
                 # damit jegliche Solarleistung zum Laden des Akkus genutzt werden kann.
                 hms_limit_new = 3600.0
@@ -2034,7 +2061,7 @@ def main():
                 hms_change = effective_deficit * 0.5
                 hms_change = max(-400.0, min(800.0, hms_change))
                 hms_limit_new = hms_limit_last + hms_change
-            elif (has_l1 and curr_soc < soc_max_limit) or (has_l2 and not l2_charge_blocked and curr_soc_l2 < soc_max_limit):
+            elif (has_l1 and not l1_charge_blocked and curr_soc < soc_max_limit) or (has_l2 and not l2_charge_blocked and curr_soc_l2 < soc_max_limit):
                 # Akku nicht voll und keine Abweichung vom Sollwert: stufenlos regeln
                 # um Überschwingen/Oszillationen nahe der Vollladung zu verhindern.
                 if solar_p >= hms_limit_last - 100:
@@ -2058,7 +2085,7 @@ def main():
             # ließ das HMS-Limit bei jedem GS-Nulldurchgang um bis zu 2000W springen.
             # Jetzt zählt die bereits genutzte AC-Ladeleistung (negatives GS) stufenlos
             # gegen die verbleibende Kapazität.
-            charge_capacity_l1 = 2400.0 if (has_l1 and curr_soc < (soc_max_limit - 1.0)) else 0.0
+            charge_capacity_l1 = 2400.0 if (has_l1 and not l1_charge_blocked and curr_soc < (soc_max_limit - 1.0)) else 0.0
             charge_capacity_l2 = 2400.0 if (has_l2 and not l2_charge_blocked and curr_soc_l2 < (soc_max_limit - 1.0)) else 0.0
             charge_capacity = max(0.0, charge_capacity_l1 + charge_capacity_l2 + min(0.0, gs_new_rounded))
             hms_limit_new = max(hms_limit_new, haus_p + charge_capacity)
