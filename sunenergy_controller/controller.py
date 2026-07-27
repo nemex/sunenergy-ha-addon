@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.0.5
+SunEnergy XT Controller v3.1.1
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -521,7 +521,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.0.5 startet...")
+    log.info("SunEnergy XT Controller v3.1.1 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1381,16 +1381,32 @@ def main():
             target_sa = 100 if calibration_requested else soc_normal_max
             if state.get("last_written_sa") != target_sa:
                 log.info("Setze Ladelimit SA auf %d%% (Kalibrierung fällig: %s)", target_sa, "Ja" if calibration_due else "Nein")
+                # v3.1.1: Ladegrenze an JEDEN aktiven Speicher schreiben, nicht nur L1.
+                # Bislang hing der Geräte-Schreibpfad an `if has_l1` und schrieb ausschließlich
+                # L1s SA-Entität — bei deaktiviertem L1 (z.B. Reparatur) bekam L2 die Ladegrenze
+                # nie aufs Gerät, obwohl last_written_sa/soc_max_limit sie bereits annahmen.
                 if has_l1:
                     ha_set_number(sa_entity, target_sa)
                     sunenergy_write(sunenergy_ip, {"SA": int(target_sa)})
-                # last_written_sa bleibt die gemeinsame SOC-Obergrenze (auch für L2), daher
-                # immer aktualisieren — auch wenn L1 deaktiviert ist.
+                if has_l2 and sa_entity_l2:
+                    ha_set_number(sa_entity_l2, target_sa)
+                    sunenergy_write(sunenergy_ip_l2, {"SA": int(target_sa)})
+                # last_written_sa ist die gemeinsame SOC-Obergrenze (auch für L2), daher
+                # immer aktualisieren — auch wenn ein Speicher deaktiviert ist.
                 state["last_written_sa"] = target_sa
                 save_state(state)
 
-            # Verwende target_sa (100 oder 95) als dynamische SOC-Grenze in der Regelung
-            soc_max_limit = float(target_sa)
+            # v3.1.1: Regel-Obergrenze von der Kalibrier-Ziel-Ladegrenze ENTKOPPELN.
+            # target_sa steigt an Kalibriertagen auf 100 % — das darf aber NUR die Geräte-
+            # Ladegrenze (SA, oben) und den nächtlichen Kalibrier-Modus steuern, NICHT den
+            # Tag-/Nacht-/Bypass-Regler. Sonst sieht der Regler an jedem Kalibriertag ein
+            # Phantom-Headroom (z.B. L2 bei 95 % < 100 %) für einen Speicher, der physisch bei
+            # ~95 % dicht ist: er öffnet die Hoymiles hart auf 3600 W "zum Laden" (Zeile ~1990),
+            # lässt IS/GS voll laufen → der gesamte Solarüberschuss geht den ganzen Tag ins Netz,
+            # obwohl der Speicher nichts aufnimmt (Live-Befund 27.07., L1 in Reparatur, L2 einziger
+            # Speicher). Der echte Kalibrier-Modus läuft über den dedizierten Zweig (schreibt
+            # GS=-2400/SA=100 fest) und braucht soc_max_limit ohnehin nicht.
+            soc_max_limit = float(soc_normal_max)
 
             # v3.0.5: zeitgesteuert weiterhin nur nachts (tagsüber solar laden),
             # manuell erzwungen sofort — auch tagsüber (Netz + PV, dem Nutzer egal).
