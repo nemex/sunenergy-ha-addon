@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.1.1
+SunEnergy XT Controller v3.1.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -521,7 +521,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.1.1 startet...")
+    log.info("SunEnergy XT Controller v3.1.2 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -938,8 +938,17 @@ def main():
                         else:
                             state["l2_charge_blocked"] = False
                     else:
-                        limit_val = float(state.get("last_written_sa") or soc_normal_max)
-                        if curr_soc_l2 < (limit_val - 1.0):
+                        # v3.1.2: Reale Tages-Ladegrenze (soc_normal_max) als Headroom-Referenz,
+                        # NICHT last_written_sa. Letzteres steigt an Kalibriertagen auf 100 % — mit
+                        # dieser 100 als Referenz wurde ein bei ~95 % stehender (nicht ladender)
+                        # Speicher jeden 2. Tick fälschlich wieder "entblockt" (Oszillation), sobald
+                        # GS kurz auf 0 fiel. Dadurch feuerte der HMS-Öffnungs-Zweig abwechselnd und
+                        # hielt die Hoymiles im Mittel auf 3600 W offen → Dauereinspeisung. Mit
+                        # soc_normal_max bleibt ein voller, nicht ladender Speicher stabil blockiert,
+                        # bis er durch echte Entladung wieder unter die Grenze fällt. Ein Speicher,
+                        # der die Ladung TATSÄCHLICH annimmt (iw≥50, Zweig oben), bleibt unblockiert
+                        # und lädt an Kalibriertagen solar weiter bis 100 %.
+                        if curr_soc_l2 < (soc_normal_max - 1.0):
                             state["l2_charge_blocked"] = False
                         else:
                             state["l2_charge_blocked"] = True
@@ -1381,7 +1390,7 @@ def main():
             target_sa = 100 if calibration_requested else soc_normal_max
             if state.get("last_written_sa") != target_sa:
                 log.info("Setze Ladelimit SA auf %d%% (Kalibrierung fällig: %s)", target_sa, "Ja" if calibration_due else "Nein")
-                # v3.1.1: Ladegrenze an JEDEN aktiven Speicher schreiben, nicht nur L1.
+                # v3.1.2: Ladegrenze an JEDEN aktiven Speicher schreiben, nicht nur L1.
                 # Bislang hing der Geräte-Schreibpfad an `if has_l1` und schrieb ausschließlich
                 # L1s SA-Entität — bei deaktiviertem L1 (z.B. Reparatur) bekam L2 die Ladegrenze
                 # nie aufs Gerät, obwohl last_written_sa/soc_max_limit sie bereits annahmen.
@@ -1396,17 +1405,15 @@ def main():
                 state["last_written_sa"] = target_sa
                 save_state(state)
 
-            # v3.1.1: Regel-Obergrenze von der Kalibrier-Ziel-Ladegrenze ENTKOPPELN.
-            # target_sa steigt an Kalibriertagen auf 100 % — das darf aber NUR die Geräte-
-            # Ladegrenze (SA, oben) und den nächtlichen Kalibrier-Modus steuern, NICHT den
-            # Tag-/Nacht-/Bypass-Regler. Sonst sieht der Regler an jedem Kalibriertag ein
-            # Phantom-Headroom (z.B. L2 bei 95 % < 100 %) für einen Speicher, der physisch bei
-            # ~95 % dicht ist: er öffnet die Hoymiles hart auf 3600 W "zum Laden" (Zeile ~1990),
-            # lässt IS/GS voll laufen → der gesamte Solarüberschuss geht den ganzen Tag ins Netz,
-            # obwohl der Speicher nichts aufnimmt (Live-Befund 27.07., L1 in Reparatur, L2 einziger
-            # Speicher). Der echte Kalibrier-Modus läuft über den dedizierten Zweig (schreibt
-            # GS=-2400/SA=100 fest) und braucht soc_max_limit ohnehin nicht.
-            soc_max_limit = float(soc_normal_max)
+            # target_sa (100 % an Kalibriertagen, sonst soc_normal_max) ist bewusst die dynamische
+            # SOC-Grenze der Regelung: so nutzt der Tag-Regler bei viel Sonne freie Solarenergie,
+            # um beide Speicher bis 100 % zu laden — spart nächtliches Netz-Nachladen im Kalibrier-
+            # modus. Der Einspeise-Schutz gegen einen bei ~95 % STEHENDEN (nicht ladenden) Speicher
+            # kommt NICHT über eine künstlich gesenkte Grenze, sondern über die Lade-Blockade-
+            # Erkennung (l2_charge_blocked, s.o.): nimmt ein Speicher die kommandierte Ladung nicht
+            # an, wird sein Headroom auf 0 gesetzt → er gilt als "voll" → HMS drosseln statt
+            # einzuspeisen. Ein gesunder Speicher lädt dagegen weiter bis 100 %. (v3.1.2)
+            soc_max_limit = float(target_sa)
 
             # v3.0.5: zeitgesteuert weiterhin nur nachts (tagsüber solar laden),
             # manuell erzwungen sofort — auch tagsüber (Netz + PV, dem Nutzer egal).
