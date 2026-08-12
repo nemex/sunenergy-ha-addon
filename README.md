@@ -72,7 +72,7 @@ Alle Optionen werden im Tab Konfiguration des Add-ons gesetzt (UI-Formular, kein
 
 Pflichtfelder (L1 / Basis-Setup)
 
-OptionBeschreibungBeispielshelly_ipIP-Adresse des Shelly Pro 3EM (Netz-Messpunkt)192.168.178.98sunenergy_ipIP-Adresse des SunEnergyXT 500 Pro (L1)192.168.178.94ha_ipIP-Adresse der Home-Assistant-Instanz192.168.178.132grid_sensorHA-Sensor mit der aktuellen Netzleistungsensor.shellypro3em_leistungsoc_sensorHA-Sensor mit dem Ladezustand des Speicherssensor.sunenergyxt_500_pro_system_speicherlevelgs_entityHA-number-Entität für den Sollwert Netzanschlussleistungnumber.sunenergyxt_500_pro_sollwert_leistung_netzanschlussmm_switchHA-Schalter für den lokalen Nulleinspeisemodus des Gerätsswitch.sunenergyxt_500_pro_lokaler_nulleinspeisemodussa_entityHA-number-Entität für die Systemladegrenzenumber.sunenergyxt_500_pro_system_ladegrenzehaus_power_sensorHA-Sensor mit dem aktuellen Hausverbrauchsensor.hausverbrauch_aktuellsoc_normal_maxOberes SOC-Limit im Normalbetrieb (%)95soc_minUnteres SOC-Limit, ab dem nicht mehr entladen wird (%)10calibration_daysIntervall in Tagen für die automatische Zwangsladung auf 100 %15dry_runtrue = nur simulieren, keine Werte an die Geräte senden (zum Testen)false
+OptionBeschreibungBeispielshelly_ipIP-Adresse des Shelly Pro 3EM (Netz-Messpunkt)192.168.178.98sunenergy_ipIP-Adresse des SunEnergyXT 500 Pro (L1)192.168.178.142ha_ipIP-Adresse der Home-Assistant-Instanz192.168.178.132grid_sensorHA-Sensor mit der aktuellen Netzleistungsensor.shellypro3em_leistungsoc_sensorHA-Sensor mit dem Ladezustand des Speicherssensor.sunenergyxt_500_pro_l1_system_speicherlevelgs_entityHA-number-Entität für den Sollwert Netzanschlussleistungnumber.sunenergyxt_500_pro_l1_sollwert_leistung_netzanschlussmm_switchHA-Schalter für den lokalen Nulleinspeisemodus des Gerätsswitch.sunenergyxt_500_pro_l1_lokaler_nulleinspeisemodussa_entityHA-number-Entität für die Systemladegrenzenumber.sunenergyxt_500_pro_l1_system_ladegrenzehaus_power_sensorHA-Sensor mit dem aktuellen Hausverbrauchsensor.hausverbrauch_aktuellsoc_normal_maxOberes SOC-Limit im Normalbetrieb (%)95soc_minUnteres SOC-Limit, ab dem nicht mehr entladen wird (%)10calibration_daysIntervall in Tagen für die automatische Zwangsladung auf 100 %15dry_runtrue = nur simulieren, keine Werte an die Geräte senden (zum Testen)false
 
 Hoymiles / OpenDTU (optional)
 
@@ -85,6 +85,8 @@ Zweiter Speicher – L2 (optional)
 OptionBeschreibungsunenergy_ip_l2IP-Adresse des zweiten SunEnergyXTsoc_sensor_l2SOC-Sensor des L2-Speichersgs_entity_l2Sollwert-Entität des L2-Speichersmm_switch_l2Nulleinspeisemodus-Schalter des L2-Speicherssa_entity_l2Systemladegrenze des L2-Speichersop_l2_sensorLeistungssensor am AC-Ausgang des L2-Speichers (z. B. Shelly Pro 1PM)use_native_pidInterne Lastaufteilung zwischen L1/L2 aktivierenproxy_split_modeAufteilungsstrategie zwischen den Speichern, z. B. "soc"
 
 Leer lassen, falls nur ein Speicher vorhanden ist – das Add-on läuft dann automatisch im Single-Storage-Modus.
+
+Seit v3.1.4 hat auch L1 die optionale Option `op_sensor` (Feld „Shelly Leistungssensor", symmetrisch zu `op_l2_sensor`): Ist sie gesetzt, überschreibt der Shelly-1PM-Wert die Entladeleistung von L1. Leer = OP kommt aus der L1-Geräte-API (bisheriges Verhalten).
 
 Manuelle Volladung (optional)
 

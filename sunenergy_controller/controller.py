@@ -75,6 +75,7 @@ def load_options() -> dict:
             "speicher1_gs_entity": "gs_entity",
             "speicher1_mm_switch": "mm_switch",
             "speicher1_sa_entity": "sa_entity",
+            "speicher1_op_sensor": "op_sensor",
             "speicher2_ip_l2": "sunenergy_ip_l2",
             "speicher2_soc_sensor_l2": "soc_sensor_l2",
             "speicher2_gs_entity_l2": "gs_entity_l2",
@@ -570,6 +571,7 @@ def main():
     gs_entity       = opts["gs_entity"]
     mm_switch       = opts["mm_switch"]
     sa_entity       = opts["sa_entity"]
+    op_sensor       = opts.get("op_sensor", "")
     hms_2000_entity = opts["hms_2000_entity"]
     hms_1600_entity = opts["hms_1600_entity"]
     
@@ -931,7 +933,19 @@ def main():
                     state["consecutive_polls_l1"] = 0
                     log.warning("SunEnergyXT L1 API nicht erreichbar, verwende letzte Werte (OP=%.1fW, PV=%.1fW, BP=%.1fW)",
                                 op_current, pv_current, pb_current)
-            
+
+                # v3.1.4: Optionale Entladeleistung von L1 via HA-Sensor überschreiben, falls konfiguriert
+                # (symmetrisch zu op_l2_sensor). Negative Werte des Shelly (Einspeisung/Entladung)
+                # werden als positive OP-Leistung interpretiert.
+                if op_sensor:
+                    op_val = ha_get_state(op_sensor)
+                    if op_val is not None:
+                        try:
+                            val = float(op_val)
+                            op_current = -val if val < 0 else 0.0
+                        except ValueError:
+                            log.error("Konnte L1-Leistungssensor %s nicht als float parsen: %s", op_sensor, op_val)
+
             state["soc"] = curr_soc
             state["pv_last"] = pv_current
 

@@ -42,6 +42,9 @@ configuration:
       sa_entity:
         name: "System Charge Limit"
         description: "Entity ID for the charge limit (system limit) of Speicher 1"
+      op_sensor:
+        name: "Shelly Power Sensor"
+        description: "The Shelly 1PM power sensor of Speicher 1 (optional; empty = OP from device API)"
 
   speicher2:
     name: "Speicher 2 (L2) Configuration"

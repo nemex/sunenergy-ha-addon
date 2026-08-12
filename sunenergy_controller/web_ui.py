@@ -87,6 +87,7 @@ def load_options() -> dict:
                 "speicher1_gs_entity": "gs_entity",
                 "speicher1_mm_switch": "mm_switch",
                 "speicher1_sa_entity": "sa_entity",
+                "speicher1_op_sensor": "op_sensor",
                 "speicher2_ip_l2": "sunenergy_ip_l2",
                 "speicher2_soc_sensor_l2": "soc_sensor_l2",
                 "speicher2_gs_entity_l2": "gs_entity_l2",

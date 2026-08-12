@@ -1,5 +1,8 @@
 # Changelog
 
+## v3.1.4
+- **Neu: Shelly-Leistungssensor auch für L1 konfigurierbar**: Das Konfigurationsformular von Speicher 1 hatte — anders als L2 — kein Feld „Shelly Leistungssensor". Grund war kein konditionales Rendering, sondern eine schlichte Schema-Lücke: der optionale OP-Override (`op_l2_sensor`) wurde 2.2.5 nur für L2 angelegt, für `speicher1` fehlte das Gegenstück. L1 erhält jetzt die neue Option `op_sensor` (Feld „Shelly Leistungssensor", symmetrisch zu L2). Ist sie gesetzt, überschreibt der Shelly-1PM-Wert die Entladeleistung von L1 (negative Shelly-Werte = Einspeisung/Entladung → positive OP-Leistung); leer bleibt es beim OP-Wert aus der L1-Geräte-API. **Rückwärtskompatibel**: Default ist leer, das reine Update ändert L1s Verhalten nicht — der Override wird erst aktiv, wenn der Sensor eingetragen wird (z. B. `sensor.shellypro1pm_sunenergy_l1_leistung`).
+
 ## v3.1.3
 - **Symmetrische Lade-Blockade-Erkennung für L1**: Die in v3.1.2 gefixte Erkennung eines vollen, nicht ladenden Speichers (verhindert Dauereinspeisung) gab es bisher nur für L2. L1 — historisch der „immer gesunde" Primärspeicher — hatte keine. Käme L1 nach der MPPT-Reparatur zurück und bliebe bei ~95 % stehen, träte dasselbe Einspeise-Problem auf. L1 erhält jetzt dieselbe Logik (`l1_charge_blocked`): nimmt L1 die kommandierte Ladung nicht an (`iw < 50` trotz negativem `GS`), wird sein Ladeheadroom auf 0 gesetzt und die Hoymiles drosseln, statt den Überschuss einzuspeisen. Als „echte Headroom"-Referenz dient — wie bei L2 — die reale Tages-Ladegrenze `soc_normal_max` (nicht das an Kalibriertagen auf 100 % angehobene `last_written_sa`). Ein deaktiviertes L1 gilt als blockiert (keine Ladekapazität).
 

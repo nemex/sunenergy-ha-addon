@@ -42,6 +42,9 @@ configuration:
       sa_entity:
         name: "System-Ladegrenze"
         description: "Entitäts-ID für das Speicherlimit (System-Ladegrenze) von Speicher 1"
+      op_sensor:
+        name: "Shelly Leistungssensor"
+        description: "Der Shelly 1PM Leistungssensor von Speicher 1 (optional; leer = OP aus Geräte-API)"
 
   speicher2:
     name: "Speicher 2 (L2) Konfiguration"
