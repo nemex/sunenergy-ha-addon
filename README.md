@@ -90,7 +90,7 @@ Seit v3.1.4 hat auch L1 die optionale Option `op_sensor` (Feld „Shelly Leistun
 
 Manuelle Volladung (optional)
 
-OptionBeschreibungmanual_feed_in_switchinput_boolean, um kurzzeitig gezielte Einspeisung zu erzwingen (z. B. für Balkonkraftwerk-Bypass)manual_feed_in_targetZiel-Einspeiseleistung in kWmanual_feed_in_min_socMindest-SOC, ab dem diese Funktion aktiv werden darfmanual_feed_in_powerMaximale Leistung in Wattbypass_tomorrow_switchinput_boolean, um die nächste automatische Zwangsladung zu überspringen
+OptionBeschreibungmanual_feed_in_switchinput_boolean, um kurzzeitig gezielte Einspeisung zu erzwingen (z. B. für Balkonkraftwerk-Bypass)manual_feed_in_targetZiel-Einspeiseleistung in kWmanual_feed_in_min_socMindest-SOC, ab dem diese Funktion aktiv werden darfmanual_feed_in_powerMaximale Leistung in Wattbypass_switchinput_boolean, um die Nulleinspeisung auszusetzen (dauerhafte Einspeisung, sobald die Akkus voll sind)
 
 Telegram-Benachrichtigungen (optional)
 

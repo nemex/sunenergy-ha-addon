@@ -109,7 +109,7 @@ def load_options() -> dict:
                 "regulation_dry_run": "dry_run",
                 "regulation_use_native_pid": "use_native_pid",
                 "regulation_proxy_split_mode": "proxy_split_mode",
-                "regulation_bypass_tomorrow_switch": "bypass_tomorrow_switch",
+                "regulation_bypass_switch": "bypass_switch",
                 "regulation_manual_feed_in_switch": "manual_feed_in_switch",
                 "regulation_manual_feed_in_target": "manual_feed_in_target",
                 "regulation_manual_feed_in_min_soc": "manual_feed_in_min_soc",

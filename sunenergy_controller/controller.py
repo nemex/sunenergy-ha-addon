@@ -97,7 +97,7 @@ def load_options() -> dict:
             "regulation_dry_run": "dry_run",
             "regulation_use_native_pid": "use_native_pid",
             "regulation_proxy_split_mode": "proxy_split_mode",
-            "regulation_bypass_tomorrow_switch": "bypass_tomorrow_switch",
+            "regulation_bypass_switch": "bypass_switch",
             "regulation_manual_feed_in_switch": "manual_feed_in_switch",
             "regulation_manual_feed_in_target": "manual_feed_in_target",
             "regulation_manual_feed_in_min_soc": "manual_feed_in_min_soc",
@@ -1371,10 +1371,10 @@ def main():
             # ------------------------------------------------------------------
             # 3c. Bypass Nulleinspeisung prüfen (Sofortiger und dauerhafter Bypass)
             # ------------------------------------------------------------------
-            bypass_tomorrow_switch = opts.get("bypass_tomorrow_switch", "input_boolean.sunenergy_bypass_tomorrow")
+            bypass_switch = opts.get("bypass_switch", "input_boolean.sunenergy_bypass")
             bypass_active = False
-            if bypass_tomorrow_switch:
-                bypass_switch_state = ha_get_state(bypass_tomorrow_switch, "off")
+            if bypass_switch:
+                bypass_switch_state = ha_get_state(bypass_switch, "off")
                 if bypass_switch_state == "on":
                     if not state.get("bypass_active_logged", False):
                         log.info("⚡ Nulleinspeisung-Bypass SOFORT AKTIV (dauerhaft bis zum manuellen Ausschalten).")
@@ -1902,6 +1902,13 @@ def main():
 
                 gs_new = max(0.0, min(max_gs, gs_new))
                 
+                # v3.1.5: Lade-Priorität. Solange noch Ladekapazität frei ist, nie mehr
+                # ausgeben als der Hausverbrauch braucht → die Speicher speisen NICHT ins
+                # Netz ein, ihr PV-Überschuss lädt zuerst die Akkus. Erst wenn beide voll
+                # sind (total_headroom ≤ 0), gibt der Bypass unten die Einspeisung frei.
+                if total_headroom > 0.0:
+                    gs_new = min(gs_new, max(0.0, haus_p - solar_p))
+
                 # Aufteilung unter Berücksichtigung von vollen Batterien (Durchreichen)
                 if gs_new > 0:
                     # Entladen: Normale proportionale Aufteilung nach SOC
@@ -1922,8 +1929,13 @@ def main():
                     l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
                     
                     if l1_full and l2_full:
-                        gs_l1 = pv_current
-                        gs_l2 = pv_l2
+                        # v3.1.5: NICHT auf die (evtl. gedrosselte) Ist-PV pinnen — sonst
+                        # friert ein gedrosselter MPPT auf seinem Ist-Wert fest
+                        # (Einspeise-Deadlock: gs = pv → MPPT liefert nur pv → gs bleibt pv …).
+                        # Kleiner Vorlauf, damit der MPPT bis zum echten Panel-Maximum hochtastet.
+                        _probe = 60.0
+                        gs_l1 = min(2400.0, pv_current + _probe)
+                        gs_l2 = min(2400.0, pv_l2 + _probe)
                     elif l1_full:
                         gs_l1 = pv_current
                         gs_l2 = gs_new - gs_l1

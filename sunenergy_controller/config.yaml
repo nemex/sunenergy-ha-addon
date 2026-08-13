@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "3.1.4"
+version: "3.1.5"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -85,7 +85,7 @@ options:
     dry_run: false
     use_native_pid: false
     proxy_split_mode: "soc"
-    bypass_tomorrow_switch: "input_boolean.sunenergy_bypass_tomorrow"
+    bypass_switch: "input_boolean.sunenergy_bypass"
     manual_feed_in_switch: "input_boolean.sunenergy_manual_feed_in"
     manual_feed_in_target: 1.0
     manual_feed_in_min_soc: 90
@@ -144,7 +144,7 @@ schema:
     dry_run: bool
     use_native_pid: bool
     proxy_split_mode: str
-    bypass_tomorrow_switch: str
+    bypass_switch: str
     manual_feed_in_switch: str
     manual_feed_in_target: float
     manual_feed_in_min_soc: float

@@ -149,7 +149,7 @@ configuration:
       proxy_split_mode:
         name: "Split Mode"
         description: "How power is split between Speicher 1 and 2 (soc or fixed)"
-      bypass_tomorrow_switch:
+      bypass_switch:
         name: "Bypass Switch (Bypass zero-feed-in)"
         description: "Switch to bypass zero-feed-in for continuous feed-in"
       manual_feed_in_switch:

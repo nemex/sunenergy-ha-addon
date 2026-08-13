@@ -149,7 +149,7 @@ configuration:
       proxy_split_mode:
         name: "Aufteilungsmodus"
         description: "Wie Leistungen auf Speicher 1 und 2 aufgeteilt werden (soc oder fest)"
-      bypass_tomorrow_switch:
+      bypass_switch:
         name: "Bypass-Schalter (Nulleinspeisung aussetzen)"
         description: "Schalter zum Aussetzen der Nulleinspeisung für dauerhafte Einspeisung"
       manual_feed_in_switch:
