@@ -1897,17 +1897,16 @@ def main():
                 l2_charge_blocked = state.get("l2_charge_blocked", False)
                 headroom_l2 = max(0.0, (soc_max_limit - 1.0) - curr_soc_l2) if (has_l2 and not l2_charge_blocked) else 0.0
                 total_headroom = headroom_l1 + headroom_l2
-                if total_headroom <= 0.0:
-                    gs_new = max(0.0, gs_new)
-
-                gs_new = max(0.0, min(max_gs, gs_new))
-                
-                # v3.1.5: Lade-Priorität. Solange noch Ladekapazität frei ist, nie mehr
-                # ausgeben als der Hausverbrauch braucht → die Speicher speisen NICHT ins
-                # Netz ein, ihr PV-Überschuss lädt zuerst die Akkus. Erst wenn beide voll
-                # sind (total_headroom ≤ 0), gibt der Bypass unten die Einspeisung frei.
+                # v3.1.6: Lade-Priorität im Bypass. Solange die Akkus noch laden können,
+                # wird GS wie im Normalmodus geregelt (negative GS = AC-Laden erlaubt) —
+                # dadurch lädt der AC-Überschuss der Hoymiles ZUERST die Akkus (Netz wird
+                # auf grid_target gehalten), statt ins Netz zu fließen. Erst wenn beide voll
+                # sind (total_headroom ≤ 0), klemmen wir GS ≥ 0 und geben unten die
+                # Einspeisung (Durchreichen) frei.
                 if total_headroom > 0.0:
-                    gs_new = min(gs_new, max(0.0, haus_p - solar_p))
+                    gs_new = max(-max_gs, min(max_gs, gs_new))
+                else:
+                    gs_new = max(0.0, min(max_gs, gs_new))
 
                 # Aufteilung unter Berücksichtigung von vollen Batterien (Durchreichen)
                 if gs_new > 0:
