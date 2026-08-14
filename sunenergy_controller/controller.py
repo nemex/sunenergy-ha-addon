@@ -1927,39 +1927,26 @@ def main():
                     l1_full = curr_soc >= (soc_max_limit - 1.0)
                     l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
                     
-                    # v3.2.2: Autonomes, ENTKOPPELTES PV-Tracking pro Speicher (Ansatz Antigravity,
-                    # 14.08.). Ein voller Speicher führt sein GS eigenständig nach: sanftes Hochtasten
-                    # (+45 W/Tick), damit der MPPT ruhig aufmacht und der Messwert-Deadlock (GS=pv →
-                    # pinnt) aufbricht — mit HARTEM Deckel gs ≤ pv + 80 (max. 80 W aus dem Akku; das
-                    # Sicherheitsnetz, das der v3.2.0-Katastrophe fehlte) und pb-Entladeschutz.
-                    # WICHTIG: pb-Vorzeichen DIESES Geräts ist positiv = Laden, negativ = Entladen
-                    # (live belegt: pb_l1 = +729 beim Laden). Antigravitys Vorzeichen war invertiert,
-                    # hier korrigiert. Keine Kopplung gs_l2 = gs_new - gs_l1 mehr — L1/L2 völlig getrennt.
-                    _RAMP = 45.0
-                    _CAP = 80.0
-
-                    def _bypass_full_gs(pv, op, pb, last_key):
-                        prev = safe_float(state, last_key, pv)
-                        if pb < -10.0:
-                            # Akku entlädt ins Netz (pb negativ) → sofort auf ~PV kappen
-                            gs = max(0.0, op + pb)          # pb<0: op - |pb| ≈ pv
-                        else:
-                            # neutral/ladend → sanft hochtasten, MPPT aufziehen
-                            gs = max(pv, prev) + _RAMP
-                        # harter Deckel: nie mehr als pv + 80 → max. 80 W aus dem Akku
-                        return max(0.0, min(gs, pv + _CAP, 2400.0))
-
+                    # v3.2.3: Stures, ENTKOPPELTES Durchreichen pro Speicher (Ansatz Antigravity,
+                    # 14.08.). Der +45-Ramp aus v3.2.2 ist zurückgenommen — er kämpfte gegen den
+                    # Entladeschutz und pendelte. Die EIGENTLICHE Ursache des großen Flip-Flops
+                    # (L1 ~300 W / L2 ~700 W, ständig umgekehrt) ist die SOC-Angleichung (AC-Transfer),
+                    # die im Bypass weiterlief und Leistung zwischen den Speichern hin- und herschob
+                    # — die wird jetzt im Bypass abgeschaltet (weiter unten, not bypass_active).
+                    # Hier daher schlicht: voller Speicher speist seine eigene PV ein (gs = pv, kein
+                    # Akku-Zug), ladender Speicher lädt unabhängig aus dem AC-Überschuss.
+                    # KEINE Kopplung gs_l2 = gs_new - gs_l1 mehr.
                     l1_is_full = l1_full or state.get("l1_charge_blocked", False)
                     l2_is_full = l2_full or state.get("l2_charge_blocked", False)
 
                     if l1_is_full and l2_is_full:
-                        gs_l1 = _bypass_full_gs(pv_current, op_current, pb_current, "last_device_gs")
-                        gs_l2 = _bypass_full_gs(pv_l2, op_l2, pb_l2, "last_device_gs_l2")
+                        gs_l1 = pv_current
+                        gs_l2 = pv_l2
                     elif l1_is_full:
-                        gs_l1 = _bypass_full_gs(pv_current, op_current, pb_current, "last_device_gs")
+                        gs_l1 = pv_current
                         gs_l2 = max(-2400.0, min(0.0, gs_new))   # L2 lädt noch → AC-Laden aus Überschuss
                     elif l2_is_full:
-                        gs_l2 = _bypass_full_gs(pv_l2, op_l2, pb_l2, "last_device_gs_l2")
+                        gs_l2 = pv_l2
                         gs_l1 = max(-2400.0, min(0.0, gs_new))   # L1 lädt noch → AC-Laden aus Überschuss
                     else:
                         # Beide nicht voll -> Proportional zum Headroom laden (wie gehabt)
@@ -2299,7 +2286,10 @@ def main():
             transfer_was_active = state.get("last_p_transfer", 0.0) > 10.0
             # v3.1.0: SOC-Angleichung/Transfer braucht BEIDE Speicher — bei deaktiviertem
             # L1 komplett aus (nicht nur "L1 meiden"), sonst Transfer gegen ein totes Gerät.
-            if not is_native and has_l1 and has_l2:
+            if not is_native and has_l1 and has_l2 and not bypass_active:
+                # v3.2.3: SOC-Angleichung (AC-Transfer) im Bypass KOMPLETT aus. Im Bypass soll
+                # jeder Speicher stur seine eigene PV einspeisen — der Transfer schob sonst
+                # Leistung zwischen L1/L2 hin und her (großes Flip-Flop 300↔700 W).
                 soc_max_curr = max(curr_soc, curr_soc_l2)
                 soc_diff = curr_soc - curr_soc_l2
 
