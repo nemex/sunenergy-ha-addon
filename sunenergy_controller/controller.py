@@ -1927,25 +1927,30 @@ def main():
                     l1_full = curr_soc >= (soc_max_limit - 1.0)
                     l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
                     
-                    # v3.1.5/v3.1.7: Ein VOLLER Speicher wird NICHT auf seine (evtl.
-                    # gedrosselte) Ist-PV gepinnt — sonst friert sein MPPT auf dem Ist-Wert
-                    # fest (Deadlock: gs = pv → MPPT liefert nur pv → gs bleibt pv …). Kleiner
-                    # Vorlauf, damit er bis zum echten Panel-Maximum hochtastet.
-                    # v3.1.7: Der Vorlauf gilt jetzt auch, wenn NUR EINER voll ist (der andere
-                    # lädt noch) — vorher pinnte der elif-Zweig den vollen Speicher wieder auf pv,
-                    # sodass z. B. das volle L2 bei 12 W festhing, während L1 noch lud.
+                    # v3.1.5/v3.1.7/v3.1.8: Ein VOLLER Speicher wird NICHT auf seine (evtl.
+                    # gedrosselte) Ist-PV gepinnt — sonst friert sein MPPT auf dem Ist-Wert fest
+                    # (Deadlock: gs = pv → MPPT liefert nur pv → gs bleibt pv …).
+                    # v3.1.8: L1 und L2 haben baugleiche Panels. Ein voller, gedrosselter
+                    # Speicher wird deshalb direkt auf das Ausgabe-Niveau des Geschwister-
+                    # Speichers gezogen (dessen PV = das erreichbare Maximum) — der MPPT reißt so
+                    # in EINEM Schritt hoch, statt mit nur +60/Tick zäh hängenzubleiben, wenn die
+                    # Ist-PV träge/pendelnd zurückkommt (Live-Befund: L2 hing bei ~100 W fest,
+                    # obwohl L1 baugleich 804 W lieferte). Kann L2 es hardwaremäßig nicht ganz,
+                    # zieht es kurz minimal aus dem Akku und pendelt sich auf seinem echten
+                    # Maximum ein (SOC fällt knapp unter voll → self-limiting).
                     _probe = 60.0
+                    _ref = max(pv_current, pv_l2)
                     if l1_full and l2_full:
-                        gs_l1 = min(2400.0, pv_current + _probe)
-                        gs_l2 = min(2400.0, pv_l2 + _probe)
+                        gs_l1 = min(2400.0, max(pv_current + _probe, _ref))
+                        gs_l2 = min(2400.0, max(pv_l2 + _probe, _ref))
                     elif l1_full:
-                        gs_l1 = min(2400.0, pv_current + _probe)
+                        gs_l1 = min(2400.0, max(pv_current + _probe, pv_l2))
                         gs_l2 = gs_new - gs_l1
                         if l2_charge_blocked:
                             gs_l2 = max(0.0, gs_l2)
                         gs_l2 = max(-2400.0, min(2400.0, gs_l2))
                     elif l2_full:
-                        gs_l2 = min(2400.0, pv_l2 + _probe)
+                        gs_l2 = min(2400.0, max(pv_l2 + _probe, pv_current))
                         gs_l1 = gs_new - gs_l2
                         gs_l1 = max(-2400.0, min(2400.0, gs_l1))
                     else:
