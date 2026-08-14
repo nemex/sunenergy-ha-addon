@@ -1927,27 +1927,25 @@ def main():
                     l1_full = curr_soc >= (soc_max_limit - 1.0)
                     l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
                     
-                    # v3.2.0: Rückbau der ganzen GS-Regelei für einen VOLLEN Speicher.
-                    # Erkenntnis aus dem 14.08.-Handtest: ein HOHER GS zieht den Akku NICHT leer —
-                    # das Gerät gibt einfach seine verfügbare PV aus (gs=1100 → Ausgabe 751 W = PV,
-                    # pb ≈ 0). Gedrosselt wurde ein voller Speicher nur, weil wir GS aus der
-                    # (gedrosselten) PV berechnet haben (Selbstblockade) und jeden Tick nachführten
-                    # (Pendeln). Deshalb: voller Speicher = GS fix auf Maximum (2400). Das Gerät
-                    # speist seine komplette PV per eigenem MPPT ein — kein Vorlauf, kein Nachführen,
-                    # kein Pendeln, kein Akku-Zug. Fällt der SOC wider Erwarten unter "voll", greift
-                    # der Lade-Zweig (selbstbegrenzend).
-                    _FULL_GS = 2400.0
+                    # v3.2.1: SICHERE Durchreich-Logik. Ein voller Speicher bekommt GS = seine
+                    # Ist-PV → das Gerät speist genau seine PV ein, der Akku bleibt neutral (kein
+                    # Zug). WICHTIG (Lehre aus v3.2.0): ein GS ÜBER der PV zieht die Differenz aus
+                    # dem Akku (v3.2.0 mit GS=2400 entlud die Akkus mit ~1,6 kW/Speicher ins Netz).
+                    # Nachteil: liefert die gemessene PV eines vollen Speichers zu wenig (weil das
+                    # Gerät bei vollem Akku auf den GS-Wert curtailt), bleibt er niedrig. Dieses
+                    # Optimierungsproblem NICHT mehr live per GS-Experiment angehen (siehe v3.1.5–
+                    # 3.2.0: pinnt, pendelt oder entlädt). Sicherheit vor Ertrag.
                     if l1_full and l2_full:
-                        gs_l1 = _FULL_GS
-                        gs_l2 = _FULL_GS
+                        gs_l1 = pv_current
+                        gs_l2 = pv_l2
                     elif l1_full:
-                        gs_l1 = _FULL_GS
+                        gs_l1 = pv_current
                         gs_l2 = gs_new - gs_l1
                         if l2_charge_blocked:
                             gs_l2 = max(0.0, gs_l2)
                         gs_l2 = max(-2400.0, min(2400.0, gs_l2))
                     elif l2_full:
-                        gs_l2 = _FULL_GS
+                        gs_l2 = pv_l2
                         gs_l1 = gs_new - gs_l2
                         gs_l1 = max(-2400.0, min(2400.0, gs_l1))
                     else:
