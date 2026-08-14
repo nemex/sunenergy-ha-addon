@@ -1927,30 +1927,45 @@ def main():
                     l1_full = curr_soc >= (soc_max_limit - 1.0)
                     l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
                     
-                    # v3.1.5/v3.1.7/v3.1.8: Ein VOLLER Speicher wird NICHT auf seine (evtl.
-                    # gedrosselte) Ist-PV gepinnt — sonst friert sein MPPT auf dem Ist-Wert fest
-                    # (Deadlock: gs = pv → MPPT liefert nur pv → gs bleibt pv …).
-                    # v3.1.8: L1 und L2 haben baugleiche Panels. Ein voller, gedrosselter
-                    # Speicher wird deshalb direkt auf das Ausgabe-Niveau des Geschwister-
-                    # Speichers gezogen (dessen PV = das erreichbare Maximum) — der MPPT reißt so
-                    # in EINEM Schritt hoch, statt mit nur +60/Tick zäh hängenzubleiben, wenn die
-                    # Ist-PV träge/pendelnd zurückkommt (Live-Befund: L2 hing bei ~100 W fest,
-                    # obwohl L1 baugleich 804 W lieferte). Kann L2 es hardwaremäßig nicht ganz,
-                    # zieht es kurz minimal aus dem Akku und pendelt sich auf seinem echten
-                    # Maximum ein (SOC fällt knapp unter voll → self-limiting).
-                    _probe = 60.0
-                    _ref = max(pv_current, pv_l2)
+                    # v3.1.9: Spannungs-geführter Regler für einen VOLLEN Speicher.
+                    # Bei vollem Akku erntet das Gerät nur so viel PV, wie es ausgeben soll (GS).
+                    # Statt die (pendelnde) PV-LEISTUNG nachzujagen — das erzeugte die Schaukel —
+                    # oder den Geschwister-Speicher als Referenz zu nehmen (falsch, wenn die Panels
+                    # unterschiedlich dreckig sind), regeln wir GS an der PANEL-SPANNUNG:
+                    #   - ein aktiver Eingang hoch (~40 V Leerlauf) = gedrosselt → GS anheben
+                    #   - alle aktiven Eingänge unter Last (~33 V) + Akku neutral = Maximum → halten
+                    #   - unter Last, aber Akku entlädt spürbar → GS zu hoch → leicht zurück
+                    # Robust für 2 Süd wie für 4× Ost/West (prüft die Spannung ALLER aktiven
+                    # Eingänge, die zu unterschiedlichen Zeiten laden) und unabhängig pro Speicher.
+                    # Belegt durch den 14.08.-Handtest: bei ~33 V unter Last lieferte L2 751 W (=L1),
+                    # pb ≈ 0. Zieht sich so auch selbst aus einem Hänger, ohne Neustart.
+                    _V_LOADED = 360.0   # Geräte-VP ist ×10 → 360 = 36,0 V; darüber = Leerlauf/gedrosselt
+                    _GS_STEP = 100.0
+
+                    def _seek_full_gs(pv, pv_details, active, prev_gs_key, pb):
+                        vmax = 0.0
+                        for _i in range(1, 5):
+                            if active.get(str(_i)):
+                                vmax = max(vmax, safe_float(pv_details, f"pv{_i}_v", 0.0))
+                        prev = safe_float(state, prev_gs_key, pv)
+                        if vmax > _V_LOADED:
+                            return min(2400.0, prev + _GS_STEP)   # noch gedrosselt → stärker ziehen
+                        if pb < -50.0:
+                            return max(pv, prev - _GS_STEP)        # unter Last, aber Akku-Zug → zurück
+                        return max(pv, prev)                       # am Maximum, Akku neutral → halten
+
+                    _ai = state.get("active_inputs", {"L1": {}, "L2": {}})
                     if l1_full and l2_full:
-                        gs_l1 = min(2400.0, max(pv_current + _probe, _ref))
-                        gs_l2 = min(2400.0, max(pv_l2 + _probe, _ref))
+                        gs_l1 = _seek_full_gs(pv_current, pv_details_l1, _ai.get("L1", {}), "last_gs_written", pb_current)
+                        gs_l2 = _seek_full_gs(pv_l2, pv_details_l2, _ai.get("L2", {}), "last_gs_written_l2", pb_l2)
                     elif l1_full:
-                        gs_l1 = min(2400.0, max(pv_current + _probe, pv_l2))
+                        gs_l1 = _seek_full_gs(pv_current, pv_details_l1, _ai.get("L1", {}), "last_gs_written", pb_current)
                         gs_l2 = gs_new - gs_l1
                         if l2_charge_blocked:
                             gs_l2 = max(0.0, gs_l2)
                         gs_l2 = max(-2400.0, min(2400.0, gs_l2))
                     elif l2_full:
-                        gs_l2 = min(2400.0, max(pv_l2 + _probe, pv_current))
+                        gs_l2 = _seek_full_gs(pv_l2, pv_details_l2, _ai.get("L2", {}), "last_gs_written_l2", pb_l2)
                         gs_l1 = gs_new - gs_l2
                         gs_l1 = max(-2400.0, min(2400.0, gs_l1))
                     else:
