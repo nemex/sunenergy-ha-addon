@@ -1927,29 +1927,42 @@ def main():
                     l1_full = curr_soc >= (soc_max_limit - 1.0)
                     l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
                     
-                    # v3.2.1: SICHERE Durchreich-Logik. Ein voller Speicher bekommt GS = seine
-                    # Ist-PV → das Gerät speist genau seine PV ein, der Akku bleibt neutral (kein
-                    # Zug). WICHTIG (Lehre aus v3.2.0): ein GS ÜBER der PV zieht die Differenz aus
-                    # dem Akku (v3.2.0 mit GS=2400 entlud die Akkus mit ~1,6 kW/Speicher ins Netz).
-                    # Nachteil: liefert die gemessene PV eines vollen Speichers zu wenig (weil das
-                    # Gerät bei vollem Akku auf den GS-Wert curtailt), bleibt er niedrig. Dieses
-                    # Optimierungsproblem NICHT mehr live per GS-Experiment angehen (siehe v3.1.5–
-                    # 3.2.0: pinnt, pendelt oder entlädt). Sicherheit vor Ertrag.
-                    if l1_full and l2_full:
-                        gs_l1 = pv_current
-                        gs_l2 = pv_l2
-                    elif l1_full:
-                        gs_l1 = pv_current
-                        gs_l2 = gs_new - gs_l1
-                        if l2_charge_blocked:
-                            gs_l2 = max(0.0, gs_l2)
-                        gs_l2 = max(-2400.0, min(2400.0, gs_l2))
-                    elif l2_full:
-                        gs_l2 = pv_l2
-                        gs_l1 = gs_new - gs_l2
-                        gs_l1 = max(-2400.0, min(2400.0, gs_l1))
+                    # v3.2.2: Autonomes, ENTKOPPELTES PV-Tracking pro Speicher (Ansatz Antigravity,
+                    # 14.08.). Ein voller Speicher führt sein GS eigenständig nach: sanftes Hochtasten
+                    # (+45 W/Tick), damit der MPPT ruhig aufmacht und der Messwert-Deadlock (GS=pv →
+                    # pinnt) aufbricht — mit HARTEM Deckel gs ≤ pv + 80 (max. 80 W aus dem Akku; das
+                    # Sicherheitsnetz, das der v3.2.0-Katastrophe fehlte) und pb-Entladeschutz.
+                    # WICHTIG: pb-Vorzeichen DIESES Geräts ist positiv = Laden, negativ = Entladen
+                    # (live belegt: pb_l1 = +729 beim Laden). Antigravitys Vorzeichen war invertiert,
+                    # hier korrigiert. Keine Kopplung gs_l2 = gs_new - gs_l1 mehr — L1/L2 völlig getrennt.
+                    _RAMP = 45.0
+                    _CAP = 80.0
+
+                    def _bypass_full_gs(pv, op, pb, last_key):
+                        prev = safe_float(state, last_key, pv)
+                        if pb < -10.0:
+                            # Akku entlädt ins Netz (pb negativ) → sofort auf ~PV kappen
+                            gs = max(0.0, op + pb)          # pb<0: op - |pb| ≈ pv
+                        else:
+                            # neutral/ladend → sanft hochtasten, MPPT aufziehen
+                            gs = max(pv, prev) + _RAMP
+                        # harter Deckel: nie mehr als pv + 80 → max. 80 W aus dem Akku
+                        return max(0.0, min(gs, pv + _CAP, 2400.0))
+
+                    l1_is_full = l1_full or state.get("l1_charge_blocked", False)
+                    l2_is_full = l2_full or state.get("l2_charge_blocked", False)
+
+                    if l1_is_full and l2_is_full:
+                        gs_l1 = _bypass_full_gs(pv_current, op_current, pb_current, "last_device_gs")
+                        gs_l2 = _bypass_full_gs(pv_l2, op_l2, pb_l2, "last_device_gs_l2")
+                    elif l1_is_full:
+                        gs_l1 = _bypass_full_gs(pv_current, op_current, pb_current, "last_device_gs")
+                        gs_l2 = max(-2400.0, min(0.0, gs_new))   # L2 lädt noch → AC-Laden aus Überschuss
+                    elif l2_is_full:
+                        gs_l2 = _bypass_full_gs(pv_l2, op_l2, pb_l2, "last_device_gs_l2")
+                        gs_l1 = max(-2400.0, min(0.0, gs_new))   # L1 lädt noch → AC-Laden aus Überschuss
                     else:
-                        # Beide nicht voll -> Proportional zum Headroom laden
+                        # Beide nicht voll -> Proportional zum Headroom laden (wie gehabt)
                         if total_headroom > 0:
                             ratio_l1 = headroom_l1 / total_headroom
                             ratio_l2 = headroom_l2 / total_headroom
