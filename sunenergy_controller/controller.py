@@ -1921,10 +1921,11 @@ def main():
 
             max_gs = 4800.0 if has_l2 else 2400.0
 
-            # v3.3.3: markiert, welche Speicher in diesem Tick im Durchreich-Pfad laufen
-            # (deren GS ist keine Regler-Ausgabe und darf den Integrator nicht klemmen).
-            pt_l1_active = False
-            pt_l2_active = False
+            # v3.3.3/v3.3.4: Durchreich-BETRAG pro Speicher in diesem Tick (der Anteil von GS,
+            # der keine Regler-Ausgabe ist und den Integrator nicht klemmen darf). 0 = dieser
+            # Speicher läuft nicht im Durchreich-Pfad.
+            pt_l1_amount = 0.0
+            pt_l2_amount = 0.0
 
             if bypass_active:
                 # Bypass-Modus: Nulleinspeisung ausgesetzt.
@@ -1972,6 +1973,25 @@ def main():
                 l1_is_full = has_l1 and (l1_full or state.get("l1_charge_blocked", False))
                 l2_is_full = has_l2 and (l2_full or state.get("l2_charge_blocked", False))
 
+                # v3.3.4: HAUSDECKUNG additiv statt per Zweigwechsel.
+                # v3.3.3 hat volle Speicher immer ins Durchreichen geschickt — damit war das
+                # Flip-Flop weg, aber auch die Hausdeckung: bei Netzbezug (Sonne weg, Abend)
+                # gaben volle Speicher 0 W ab und das Haus zog aus dem Netz, obwohl die Akkus
+                # zu 93/94 % voll waren (live gemessen: 401 W Netzbezug bei 425 W Hausverbrauch).
+                # Ursache des alten Flip-Flops war das UMSCHALTEN zwischen zwei Formeln, nicht
+                # die Hausdeckung selbst. Deshalb jetzt ADDIEREN statt umschalten:
+                #     gs = Durchreichen (eigene PV) + Anteil an der Hausdeckung
+                # Der Durchreich-Anteil ist immer dabei (kein Zweigwechsel), der Hausdeckungs-
+                # Anteil ist der positive Reglerausgang, nach nutzbarem SOC verteilt, und durch
+                # den PID selbstbegrenzend (sobald das Netz auf grid_target steht, geht er zurück).
+                _deficit = max(0.0, gs_new)          # PID will entladen -> Haus deckt sich aus dem Akku
+                _chg = min(0.0, gs_new)              # PID will laden (nur für nicht volle Speicher)
+                _us_l1 = max(0.0, curr_soc - soc_min) if (has_l1 and not low_soc_active_l1) else 0.0
+                _us_l2 = max(0.0, curr_soc_l2 - soc_min) if (has_l2 and not low_soc_active_l2) else 0.0
+                _us_tot = _us_l1 + _us_l2
+                _dis_l1 = _deficit * (_us_l1 / _us_tot) if _us_tot > 0 else 0.0
+                _dis_l2 = _deficit * (_us_l2 / _us_tot) if _us_tot > 0 else 0.0
+
                 if l1_is_full or l2_is_full:
                     # Passives Durchreichen (v3.3.2): gs = eigene PV spiegelt nur, was das
                     # Gerät ohnehin produziert — kein Gegendrücken, kein Akku-Zug. Die
@@ -1994,7 +2014,7 @@ def main():
                     _v_l1 = _vmax(pv_details_l1, _ai.get("L1", {}))
                     _v_l2 = _vmax(pv_details_l2, _ai.get("L2", {}))
 
-                    def _passthrough_gs(pv_own, pb_own, v_own, pv_twin, v_twin, key):
+                    def _passthrough_gs(pv_own, pb_own, v_own, pv_twin, v_twin, key, intended_dis=0.0):
                         """Passiv (gs = eigene PV); nur bei nachgewiesenem Hänger kurz anheben."""
                         now = time.time()
                         cnt_key, until_key, dis_key = ("twin_stuck_" + key,
@@ -2003,7 +2023,10 @@ def main():
                         passive = max(0.0, min(pv_own, 2400.0))
 
                         # Abbruch-Schutz: zieht der Akku, ist jede Anhebung falsch -> passiv.
-                        if pb_own < -100.0:
+                        # v3.3.4: gegen die BEABSICHTIGTE Entladung rechnen. Decken wir gerade
+                        # bewusst den Hausverbrauch aus dem Akku, ist ein negatives pb gewollt
+                        # und kein Zeichen für einen zu hohen Durchreich-Sollwert.
+                        if pb_own + intended_dis < -100.0:
                             cnt = int(safe_float(state, dis_key, 0.0)) + 1
                             state[dis_key] = float(cnt)
                             if cnt >= 3:
@@ -2051,18 +2074,20 @@ def main():
                         return passive
 
                     if l1_is_full and l2_is_full:
-                        gs_l1 = _passthrough_gs(pv_current, pb_current, _v_l1, pv_l2, _v_l2, "l1")
-                        gs_l2 = _passthrough_gs(pv_l2, pb_l2, _v_l2, pv_current, _v_l1, "l2")
-                        pt_l1_active = True
-                        pt_l2_active = True
+                        pt_l1_amount = _passthrough_gs(pv_current, pb_current, _v_l1, pv_l2, _v_l2, "l1", _dis_l1)
+                        pt_l2_amount = _passthrough_gs(pv_l2, pb_l2, _v_l2, pv_current, _v_l1, "l2", _dis_l2)
+                        gs_l1 = min(2400.0, pt_l1_amount + _dis_l1)
+                        gs_l2 = min(2400.0, pt_l2_amount + _dis_l2)
                     elif l1_is_full:
-                        gs_l1 = _passthrough_gs(pv_current, pb_current, _v_l1, pv_l2, _v_l2, "l1")
-                        gs_l2 = max(-2400.0, min(0.0, gs_new))   # L2 lädt noch -> AC-Laden aus Überschuss
-                        pt_l1_active = True
+                        pt_l1_amount = _passthrough_gs(pv_current, pb_current, _v_l1, pv_l2, _v_l2, "l1", _dis_l1)
+                        gs_l1 = min(2400.0, pt_l1_amount + _dis_l1)
+                        # L2 lädt noch: AC-Laden aus Überschuss, hilft bei Netzbezug aber mit aus
+                        gs_l2 = max(-2400.0, min(2400.0, _chg + _dis_l2))
                     else:
-                        gs_l2 = _passthrough_gs(pv_l2, pb_l2, _v_l2, pv_current, _v_l1, "l2")
-                        gs_l1 = max(-2400.0, min(0.0, gs_new))   # L1 lädt noch -> AC-Laden aus Überschuss
-                        pt_l2_active = True
+                        pt_l2_amount = _passthrough_gs(pv_l2, pb_l2, _v_l2, pv_current, _v_l1, "l2", _dis_l2)
+                        gs_l2 = min(2400.0, pt_l2_amount + _dis_l2)
+                        # L1 lädt noch: AC-Laden aus Überschuss, hilft bei Netzbezug aber mit aus
+                        gs_l1 = max(-2400.0, min(2400.0, _chg + _dis_l1))
                 elif gs_new > 0:
                     # Entladen: Normale proportionale Aufteilung nach SOC
                     # (nur noch erreichbar, wenn KEIN Speicher voll ist)
@@ -2551,17 +2576,13 @@ def main():
             # die Klemme einzurechnen zog den Integrator nach jedem Durchreich-Tick auf
             # ~+1100 W und schickte volle Speicher im nächsten Tick in den Entladesplit
             # (Zweig-Flip-Flop, gemessen als Springen 356<->675 W; Fund Fable-5-Review).
-            _reg_rounded = gs_new_rounded
-            if pt_l1_active:
-                _reg_rounded -= gs_l1_rounded
-            if pt_l2_active:
-                _reg_rounded -= gs_l2_rounded
-            _l1_regulated = has_l1 and not pt_l1_active
-            _l2_regulated = has_l2 and not pt_l2_active
-            if not _l1_regulated and not _l2_regulated:
-                gs_new = 0.0   # nichts geregelt -> Integrator neutral, keine gespannte Feder
-            else:
-                gs_new = max(_reg_rounded - 100.0, min(_reg_rounded + 100.0, gs_new))
+            # v3.3.4: Der geregelte Anteil ist die Summe der kommandierten GS-Werte MINUS der
+            # Durchreich-Beträge (gs = eigene PV ist keine Regler-Ausgabe). Damit trackt der
+            # Integrator genau das, was der PID wirklich kommandiert — den Hausdeckungs-Anteil
+            # bei vollen Speichern bzw. die Ladeleistung — und die Durchreich-Summe kann ihn
+            # nicht mehr hochziehen (das war das Zweig-Flip-Flop aus v3.3.3s Analyse).
+            _reg_rounded = gs_new_rounded - pt_l1_amount - pt_l2_amount
+            gs_new = max(_reg_rounded - 100.0, min(_reg_rounded + 100.0, gs_new))
 
             # HA-Schreiben durchführen
             if not is_native:
