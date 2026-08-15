@@ -1936,17 +1936,40 @@ def main():
                     # Hier daher schlicht: voller Speicher speist seine eigene PV ein (gs = pv, kein
                     # Akku-Zug), ladender Speicher lädt unabhängig aus dem AC-Überschuss.
                     # KEINE Kopplung gs_l2 = gs_new - gs_l1 mehr.
+                    # v3.2.4: TWIN-REFERENZ (Ansatz Antigravity, live verifiziert 15.08.).
+                    # Ein VOLLER Speicher wird vom Gerät auf seinen GS-Wert gedrosselt: der MPPT
+                    # schiebt die Spannung Richtung Leerlauf (38–40 V), der Strom bricht ein — und
+                    # weil GS = seine eigene (bereits gedrosselte) PV war, blieb er dort gefangen.
+                    # Da L1/L2 identische Module am selben Ort haben, ist die PV des jeweils NICHT
+                    # gedrosselten Speichers die verlässliche Messung der real verfügbaren Sonne.
+                    # Ein voller Speicher bekommt daher max(pv_l1, pv_l2) als Sollwert → sein MPPT
+                    # zieht die Spannung auf den MPP (~32 V) und gibt den vollen Strom frei.
+                    # LIVE-BELEG (15.08., Addon gestoppt, GS_L2 von Hand auf L1s 750 W gesetzt):
+                    #   38,7 V / 2,7 A / 281 W  →  32,1 V / 11,2 A / 709 W   (+428 W)
+                    #   Ausgabe blieb dabei IMMER unter der PV → KEIN Akku-Zug, SOC stabil 95 %.
+                    # Warum das sicher ist (anders als v3.2.0): die Referenz ist die TATSÄCHLICH
+                    # vorhandene Sonnenleistung, nie mehr. Ein fester Sollwert über dem Sonnen-
+                    # angebot lässt das Gerät die Differenz aus dem Akku holen (getestet mit
+                    # GS=900 bei 760 W Sonne: −237 W Entladung). Zusätzliches Netz: entlädt ein
+                    # Akku doch (< −25 W), wird sein GS sofort auf die eigene Ist-PV gekappt.
+                    solar_ref = max(pv_current, pv_l2) if has_l2 else pv_current
+
+                    def _twin_gs(pv_own, pb_own):
+                        if pb_own < -25.0:
+                            return max(0.0, min(pv_own, 2400.0))
+                        return max(0.0, min(max(solar_ref, pv_own), 2400.0))
+
                     l1_is_full = l1_full or state.get("l1_charge_blocked", False)
                     l2_is_full = l2_full or state.get("l2_charge_blocked", False)
 
                     if l1_is_full and l2_is_full:
-                        gs_l1 = pv_current
-                        gs_l2 = pv_l2
+                        gs_l1 = _twin_gs(pv_current, pb_current)
+                        gs_l2 = _twin_gs(pv_l2, pb_l2)
                     elif l1_is_full:
-                        gs_l1 = pv_current
+                        gs_l1 = _twin_gs(pv_current, pb_current)
                         gs_l2 = max(-2400.0, min(0.0, gs_new))   # L2 lädt noch → AC-Laden aus Überschuss
                     elif l2_is_full:
-                        gs_l2 = pv_l2
+                        gs_l2 = _twin_gs(pv_l2, pb_l2)
                         gs_l1 = max(-2400.0, min(0.0, gs_new))   # L1 lädt noch → AC-Laden aus Überschuss
                     else:
                         # Beide nicht voll -> Proportional zum Headroom laden (wie gehabt)
