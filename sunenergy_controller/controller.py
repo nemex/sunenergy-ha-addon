@@ -672,7 +672,9 @@ def main():
     for _k in ("twin_ratio_l1", "twin_ratio_l2"):
         state[_k] = 1.0
     for _k in ("twin_hold_l1", "twin_hold_l2", "twin_recover_l1",
-               "twin_recover_l2", "twin_solar_ref"):
+               "twin_recover_l2", "twin_solar_ref",
+               "twin_dis_ticks_l1", "twin_dis_ticks_l2",
+               "twin_last_gs_l1", "twin_last_gs_l2"):
         state[_k] = 0.0
 
     set_active_mode(state, "night")
@@ -2024,35 +2026,52 @@ def main():
                     _RATIO_RECOVER = 0.02
                     _RECOVER_EVERY_S = 60.0
 
+                    # v3.2.11: Auslöseschwelle entschärft und Bestätigung verlangt.
+                    # −25 W war viel zu empfindlich: Eigenverbrauch und Messrauschen eines
+                    # Speichers liegen regelmäßig darüber (live: L1 mit −47 W, obwohl es gar
+                    # keine echte Entladung war). Dadurch feuerte die Bremse ständig grundlos.
+                    # Jetzt muss die Entladung deutlich (< −100 W) UND über 3 Ticks (15 s)
+                    # anhalten. Echte Entladungen lagen bei −237 W und lösen weiterhin aus.
+                    _DISCHARGE_W = -100.0
+                    _DISCHARGE_TICKS = 3
+
                     def _twin_gs(pv_own, op_own, pb_own, key):
                         now = time.time()
                         hold_key = "twin_hold_" + key
                         ratio_key = "twin_ratio_" + key
                         rec_key = "twin_recover_" + key
+                        cnt_key = "twin_dis_ticks_" + key
+                        lastgs_key = "twin_last_gs_" + key
 
                         ratio = safe_float(state, ratio_key, 1.0)
 
-                        if pb_own < -25.0:
+                        cnt = int(safe_float(state, cnt_key, 0.0)) + 1 if pb_own < _DISCHARGE_W else 0
+                        state[cnt_key] = float(cnt)
+
+                        if cnt >= _DISCHARGE_TICKS:
                             # Akku entlädt → echte Eigen-Solarleistung merken, aber als ANTEIL
                             # der Zwillings-Referenz statt als absoluter Wert: so skaliert der
                             # Deckel automatisch mit der Sonne mit (ein absoluter Deckel würde
                             # den Speicher bei aufziehender Sonne auf dem Mittagswert festhalten).
-                            # v3.2.9: die eigene GEMESSENE PV ist das wahre Maximum — NICHT
-                            # (op + pb). Solange ein Speicher noch lädt, sagt seine Ausgabe
-                            # nichts über sein Solarangebot aus (der Großteil geht in den Akku);
-                            # ein kurzer Entlade-Moment in dieser Phase lieferte dann ein völlig
-                            # zu kleines "real" und damit ein Falsch-Verhältnis (live: L1 lernte
-                            # 0,57 statt ~1,0 und wäre damit auf ~420 W gedeckelt gewesen).
-                            real = max(0.0, pv_own)
+                            # v3.2.11: NICHT auf den gemessenen (bereits gedrosselten) Wert
+                            # kappen — genau das erzeugte die Abwärtsspirale: kappen → Gerät
+                            # liefert weniger → nächster Tick misst weniger → kappt tiefer …
+                            # Stattdessen den Sollwert um exakt die gemessene Entladung
+                            # absenken. Das konvergiert sauber gegen "Akku-Zug = 0" und kann
+                            # nicht unter die real verfügbare Solarleistung durchsacken.
+                            base = safe_float(state, lastgs_key, pv_own)
+                            corrected = max(0.0, base + pb_own)   # pb ist negativ → senkt ab
+                            state[lastgs_key] = corrected
                             if solar_ref > 50.0:
-                                state[ratio_key] = max(0.5, min(1.0, real / solar_ref))
+                                state[ratio_key] = max(0.5, min(1.0, corrected / solar_ref))
                             state[hold_key] = now + _HOLD_S
                             state[rec_key] = now + _RECOVER_EVERY_S
-                            return min(real, 2400.0)
+                            return min(corrected, 2400.0)
 
                         if now < safe_float(state, hold_key, 0.0):
-                            # Sperrfrist aktiv → eigener Wert, nicht wieder hochziehen
-                            return max(0.0, min(pv_own, 2400.0))
+                            # Sperrfrist aktiv → auf dem korrigierten Wert bleiben
+                            held = max(safe_float(state, lastgs_key, pv_own), pv_own)
+                            return max(0.0, min(held, 2400.0))
 
                         # Verhältnis langsam wieder Richtung 1.0 (Panel gereinigt, Schnee ab,
                         # Verschattung vorbei) — sonst klebte ein einmal gelernter Rückstand fest.
@@ -2062,7 +2081,9 @@ def main():
                             state[rec_key] = now + _RECOVER_EVERY_S
 
                         target = solar_ref * ratio
-                        return max(0.0, min(max(target, pv_own), 2400.0))
+                        result = max(0.0, min(max(target, pv_own), 2400.0))
+                        state[lastgs_key] = result
+                        return result
 
                     l1_is_full = l1_full or state.get("l1_charge_blocked", False)
                     l2_is_full = l2_full or state.get("l2_charge_blocked", False)
