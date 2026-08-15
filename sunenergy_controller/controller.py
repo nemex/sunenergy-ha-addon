@@ -1961,30 +1961,61 @@ def main():
                     # (genau das Pendeln aus v3.2.2).
                     # HINWEIS Vorzeichen: bei DIESEM Gerät ist pb positiv = Laden, negativ =
                     # Entladen (live belegt: +729 W beim Laden, −237 W beim Entladen).
+                    # v3.2.6: GELERNTER DECKEL pro Speicher. Die Twin-Referenz allein zielte
+                    # dauerhaft ein paar Prozent zu hoch, wenn ein Speicher real etwas weniger
+                    # kann als sein Zwilling (Verschmutzung/Toleranz — gemessen: L1 764 W,
+                    # L2 real ~666–709 W). Folge: alle 60 s kurz ~80 W aus dem Akku, kappen,
+                    # Sperrfrist, wieder hoch. Jetzt merkt sich jeder Speicher bei einem
+                    # Kapp-Ereignis seine ECHTE Maximalleistung als Deckel und peilt künftig
+                    # diesen an statt den (zu hohen) Zwillings-Wert. Alle 5 Minuten wird der
+                    # Deckel um 40 W angetastet, damit er mitwächst, wenn mehr möglich ist
+                    # (Sonne dreht, Panel wieder sauber). Solange kein Deckel gelernt ist, gilt
+                    # die volle Twin-Referenz — nur so bricht ein gedrosselter MPPT überhaupt
+                    # erst aus der 38-V-Falle aus.
                     solar_ref = max(pv_current, pv_l2) if has_l2 else pv_current
                     _HOLD_S = 60.0
+                    _PROBE_W = 40.0
+                    _PROBE_EVERY_S = 300.0
 
-                    def _twin_gs(pv_own, op_own, pb_own, hold_key):
+                    def _twin_gs(pv_own, op_own, pb_own, key):
                         now = time.time()
+                        hold_key = "twin_hold_" + key
+                        ceil_key = "twin_ceiling_" + key
+                        probe_key = "twin_probe_" + key
+
                         if pb_own < -25.0:
+                            # Akku entlädt → echte Eigen-Solarleistung = das wahre Maximum
+                            real = max(0.0, op_own + pb_own)
+                            state[ceil_key] = real
                             state[hold_key] = now + _HOLD_S
-                            return max(0.0, min(op_own + pb_own, 2400.0))
+                            state[probe_key] = now + _PROBE_EVERY_S
+                            return min(real, 2400.0)
+
                         if now < safe_float(state, hold_key, 0.0):
                             # Sperrfrist aktiv → eigener Wert, nicht wieder hochziehen
                             return max(0.0, min(pv_own, 2400.0))
-                        return max(0.0, min(max(solar_ref, pv_own), 2400.0))
+
+                        # 2400 = "noch kein Deckel gelernt" → volle Twin-Referenz (Ausbruch)
+                        ceiling = safe_float(state, ceil_key, 2400.0)
+                        if now >= safe_float(state, probe_key, 0.0):
+                            ceiling = min(2400.0, ceiling + _PROBE_W)
+                            state[ceil_key] = ceiling
+                            state[probe_key] = now + _PROBE_EVERY_S
+
+                        target = min(solar_ref, ceiling)
+                        return max(0.0, min(max(target, pv_own), 2400.0))
 
                     l1_is_full = l1_full or state.get("l1_charge_blocked", False)
                     l2_is_full = l2_full or state.get("l2_charge_blocked", False)
 
                     if l1_is_full and l2_is_full:
-                        gs_l1 = _twin_gs(pv_current, op_current, pb_current, "twin_hold_l1")
-                        gs_l2 = _twin_gs(pv_l2, op_l2, pb_l2, "twin_hold_l2")
+                        gs_l1 = _twin_gs(pv_current, op_current, pb_current, "l1")
+                        gs_l2 = _twin_gs(pv_l2, op_l2, pb_l2, "l2")
                     elif l1_is_full:
-                        gs_l1 = _twin_gs(pv_current, op_current, pb_current, "twin_hold_l1")
+                        gs_l1 = _twin_gs(pv_current, op_current, pb_current, "l1")
                         gs_l2 = max(-2400.0, min(0.0, gs_new))   # L2 lädt noch → AC-Laden aus Überschuss
                     elif l2_is_full:
-                        gs_l2 = _twin_gs(pv_l2, op_l2, pb_l2, "twin_hold_l2")
+                        gs_l2 = _twin_gs(pv_l2, op_l2, pb_l2, "l2")
                         gs_l1 = max(-2400.0, min(0.0, gs_new))   # L1 lädt noch → AC-Laden aus Überschuss
                     else:
                         # Beide nicht voll -> Proportional zum Headroom laden (wie gehabt)
