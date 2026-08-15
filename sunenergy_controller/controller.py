@@ -692,6 +692,7 @@ def main():
     # und werden hier gleich mit aus dem Zustand geräumt.
     for _k in ("twin_stuck_l1", "twin_stuck_l2",
                "twin_rescue_until_l1", "twin_rescue_until_l2",
+               "twin_rescue_ok_l1", "twin_rescue_ok_l2",
                "twin_dis_ticks_l1", "twin_dis_ticks_l2"):
         state[_k] = 0.0
     for _k in ("twin_ratio_l1", "twin_ratio_l2", "twin_hold_l1", "twin_hold_l2",
@@ -1920,6 +1921,11 @@ def main():
 
             max_gs = 4800.0 if has_l2 else 2400.0
 
+            # v3.3.3: markiert, welche Speicher in diesem Tick im Durchreich-Pfad laufen
+            # (deren GS ist keine Regler-Ausgabe und darf den Integrator nicht klemmen).
+            pt_l1_active = False
+            pt_l2_active = False
+
             if bypass_active:
                 # Bypass-Modus: Nulleinspeisung ausgesetzt.
                 # Wir berechnen gs_new über den PID-Regler, um Batterieladung zu maximieren.
@@ -1948,49 +1954,33 @@ def main():
                 else:
                     gs_new = max(0.0, min(max_gs, gs_new))
 
-                # Aufteilung unter Berücksichtigung von vollen Batterien (Durchreichen)
-                if gs_new > 0:
-                    # Entladen: Normale proportionale Aufteilung nach SOC
-                    usable_soc_l1 = max(0.0, curr_soc - soc_min) if not low_soc_active_l1 else 0.0
-                    usable_soc_l2 = max(0.0, curr_soc_l2 - soc_min) if (has_l2 and not low_soc_active_l2) else 0.0
-                    total_usable = usable_soc_l1 + usable_soc_l2
-                    if total_usable > 0:
-                        ratio_l1 = usable_soc_l1 / total_usable
-                        ratio_l2 = usable_soc_l2 / total_usable
-                        gs_l1 = gs_new * ratio_l1
-                        gs_l2 = gs_new * ratio_l2
-                    else:
-                        gs_l1 = 0.0
-                        gs_l2 = 0.0
-                else:
-                    # Laden (gs_new <= 0): Begrenzung bei vollen Batterien (Durchreichen)
-                    l1_full = curr_soc >= (soc_max_limit - 1.0)
-                    l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
-                    
-                    # v3.3.2: RÜCKBAU auf passives Durchreichen + Notfall-Rettung.
-                    #
-                    # Historie: v3.2.4–v3.3.1 haben den Sollwert eines vollen Speichers AKTIV
-                    # aus dem Zwilling abgeleitet (Twin-Referenz, geglätteter Anker, gelerntes
-                    # Verhältnis). Das hat einen SELTENEN Fehler (ein Speicher bleibt nach einer
-                    # Störung tief hängen: L2 mit 66 W gegen L1 mit 480 W) gegen einen DAUERHAFTEN
-                    # getauscht: Weil der Sollwert regelmäßig mehr forderte, als der Speicher
-                    # gerade liefern kann, pumpte das Gerät dagegen, überschoss und zog zurück —
-                    # sichtbares Jagen im 5-Sekunden-Takt (gemessen 15.08.: L1 sprang 356–675 W,
-                    # mittlerer Sprung 112 W/Tick; davor, noch passiv geregelt, lag er bei
-                    # 718–722 W, also 7 W Spanne).
-                    #
-                    # Deshalb wieder: NORMALFALL PASSIV. `gs = eigene PV` spiegelt nur, was das
-                    # Gerät ohnehin produziert — kein Gegendrücken, kein Jagen, kein Akku-Zug.
-                    # Genau so lief es früher stabil.
-                    #
-                    # Die Twin-Referenz bleibt nur noch als RETTUNG für den seltenen Hänger, und
-                    # zwar bewusst als einmaliger Sprung statt als Dauerregelung: Der Handtest am
-                    # 15.08. hat gezeigt, dass ein einziger hoher Sollwert genügt, um einen
-                    # festsitzenden MPPT zu lösen (L2: 38,7 V / 281 W → 32,1 V / 709 W, ohne
-                    # Akku-Zug). Danach sofort zurück auf passiv.
-                    _MPP_V   = 360.0   # Geräte-VP ist x10: >36,0 V = weg vom Arbeitspunkt = gedrosselt
-                    _STUCK_RATIO = 0.7 # eigene PV unter 70 % des gesunden Zwillings = Hänger
-                    _STUCK_TICKS = 4   # erst nach 4 Ticks (20 s) eingreifen, nie auf Rauschen
+                # v3.3.3: Zweigwahl ENTKOPPELT vom Integrator-Vorzeichen (Fund des
+                # Fable-5-Reviews). Bisher lief das Durchreichen nur im Zweig gs_new <= 0.
+                # Nach jedem Durchreich-Tick zog aber die Anti-Windup-Klemme (weiter unten)
+                # den Integrator auf die Summe der Durchreich-Werte (~+1100 W) hoch. Der
+                # nächste Tick kam damit trotz -1000 W/Tick-Slew auf gs_new > 0 — und volle
+                # Speicher landeten im SOC-Entladesplit (~50 W, vom MPPT-Schutz auf
+                # -250 W/Tick gebremst -> ~360 W). Ein Tick später war der Integrator wieder
+                # unten -> Durchreichen (wegen Geräte-Latenz noch mit altem hohem PV-Wert,
+                # ~675 W). Dieses Zweig-Flip-Flop erklärte exakt das gemessene Springen
+                # 356<->675 W — unabhängig davon, welche Sollwert-Formel im Durchreich-Zweig
+                # stand (v3.1.5–v3.3.2 tauschten immer nur die Formel, nie die Zweigwahl).
+                # Fix: Volle Speicher gehen IMMER in den Durchreich-Pfad, und der Integrator
+                # wird unten nur noch gegen den tatsächlich GEREGELTEN Anteil geklemmt.
+                l1_full = curr_soc >= (soc_max_limit - 1.0)
+                l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
+                l1_is_full = has_l1 and (l1_full or state.get("l1_charge_blocked", False))
+                l2_is_full = has_l2 and (l2_full or state.get("l2_charge_blocked", False))
+
+                if l1_is_full or l2_is_full:
+                    # Passives Durchreichen (v3.3.2): gs = eigene PV spiegelt nur, was das
+                    # Gerät ohnehin produziert — kein Gegendrücken, kein Akku-Zug. Die
+                    # Twin-Referenz existiert nur noch als Notfall-Rettung für einen
+                    # nachgewiesenen MPPT-Hänger (Handtest 15.08.: ein einmaliger hoher
+                    # Sollwert genügte — L2: 38,7 V / 281 W -> 32,1 V / 709 W, ohne Zug).
+                    _MPP_V   = 360.0   # Geräte-VP ist x10: >36,0 V = weg vom Arbeitspunkt
+                    _STUCK_RATIO = 0.7 # eigene PV unter 70 % des gesunden Zwillings
+                    _STUCK_TICKS = 4   # erst nach 4 Ticks (20 s) eingreifen
                     _RESCUE_MAX_S = 60.0
 
                     def _vmax(details, active):
@@ -2023,11 +2013,23 @@ def main():
                         else:
                             state[dis_key] = 0.0
 
-                        # Laufende Rettung fortsetzen, bis der eigene MPPT wieder am Punkt ist
+                        # Laufende Rettung fortsetzen.
+                        # v3.3.3: Erfolgs-Exit erst, wenn die LEISTUNG nachweislich nachgezogen
+                        # hat (eigene PV >= 90 % des Zwillings über 2 Ticks) — nicht schon beim
+                        # Spannungsabfall. Die PV-Rückmeldung hinkt Sekunden hinterher; der alte
+                        # Exit (v_own <= 36 V) fiel auf die veraltete Eigen-PV zurück und fing
+                        # den gerade befreiten MPPT sofort wieder ein (Fund Fable-5-Review).
                         if now < safe_float(state, until_key, 0.0):
-                            if v_own > 0.0 and v_own <= _MPP_V:
-                                state[until_key] = 0.0          # gelöst -> zurück auf passiv
-                                return passive
+                            ok_key = "twin_rescue_ok_" + key
+                            if pv_twin > 50.0 and pv_own >= 0.9 * pv_twin:
+                                okc = int(safe_float(state, ok_key, 0.0)) + 1
+                                state[ok_key] = float(okc)
+                                if okc >= 2:
+                                    state[until_key] = 0.0
+                                    state[ok_key] = 0.0
+                                    return passive
+                            else:
+                                state[ok_key] = 0.0
                             return max(passive, min(pv_twin, 2400.0))
 
                         # Hänger erkennen: eigener MPPT weg vom Arbeitspunkt, deutlich unter dem
@@ -2048,28 +2050,43 @@ def main():
                             state[cnt_key] = 0.0
                         return passive
 
-                    l1_is_full = l1_full or state.get("l1_charge_blocked", False)
-                    l2_is_full = l2_full or state.get("l2_charge_blocked", False)
-
                     if l1_is_full and l2_is_full:
                         gs_l1 = _passthrough_gs(pv_current, pb_current, _v_l1, pv_l2, _v_l2, "l1")
                         gs_l2 = _passthrough_gs(pv_l2, pb_l2, _v_l2, pv_current, _v_l1, "l2")
+                        pt_l1_active = True
+                        pt_l2_active = True
                     elif l1_is_full:
                         gs_l1 = _passthrough_gs(pv_current, pb_current, _v_l1, pv_l2, _v_l2, "l1")
                         gs_l2 = max(-2400.0, min(0.0, gs_new))   # L2 lädt noch -> AC-Laden aus Überschuss
-                    elif l2_is_full:
+                        pt_l1_active = True
+                    else:
                         gs_l2 = _passthrough_gs(pv_l2, pb_l2, _v_l2, pv_current, _v_l1, "l2")
                         gs_l1 = max(-2400.0, min(0.0, gs_new))   # L1 lädt noch -> AC-Laden aus Überschuss
+                        pt_l2_active = True
+                elif gs_new > 0:
+                    # Entladen: Normale proportionale Aufteilung nach SOC
+                    # (nur noch erreichbar, wenn KEIN Speicher voll ist)
+                    usable_soc_l1 = max(0.0, curr_soc - soc_min) if not low_soc_active_l1 else 0.0
+                    usable_soc_l2 = max(0.0, curr_soc_l2 - soc_min) if (has_l2 and not low_soc_active_l2) else 0.0
+                    total_usable = usable_soc_l1 + usable_soc_l2
+                    if total_usable > 0:
+                        ratio_l1 = usable_soc_l1 / total_usable
+                        ratio_l2 = usable_soc_l2 / total_usable
+                        gs_l1 = gs_new * ratio_l1
+                        gs_l2 = gs_new * ratio_l2
                     else:
-                        # Beide nicht voll -> Proportional zum Headroom laden (wie gehabt)
-                        if total_headroom > 0:
-                            ratio_l1 = headroom_l1 / total_headroom
-                            ratio_l2 = headroom_l2 / total_headroom
-                            gs_l1 = gs_new * ratio_l1
-                            gs_l2 = gs_new * ratio_l2
-                        else:
-                            gs_l1 = 0.0
-                            gs_l2 = 0.0
+                        gs_l1 = 0.0
+                        gs_l2 = 0.0
+                else:
+                    # Beide nicht voll, gs_new <= 0 -> Proportional zum Headroom laden
+                    if total_headroom > 0:
+                        ratio_l1 = headroom_l1 / total_headroom
+                        ratio_l2 = headroom_l2 / total_headroom
+                        gs_l1 = gs_new * ratio_l1
+                        gs_l2 = gs_new * ratio_l2
+                    else:
+                        gs_l1 = 0.0
+                        gs_l2 = 0.0
             else:
                 # GS Formel: gedämpft → gs_last + grid_error * 0.3, Rate-Limit ±120W/Tick
                 gs_last = safe_float(state, "last_gs", 0.0)
@@ -2529,7 +2546,22 @@ def main():
             # wegziehen, darf der Integrator nicht weiter aufziehen. Sonst steht eine
             # "gespannte Feder" von bis zu -4800W im Zustand (heute gemessen), die beim
             # Wegfall der Klemme (z.B. Wolke -> pv<50W) schlagartig freigesetzt würde.
-            gs_new = max(gs_new_rounded - 100.0, min(gs_new_rounded + 100.0, gs_new))
+            # v3.3.3: nur gegen den tatsächlich GEREGELTEN Anteil klemmen. Durchreich-Werte
+            # (GS = PV eines vollen Speichers im Bypass) sind keine Regler-Ausgabe — sie in
+            # die Klemme einzurechnen zog den Integrator nach jedem Durchreich-Tick auf
+            # ~+1100 W und schickte volle Speicher im nächsten Tick in den Entladesplit
+            # (Zweig-Flip-Flop, gemessen als Springen 356<->675 W; Fund Fable-5-Review).
+            _reg_rounded = gs_new_rounded
+            if pt_l1_active:
+                _reg_rounded -= gs_l1_rounded
+            if pt_l2_active:
+                _reg_rounded -= gs_l2_rounded
+            _l1_regulated = has_l1 and not pt_l1_active
+            _l2_regulated = has_l2 and not pt_l2_active
+            if not _l1_regulated and not _l2_regulated:
+                gs_new = 0.0   # nichts geregelt -> Integrator neutral, keine gespannte Feder
+            else:
+                gs_new = max(_reg_rounded - 100.0, min(_reg_rounded + 100.0, gs_new))
 
             # HA-Schreiben durchführen
             if not is_native:
