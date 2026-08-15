@@ -1,4 +1,8 @@
+
 # Changelog
+
+## v3.2.10
+- **Hausverbrauch springt nicht mehr unrealistisch (Latenz-Artefakte geglättet)**: Der Hausverbrauch wird nicht gemessen, sondern gerechnet: `Netz + Hoymiles + Speicher-Ausgabe`. Diese drei Quellen haben sehr unterschiedliche Latenzen — der Shelly meldet das Netz praktisch sofort, die Speicher ihre Ausgabe über die Geräte-API mit mehreren Sekunden Verzug. Ändert sich die Speicher-Ausgabe, passen die Summanden für ein paar Ticks nicht zusammen und die gesamte Differenz landet im Hausverbrauch — live als Sprünge **178 → 968 → 540 W** sichtbar, obwohl die realen Lasten bei ~220 W lagen. Der bestehende Plausibilitätsfilter fing nur Einbrüche nach unten ab, nicht die Ausreißer nach oben. Neu: eine kurze Glättung (~12 s Zeitkonstante) unterdrückt diese Artefakte, echte Lastwechsel (Herd, Pumpe, Wasserkocher) kommen weiterhin binnen Sekunden durch. Gilt auch für `sensor.hausverbrauch_aktuell`, der diesen Wert spiegelt.
 
 ## v3.2.9
 - **Fix: Speicher lernte ein falsches Leistungs-Verhältnis und deckelte sich selbst**: Das in v3.2.7 eingeführte Verhältnis wurde aus `op + pb` berechnet. Solange ein Speicher aber noch **lädt**, sagt seine Ausgabe (`op`) nichts über sein Solarangebot aus — der Großteil geht in den Akku. Ein kurzer Entlade-Moment in dieser Phase lieferte damit ein viel zu kleines „real" und ein Falsch-Verhältnis. **Live gemessen: `twin_ratio_l1` = 0,57** statt ~1,0 — L1 wäre damit auf ~420 W gedeckelt gewesen, obwohl seine Module 743 W lieferten (nur der Boden `max(target, pv_own)` hat es vorerst verhindert). Das Verhältnis wird jetzt aus der **direkt gemessenen Eigen-PV** (`pv_own`) gebildet, die unabhängig vom Lade-/Entladezustand ist.

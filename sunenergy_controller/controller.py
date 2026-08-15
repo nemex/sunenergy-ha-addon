@@ -1182,6 +1182,19 @@ def main():
             else:
                 state["haus_p_dropouts"] = 0
 
+            # v3.2.10: Glättung des Hausverbrauchs. haus_p wird NICHT gemessen, sondern aus
+            # drei Quellen gerechnet (Netz + Hoymiles + Speicher-Ausgabe). Diese Quellen haben
+            # sehr unterschiedliche Latenzen: der Shelly meldet das Netz praktisch sofort, die
+            # Speicher ihre Ausgabe über die Geräte-API mit mehreren Sekunden Verzug. Ändert
+            # sich die Speicher-Ausgabe, passen die Summanden für einige Ticks nicht zusammen
+            # und der Differenzbetrag landet komplett im Hausverbrauch — live als Sprünge
+            # 178 → 968 → 540 W sichtbar, obwohl die realen Lasten bei ~220 W lagen.
+            # Der bestehende Filter oben fängt nur Einbrüche ab, nicht die Ausreißer nach oben.
+            # Eine kurze Glättung (~12 s Zeitkonstante) unterdrückt diese Latenz-Artefakte;
+            # echte Lastwechsel (Herd, Pumpe) kommen weiterhin binnen Sekunden durch.
+            haus_p = 0.4 * haus_p + 0.6 * safe_float(state, "haus_p_smooth", haus_p)
+            state["haus_p_smooth"] = haus_p
+
             state["last_haus_p"] = haus_p
 
             # AC-AC Kreuzladungs-Erkennung und direktes Speichern für schnelles Proxy-Breakout
