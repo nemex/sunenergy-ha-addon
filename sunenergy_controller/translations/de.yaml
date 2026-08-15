@@ -42,6 +42,9 @@ configuration:
       sa_entity:
         name: "System-Ladegrenze"
         description: "Entitäts-ID für das Speicherlimit (System-Ladegrenze) von Speicher 1"
+      soc_max:
+        name: "Eigene Ladegrenze (%)"
+        description: "0 = globalen Wert verwenden. Nur setzen, wenn dieser Speicher intern nie die globale Grenze erreicht (z. B. maximal 94 %) — sonst schiebt die Firmware dauerhaft Leistung in den Akku, statt sie einzuspeisen."
       op_sensor:
         name: "Shelly Leistungssensor"
         description: "Der Shelly 1PM Leistungssensor von Speicher 1 (optional; leer = OP aus Geräte-API)"
@@ -76,6 +79,9 @@ configuration:
       sa_entity_l2:
         name: "System-Ladegrenze"
         description: "Entitäts-ID für das Speicherlimit von Speicher 2"
+      soc_max_l2:
+        name: "Eigene Ladegrenze (%)"
+        description: "0 = globalen Wert verwenden. Nur setzen, wenn dieser Speicher intern nie die globale Grenze erreicht."
       op_l2_sensor:
         name: "Shelly Leistungssensor"
         description: "Der Shelly 1PM Leistungssensor von Speicher 2"

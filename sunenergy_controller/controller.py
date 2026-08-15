@@ -76,6 +76,8 @@ def load_options() -> dict:
             "speicher1_mm_switch": "mm_switch",
             "speicher1_sa_entity": "sa_entity",
             "speicher1_op_sensor": "op_sensor",
+            "speicher1_soc_max": "soc_max",
+            "speicher2_soc_max_l2": "soc_max_l2",
             "speicher2_ip_l2": "sunenergy_ip_l2",
             "speicher2_soc_sensor_l2": "soc_sensor_l2",
             "speicher2_gs_entity_l2": "gs_entity_l2",
@@ -610,13 +612,32 @@ def main():
     calib_days      = float(opts["calibration_days"])  # 15
     sunenergy_ip    = opts.get("sunenergy_ip", "192.168.178.94")
     
+    # v3.3.1: Ladegrenze optional PRO SPEICHER. Manche Geräte melden intern nie mehr als
+    # z. B. 94 % — steht die Grenze dann auf 95 %, schiebt die Firmware dauerhaft Leistung
+    # in den Akku, ohne dass der SOC steigt (live gemessen: ~190 W, die an der Einspeisung
+    # fehlten, in Schüben → sichtbares Springen der Ausgabe). Mit einer passenden Grenze je
+    # Speicher erkennt das Gerät "fertig" und reicht durch. 0 = keine Abweichung, es gilt
+    # der globale Wert soc_normal_max. Die Grenze wirkt nur als Deckel, nie als Anhebung.
+    soc_max_l1_opt = float(opts.get("soc_max", 0) or 0)
+    soc_max_l2_opt = float(opts.get("soc_max_l2", 0) or 0)
+
+    def sa_for_l1(base):
+        return int(min(float(base), soc_max_l1_opt)) if soc_max_l1_opt > 0 else int(base)
+
+    def sa_for_l2(base):
+        return int(min(float(base), soc_max_l2_opt)) if soc_max_l2_opt > 0 else int(base)
+
+    if soc_max_l1_opt > 0 or soc_max_l2_opt > 0:
+        log.info("Speicher-eigene Ladegrenzen aktiv: L1=%s, L2=%s (0 = globaler Wert %d%%)",
+                 int(soc_max_l1_opt) or "global", int(soc_max_l2_opt) or "global", int(soc_normal_max))
+
     # SA auf Normalwert setzen beim Start
     if has_l1:
-        ha_set_number(sa_entity, soc_normal_max)
-        sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max)})
+        ha_set_number(sa_entity, sa_for_l1(soc_normal_max))
+        sunenergy_write(sunenergy_ip, {"SA": sa_for_l1(soc_normal_max)})
     if has_l2 and sa_entity_l2:
-        ha_set_number(sa_entity_l2, soc_normal_max)
-        sunenergy_write(sunenergy_ip_l2, {"SA": int(soc_normal_max)})
+        ha_set_number(sa_entity_l2, sa_for_l2(soc_normal_max))
+        sunenergy_write(sunenergy_ip_l2, {"SA": sa_for_l2(soc_normal_max)})
 
     use_native_pid = bool(opts.get("use_native_pid", False))
     if use_native_pid:
@@ -1451,11 +1472,11 @@ def main():
                 # L1s SA-Entität — bei deaktiviertem L1 (z.B. Reparatur) bekam L2 die Ladegrenze
                 # nie aufs Gerät, obwohl last_written_sa/soc_max_limit sie bereits annahmen.
                 if has_l1:
-                    ha_set_number(sa_entity, target_sa)
-                    sunenergy_write(sunenergy_ip, {"SA": int(target_sa)})
+                    ha_set_number(sa_entity, sa_for_l1(target_sa))
+                    sunenergy_write(sunenergy_ip, {"SA": sa_for_l1(target_sa)})
                 if has_l2 and sa_entity_l2:
-                    ha_set_number(sa_entity_l2, target_sa)
-                    sunenergy_write(sunenergy_ip_l2, {"SA": int(target_sa)})
+                    ha_set_number(sa_entity_l2, sa_for_l2(target_sa))
+                    sunenergy_write(sunenergy_ip_l2, {"SA": sa_for_l2(target_sa)})
                 # last_written_sa ist die gemeinsame SOC-Obergrenze (auch für L2), daher
                 # immer aktualisieren — auch wenn ein Speicher deaktiviert ist.
                 state["last_written_sa"] = target_sa
@@ -1512,7 +1533,7 @@ def main():
                 # v1.9.2: Spam-Schutz — nur beim Eintritt/nach Drift schreiben,
                 # nicht jeden Tick (HA + Geräte-Flash schonen)
                 if has_l1 and (state.get("last_device_gs") != -2400 or state.get("last_device_mm") != 0):
-                    ha_set_number(sa_entity, 100)
+                    ha_set_number(sa_entity, sa_for_l1(100))
                     ha_switch(mm_switch, False)
                     ha_set_number(gs_entity, -2400)
                     sunenergy_write(sunenergy_ip, {"GS": -2400, "MM": 0})
@@ -1523,7 +1544,7 @@ def main():
                 if has_l2:
                     if state.get("last_device_gs_l2") != -2400 or state.get("last_device_mm_l2") != 0:
                         if sa_entity_l2:
-                            ha_set_number(sa_entity_l2, 100)
+                            ha_set_number(sa_entity_l2, sa_for_l2(100))
                         if mm_switch_l2:
                             ha_switch(mm_switch_l2, False)
                         if gs_entity_l2:
@@ -1605,10 +1626,10 @@ def main():
                 
                 # L1 zurücksetzen
                 if has_l1:
-                    ha_set_number(sa_entity, soc_normal_max)
+                    ha_set_number(sa_entity, sa_for_l1(soc_normal_max))
                     ha_switch(mm_switch, True)
                     ha_set_number(gs_entity, 0)
-                    sunenergy_write(sunenergy_ip, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
+                    sunenergy_write(sunenergy_ip, {"SA": sa_for_l1(soc_normal_max), "IS": 2400, "GS": 0})
                     state["last_device_gs"] = None
                     state["last_device_mm"] = None
                     state["last_device_is"] = None
@@ -1617,12 +1638,12 @@ def main():
                 # L2 zurücksetzen
                 if has_l2:
                     if sa_entity_l2:
-                        ha_set_number(sa_entity_l2, soc_normal_max)
+                        ha_set_number(sa_entity_l2, sa_for_l2(soc_normal_max))
                     if mm_switch_l2:
                         ha_switch(mm_switch_l2, True)
                     if gs_entity_l2:
                         ha_set_number(gs_entity_l2, 0)
-                    sunenergy_write(sunenergy_ip_l2, {"SA": int(soc_normal_max), "IS": 2400, "GS": 0})
+                    sunenergy_write(sunenergy_ip_l2, {"SA": sa_for_l2(soc_normal_max), "IS": 2400, "GS": 0})
                     state["last_device_gs_l2"] = None
                     state["last_device_mm_l2"] = None
                     state["last_device_is_l2"] = None
@@ -2006,10 +2027,21 @@ def main():
                     #  (b) ABSTAND: 25 W unter der Referenz zielen. Wer exakt auf den Momentanwert
                     #      des Zwillings zielt, sitzt auf der Kippkante und der MPPT beginnt zu
                     #      jagen; ein kleiner Abstand hält ihn im stabilen Arbeitspunkt.
+                    # v3.3.1: Die Referenz muss als ANKER halten. Sind BEIDE Speicher voll,
+                    # sind auch beide PV-Werte gedrosselt — max() der beiden ist dann kein
+                    # ehrliches Maß für die verfügbare Sonne mehr, sackt mit ab und zieht
+                    # keinen Speicher mehr hoch (live gesehen, als L1 durch Ladegrenze 94
+                    # ebenfalls "voll" wurde: beide drosselten, beide sprangen).
+                    # Deshalb fällt die Referenz jetzt nur noch 3 W/Tick (~36 W/min) statt 15.
+                    # Sie hält damit den zuletzt ungedrosselt gemessenen Wert als Anker fest.
+                    # Geht die Sonne wirklich zurück, fordert das kurz zu viel — dann zieht ein
+                    # Speicher aus dem Akku, die Entlade-Bremse greift und zieht die Referenz
+                    # aktiv mit nach unten (siehe unten im Bremszweig). Der Anker bleibt also
+                    # nur so lange stehen, wie er durch echte Leistung gedeckt ist.
                     _raw_ref = max(pv_current, pv_l2) if has_l2 else pv_current
                     # Stale-Schutz: ein alter Wert (Bypass war lange aus) darf nicht nachwirken
                     _prev_ref = min(safe_float(state, "twin_solar_ref", 0.0), _raw_ref + 300.0)
-                    _sm_ref = _raw_ref if _raw_ref >= _prev_ref else max(_raw_ref, _prev_ref - 15.0)
+                    _sm_ref = _raw_ref if _raw_ref >= _prev_ref else max(_raw_ref, _prev_ref - 3.0)
                     state["twin_solar_ref"] = _sm_ref
                     solar_ref = max(0.0, _sm_ref - 25.0)
                     _HOLD_S = 60.0
@@ -2055,6 +2087,12 @@ def main():
                             base = safe_float(state, lastgs_key, pv_own)
                             corrected = max(0.0, base + pb_own)   # pb ist negativ → senkt ab
                             state[lastgs_key] = corrected
+                            # v3.3.1: Der langsam fallende Anker (3 W/Tick) darf nicht gegen
+                            # eine echt zurückgehende Sonne anlaufen. Zieht ein Speicher aus
+                            # dem Akku, ist die Referenz nachweislich zu hoch → sofort auf den
+                            # gedeckten Wert nachziehen, statt 36 W/min abzuwarten.
+                            if corrected + 25.0 < safe_float(state, "twin_solar_ref", 0.0):
+                                state["twin_solar_ref"] = corrected + 25.0
                             if solar_ref > 50.0:
                                 state[ratio_key] = max(0.5, min(1.0, corrected / solar_ref))
                             state[hold_key] = now + _HOLD_S

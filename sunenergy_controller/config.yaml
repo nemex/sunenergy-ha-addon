@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "3.3.0"
+version: "3.3.1"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -52,6 +52,10 @@ options:
     # v3.1.4: Optionaler Shelly-Leistungssensor für L1 (symmetrisch zu op_l2_sensor).
     # Leer = kein Override (OP kommt aus der L1-Geräte-API, wie bisher).
     op_sensor: ""
+    # v3.3.1: Eigene Ladegrenze für L1 (0 = globaler Wert soc_normal_max).
+    # Nötig, wenn das Gerät intern nie den globalen Wert erreicht (z. B. max. 94 %):
+    # sonst schiebt die Firmware dauerhaft Leistung in den Akku statt einzuspeisen.
+    soc_max: 0
   speicher2:
     pv1_active: false
     pv2_active: false
@@ -63,6 +67,8 @@ options:
     mm_switch_l2: "switch.sunenergyxt_500_pro_l2_lokaler_nulleinspeisemodus"
     sa_entity_l2: "number.sunenergyxt_500_pro_l2_system_ladegrenze"
     op_l2_sensor: "sensor.shellypro1pm_sunenergy_l2_leistung"
+    # v3.3.1: Eigene Ladegrenze für L2 (0 = globaler Wert soc_normal_max)
+    soc_max_l2: 0
   shelly:
     ip: "192.168.178.98"
     grid_sensor: "sensor.shellypro3em_leistung"
@@ -111,6 +117,7 @@ schema:
     mm_switch: str
     sa_entity: str
     op_sensor: str?
+    soc_max: int?
   speicher2:
     pv1_active: bool
     pv2_active: bool
@@ -122,6 +129,7 @@ schema:
     mm_switch_l2: str?
     sa_entity_l2: str?
     op_l2_sensor: str?
+    soc_max_l2: int?
   shelly:
     ip: str
     grid_sensor: str

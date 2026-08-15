@@ -42,6 +42,9 @@ configuration:
       sa_entity:
         name: "System Charge Limit"
         description: "Entity ID for the charge limit (system limit) of Speicher 1"
+      soc_max:
+        name: "Own Charge Limit (%)"
+        description: "0 = use the global value. Only set this if the storage never reaches the global limit internally (e.g. caps at 94 %) — otherwise the firmware keeps pushing power into the battery instead of exporting it."
       op_sensor:
         name: "Shelly Power Sensor"
         description: "The Shelly 1PM power sensor of Speicher 1 (optional; empty = OP from device API)"
@@ -76,6 +79,9 @@ configuration:
       sa_entity_l2:
         name: "System Charge Limit"
         description: "Entity ID for the charge limit of Speicher 2"
+      soc_max_l2:
+        name: "Own Charge Limit (%)"
+        description: "0 = use the global value. Only set this if the storage never reaches the global limit internally."
       op_l2_sensor:
         name: "Shelly Power Sensor"
         description: "The Shelly 1PM power sensor of Speicher 2"
