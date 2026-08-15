@@ -665,6 +665,16 @@ def main():
     state["last_device_is_l2"] = None
     state["last_gs_written_l2"] = None
 
+    # v3.2.9: gelernte Twin-Verhältnisse beim Start zurücksetzen. Sie stehen in der
+    # persistenten State-Datei und überleben sonst jeden Neustart — ein einmal falsch
+    # gelerntes Verhältnis (live: L1 auf 0,57) würde den Speicher dauerhaft deckeln.
+    # Sauberer Start mit 1,0; ein echter Rückstand wird binnen Minuten neu gelernt.
+    for _k in ("twin_ratio_l1", "twin_ratio_l2"):
+        state[_k] = 1.0
+    for _k in ("twin_hold_l1", "twin_hold_l2", "twin_recover_l1",
+               "twin_recover_l2", "twin_solar_ref"):
+        state[_k] = 0.0
+
     set_active_mode(state, "night")
     save_state(state)
     log.info("Addon gestartet, SA=%s%%, HMS-Limit=%sW, Speicher L1 aktiv: %s, Speicher L2 aktiv: %s, Natives Polling: %s",
@@ -1995,8 +2005,11 @@ def main():
                     state["twin_solar_ref"] = _sm_ref
                     solar_ref = max(0.0, _sm_ref - 25.0)
                     _HOLD_S = 60.0
-                    _RATIO_RECOVER = 0.01
-                    _RECOVER_EVERY_S = 300.0
+                    # v3.2.9: Erholung deutlich schneller. Mit 1 %/5 min brauchte ein einmal
+                    # falsch gelerntes Verhältnis (live: 0,57) über 3½ Stunden zurück auf 1,0 —
+                    # praktisch für den Rest des Tages festgenagelt. Jetzt 2 %/Minute (~20 min).
+                    _RATIO_RECOVER = 0.02
+                    _RECOVER_EVERY_S = 60.0
 
                     def _twin_gs(pv_own, op_own, pb_own, key):
                         now = time.time()
@@ -2011,7 +2024,13 @@ def main():
                             # der Zwillings-Referenz statt als absoluter Wert: so skaliert der
                             # Deckel automatisch mit der Sonne mit (ein absoluter Deckel würde
                             # den Speicher bei aufziehender Sonne auf dem Mittagswert festhalten).
-                            real = max(0.0, op_own + pb_own)
+                            # v3.2.9: die eigene GEMESSENE PV ist das wahre Maximum — NICHT
+                            # (op + pb). Solange ein Speicher noch lädt, sagt seine Ausgabe
+                            # nichts über sein Solarangebot aus (der Großteil geht in den Akku);
+                            # ein kurzer Entlade-Moment in dieser Phase lieferte dann ein völlig
+                            # zu kleines "real" und damit ein Falsch-Verhältnis (live: L1 lernte
+                            # 0,57 statt ~1,0 und wäre damit auf ~420 W gedeckelt gewesen).
+                            real = max(0.0, pv_own)
                             if solar_ref > 50.0:
                                 state[ratio_key] = max(0.5, min(1.0, real / solar_ref))
                             state[hold_key] = now + _HOLD_S
