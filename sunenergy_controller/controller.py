@@ -1975,7 +1975,25 @@ def main():
                     # nicht ewig klebt (Panel gereinigt, Schnee ab, Verschattung vorbei).
                     # Solange nichts gelernt ist, gilt ratio = 1,0 → volle Twin-Referenz; nur so
                     # bricht ein gedrosselter MPPT überhaupt erst aus der 38-V-Falle aus.
-                    solar_ref = max(pv_current, pv_l2) if has_l2 else pv_current
+                    # v3.2.8: ENTKOPPLUNG gegen gegenseitiges Aufschaukeln.
+                    # Die Referenz war der MOMENTANwert max(pv_l1, pv_l2) — und galt für BEIDE
+                    # Speicher gleichzeitig. Damit zielte L1 auf L2s aktuelle Spitze und L2 auf
+                    # L1s: jede kleine MPPT-Schwankung des einen wurde sofort zum Sollwert des
+                    # anderen, der zog nach, das wurde wieder zur Referenz des ersten — die
+                    # Leistung schaukelte sich im 5-Sekunden-Takt hoch/runter auf.
+                    # Zwei Gegenmaßnahmen:
+                    #  (a) GLÄTTUNG: Die Referenz steigt sofort (Sonne kommt durch), fällt aber
+                    #      höchstens 15 W/Tick (~180 W/min). Ein kurzer Einbruch des einen reißt
+                    #      den anderen nicht mehr mit; echten Wolken folgt sie weiterhin zügig.
+                    #  (b) ABSTAND: 25 W unter der Referenz zielen. Wer exakt auf den Momentanwert
+                    #      des Zwillings zielt, sitzt auf der Kippkante und der MPPT beginnt zu
+                    #      jagen; ein kleiner Abstand hält ihn im stabilen Arbeitspunkt.
+                    _raw_ref = max(pv_current, pv_l2) if has_l2 else pv_current
+                    # Stale-Schutz: ein alter Wert (Bypass war lange aus) darf nicht nachwirken
+                    _prev_ref = min(safe_float(state, "twin_solar_ref", 0.0), _raw_ref + 300.0)
+                    _sm_ref = _raw_ref if _raw_ref >= _prev_ref else max(_raw_ref, _prev_ref - 15.0)
+                    state["twin_solar_ref"] = _sm_ref
+                    solar_ref = max(0.0, _sm_ref - 25.0)
                     _HOLD_S = 60.0
                     _RATIO_RECOVER = 0.01
                     _RECOVER_EVERY_S = 300.0
