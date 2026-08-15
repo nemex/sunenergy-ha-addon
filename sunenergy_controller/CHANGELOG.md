@@ -1,6 +1,10 @@
 
 # Changelog
 
+## v3.3.0
+- **Glättung des Hausverbrauchs wieder entfernt**: Die in v3.2.10 eingeführte Glättung (~12 s Zeitkonstante) war für einen Live-Wert zu träge. `haus_p` ist wieder der ungefilterte Rechenwert aus `Netz + Hoymiles + Speicher-Ausgabe`. Die auffälligen Sprünge kamen ohnehin überwiegend vom Zappeln der Speicherleistung, das seit v3.2.11 an der Wurzel behoben ist; was bleibt, ist die reine Latenz-Differenz zwischen dem sofort meldenden Shelly und der trägeren Geräte-API.
+- **Hinweis zur Versionierung**: Jede Stelle läuft von 0 bis 9, danach erhöht sich die Stelle davor (… 3.2.8 → 3.2.9 → **3.3.0** → 3.3.1 …). Die Versionen 3.2.10 und 3.2.11 sind aus diesem Schema herausgefallen; ab hier gilt es wieder.
+
 ## v3.2.11
 - **Fix: Zappeln durch grundlos auslösende Entlade-Bremse (Abwärtsspirale)**: Die Schnee-/Schatten-Bremse löste bei `pb < −25 W` aus — viel zu empfindlich. Eigenverbrauch und Messrauschen eines Speichers liegen regelmäßig darüber (live gemessen: L1 mit `pb = −47 W`, obwohl gar keine echte Entladung vorlag). Schlimmer noch: gekappt wurde auf den **gerade gemessenen** PV-Wert — der bei vollem Akku aber selbst schon durch den Sollwert gedrosselt ist. Daraus entstand eine Abwärtsspirale: kappen → Gerät liefert weniger → nächster Tick misst weniger → kappt noch tiefer. Nach Ablauf der Sperrfrist zog die Referenz wieder hoch, der nächste Rausch-Ausschlag startete die Spirale erneut — das war das sichtbare Zappeln (live: Sollwert 490 W bei 746 W verfügbarer PV). Drei Korrekturen: **(a)** Auslöseschwelle von `−25 W` auf **`−100 W`**; **(b)** die Entladung muss **3 Ticks (15 s) anhalten**, bevor eingegriffen wird — Einzelausreißer lösen nicht mehr aus; **(c)** statt auf den gedrosselten Messwert zu kappen, wird der Sollwert um **exakt die gemessene Entladung** abgesenkt. Das konvergiert gegen „Akku-Zug = 0", ohne unter die real verfügbare Solarleistung durchzusacken. Echte Entladungen (die kritischen Fälle lagen bei −237 W) lösen weiterhin sofort aus.
 
