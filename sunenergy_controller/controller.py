@@ -1961,48 +1961,57 @@ def main():
                     # (genau das Pendeln aus v3.2.2).
                     # HINWEIS Vorzeichen: bei DIESEM Gerät ist pb positiv = Laden, negativ =
                     # Entladen (live belegt: +729 W beim Laden, −237 W beim Entladen).
-                    # v3.2.6: GELERNTER DECKEL pro Speicher. Die Twin-Referenz allein zielte
-                    # dauerhaft ein paar Prozent zu hoch, wenn ein Speicher real etwas weniger
-                    # kann als sein Zwilling (Verschmutzung/Toleranz — gemessen: L1 764 W,
-                    # L2 real ~666–709 W). Folge: alle 60 s kurz ~80 W aus dem Akku, kappen,
-                    # Sperrfrist, wieder hoch. Jetzt merkt sich jeder Speicher bei einem
-                    # Kapp-Ereignis seine ECHTE Maximalleistung als Deckel und peilt künftig
-                    # diesen an statt den (zu hohen) Zwillings-Wert. Alle 5 Minuten wird der
-                    # Deckel um 40 W angetastet, damit er mitwächst, wenn mehr möglich ist
-                    # (Sonne dreht, Panel wieder sauber). Solange kein Deckel gelernt ist, gilt
-                    # die volle Twin-Referenz — nur so bricht ein gedrosselter MPPT überhaupt
-                    # erst aus der 38-V-Falle aus.
+                    # v3.2.6/v3.2.7: GELERNTES LEISTUNGS-VERHÄLTNIS pro Speicher. Die Twin-
+                    # Referenz allein zielte dauerhaft ein paar Prozent zu hoch, wenn ein Speicher
+                    # real etwas weniger kann als sein Zwilling (Verschmutzung/Toleranz — gemessen:
+                    # L1 764 W, L2 real ~666–709 W). Folge: alle 60 s kurz ~80 W aus dem Akku,
+                    # kappen, Sperrfrist, wieder hoch. Jeder Speicher merkt sich bei einem Kapp-
+                    # Ereignis daher seinen ANTEIL an der Zwillings-Referenz (z. B. 0,87) und
+                    # peilt künftig `solar_ref * ratio` an.
+                    # v3.2.7: bewusst ein VERHÄLTNIS statt eines absoluten Deckels — ein absoluter
+                    # Wert (z. B. 666 W) würde den Speicher festhalten, sobald die Sonne stärker
+                    # wird; das Verhältnis skaliert automatisch mit. Das Verhältnis erholt sich
+                    # alle 5 Minuten um 1 % Richtung 1,0, damit ein einmal gelernter Rückstand
+                    # nicht ewig klebt (Panel gereinigt, Schnee ab, Verschattung vorbei).
+                    # Solange nichts gelernt ist, gilt ratio = 1,0 → volle Twin-Referenz; nur so
+                    # bricht ein gedrosselter MPPT überhaupt erst aus der 38-V-Falle aus.
                     solar_ref = max(pv_current, pv_l2) if has_l2 else pv_current
                     _HOLD_S = 60.0
-                    _PROBE_W = 40.0
-                    _PROBE_EVERY_S = 300.0
+                    _RATIO_RECOVER = 0.01
+                    _RECOVER_EVERY_S = 300.0
 
                     def _twin_gs(pv_own, op_own, pb_own, key):
                         now = time.time()
                         hold_key = "twin_hold_" + key
-                        ceil_key = "twin_ceiling_" + key
-                        probe_key = "twin_probe_" + key
+                        ratio_key = "twin_ratio_" + key
+                        rec_key = "twin_recover_" + key
+
+                        ratio = safe_float(state, ratio_key, 1.0)
 
                         if pb_own < -25.0:
-                            # Akku entlädt → echte Eigen-Solarleistung = das wahre Maximum
+                            # Akku entlädt → echte Eigen-Solarleistung merken, aber als ANTEIL
+                            # der Zwillings-Referenz statt als absoluter Wert: so skaliert der
+                            # Deckel automatisch mit der Sonne mit (ein absoluter Deckel würde
+                            # den Speicher bei aufziehender Sonne auf dem Mittagswert festhalten).
                             real = max(0.0, op_own + pb_own)
-                            state[ceil_key] = real
+                            if solar_ref > 50.0:
+                                state[ratio_key] = max(0.5, min(1.0, real / solar_ref))
                             state[hold_key] = now + _HOLD_S
-                            state[probe_key] = now + _PROBE_EVERY_S
+                            state[rec_key] = now + _RECOVER_EVERY_S
                             return min(real, 2400.0)
 
                         if now < safe_float(state, hold_key, 0.0):
                             # Sperrfrist aktiv → eigener Wert, nicht wieder hochziehen
                             return max(0.0, min(pv_own, 2400.0))
 
-                        # 2400 = "noch kein Deckel gelernt" → volle Twin-Referenz (Ausbruch)
-                        ceiling = safe_float(state, ceil_key, 2400.0)
-                        if now >= safe_float(state, probe_key, 0.0):
-                            ceiling = min(2400.0, ceiling + _PROBE_W)
-                            state[ceil_key] = ceiling
-                            state[probe_key] = now + _PROBE_EVERY_S
+                        # Verhältnis langsam wieder Richtung 1.0 (Panel gereinigt, Schnee ab,
+                        # Verschattung vorbei) — sonst klebte ein einmal gelernter Rückstand fest.
+                        if now >= safe_float(state, rec_key, 0.0):
+                            ratio = min(1.0, ratio + _RATIO_RECOVER)
+                            state[ratio_key] = ratio
+                            state[rec_key] = now + _RECOVER_EVERY_S
 
-                        target = min(solar_ref, ceiling)
+                        target = solar_ref * ratio
                         return max(0.0, min(max(target, pv_own), 2400.0))
 
                     l1_is_full = l1_full or state.get("l1_charge_blocked", False)
