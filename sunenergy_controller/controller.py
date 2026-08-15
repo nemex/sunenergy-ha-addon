@@ -686,17 +686,18 @@ def main():
     state["last_device_is_l2"] = None
     state["last_gs_written_l2"] = None
 
-    # v3.2.9: gelernte Twin-Verhältnisse beim Start zurücksetzen. Sie stehen in der
-    # persistenten State-Datei und überleben sonst jeden Neustart — ein einmal falsch
-    # gelerntes Verhältnis (live: L1 auf 0,57) würde den Speicher dauerhaft deckeln.
-    # Sauberer Start mit 1,0; ein echter Rückstand wird binnen Minuten neu gelernt.
-    for _k in ("twin_ratio_l1", "twin_ratio_l2"):
-        state[_k] = 1.0
-    for _k in ("twin_hold_l1", "twin_hold_l2", "twin_recover_l1",
-               "twin_recover_l2", "twin_solar_ref",
-               "twin_dis_ticks_l1", "twin_dis_ticks_l2",
-               "twin_last_gs_l1", "twin_last_gs_l2"):
+    # v3.3.2: Zähler/Timer der MPPT-Rettung beim Start zurücksetzen. Sie liegen in der
+    # persistenten State-Datei und würden sonst jeden Neustart überleben. Die gelernten
+    # Werte der alten Twin-Regelung (twin_ratio_*, twin_solar_ref, …) gibt es nicht mehr
+    # und werden hier gleich mit aus dem Zustand geräumt.
+    for _k in ("twin_stuck_l1", "twin_stuck_l2",
+               "twin_rescue_until_l1", "twin_rescue_until_l2",
+               "twin_dis_ticks_l1", "twin_dis_ticks_l2"):
         state[_k] = 0.0
+    for _k in ("twin_ratio_l1", "twin_ratio_l2", "twin_hold_l1", "twin_hold_l2",
+               "twin_recover_l1", "twin_recover_l2", "twin_solar_ref",
+               "twin_last_gs_l1", "twin_last_gs_l2", "haus_p_smooth"):
+        state.pop(_k, None)
 
     set_active_mode(state, "night")
     save_state(state)
@@ -1966,168 +1967,99 @@ def main():
                     l1_full = curr_soc >= (soc_max_limit - 1.0)
                     l2_full = has_l2 and (curr_soc_l2 >= (soc_max_limit - 1.0))
                     
-                    # v3.2.3: Stures, ENTKOPPELTES Durchreichen pro Speicher (Ansatz Antigravity,
-                    # 14.08.). Der +45-Ramp aus v3.2.2 ist zurückgenommen — er kämpfte gegen den
-                    # Entladeschutz und pendelte. Die EIGENTLICHE Ursache des großen Flip-Flops
-                    # (L1 ~300 W / L2 ~700 W, ständig umgekehrt) ist die SOC-Angleichung (AC-Transfer),
-                    # die im Bypass weiterlief und Leistung zwischen den Speichern hin- und herschob
-                    # — die wird jetzt im Bypass abgeschaltet (weiter unten, not bypass_active).
-                    # Ein ladender Speicher lädt unabhängig aus dem AC-Überschuss weiter.
-                    # KEINE Kopplung gs_l2 = gs_new - gs_l1 mehr.
-                    # v3.2.4: TWIN-REFERENZ (Ansatz Antigravity, live verifiziert 15.08.).
-                    # Ein VOLLER Speicher wird vom Gerät auf seinen GS-Wert gedrosselt: der MPPT
-                    # schiebt die Spannung Richtung Leerlauf (38–40 V), der Strom bricht ein — und
-                    # weil GS = seine eigene (bereits gedrosselte) PV war, blieb er dort gefangen.
-                    # Da L1/L2 identische Module am selben Ort haben, ist die PV des jeweils NICHT
-                    # gedrosselten Speichers die verlässliche Messung der real verfügbaren Sonne.
-                    # Ein voller Speicher bekommt daher max(pv_l1, pv_l2) als Sollwert → sein MPPT
-                    # zieht die Spannung auf den MPP (~32 V) und gibt den vollen Strom frei.
-                    # LIVE-BELEG (15.08., Addon gestoppt, GS_L2 von Hand auf L1s 750 W gesetzt):
-                    #   38,7 V / 2,7 A / 281 W  →  32,1 V / 11,2 A / 709 W   (+428 W)
-                    #   Ausgabe blieb dabei IMMER unter der PV → KEIN Akku-Zug, SOC stabil 95 %.
-                    # Warum das sicher ist (anders als v3.2.0): die Referenz ist die TATSÄCHLICH
-                    # vorhandene Sonnenleistung, nie mehr. Ein fester Sollwert über dem Sonnen-
-                    # angebot lässt das Gerät die Differenz aus dem Akku holen (getestet mit
-                    # GS=900 bei 760 W Sonne: −237 W Entladung). Zusätzliches Netz: entlädt ein
-                    # Akku doch (< −25 W), wird sein GS sofort auf die eigene Ist-PV gekappt.
-                    # Schnee-/Schatten-Bremse mit Sperrfrist: Ist ein Modul-Set wirklich
-                    # verschneit/verschmutzt/verschattet, liefert es weniger als der Zwilling —
-                    # dann würde die Referenz zu viel fordern und das Gerät holt die Differenz
-                    # aus dem Akku. Entlädt ein Akku (pb < −25 W), wird sein GS sofort auf die
-                    # echte Eigen-Solarleistung (op + pb) gekappt UND dieser Wert 60 s gehalten.
-                    # Die Haltezeit ist entscheidend: ohne sie würde die Twin-Referenz im
-                    # nächsten Tick sofort wieder hochziehen → Kappen/Hochziehen im Wechsel
-                    # (genau das Pendeln aus v3.2.2).
-                    # HINWEIS Vorzeichen: bei DIESEM Gerät ist pb positiv = Laden, negativ =
-                    # Entladen (live belegt: +729 W beim Laden, −237 W beim Entladen).
-                    # v3.2.6/v3.2.7: GELERNTES LEISTUNGS-VERHÄLTNIS pro Speicher. Die Twin-
-                    # Referenz allein zielte dauerhaft ein paar Prozent zu hoch, wenn ein Speicher
-                    # real etwas weniger kann als sein Zwilling (Verschmutzung/Toleranz — gemessen:
-                    # L1 764 W, L2 real ~666–709 W). Folge: alle 60 s kurz ~80 W aus dem Akku,
-                    # kappen, Sperrfrist, wieder hoch. Jeder Speicher merkt sich bei einem Kapp-
-                    # Ereignis daher seinen ANTEIL an der Zwillings-Referenz (z. B. 0,87) und
-                    # peilt künftig `solar_ref * ratio` an.
-                    # v3.2.7: bewusst ein VERHÄLTNIS statt eines absoluten Deckels — ein absoluter
-                    # Wert (z. B. 666 W) würde den Speicher festhalten, sobald die Sonne stärker
-                    # wird; das Verhältnis skaliert automatisch mit. Das Verhältnis erholt sich
-                    # alle 5 Minuten um 1 % Richtung 1,0, damit ein einmal gelernter Rückstand
-                    # nicht ewig klebt (Panel gereinigt, Schnee ab, Verschattung vorbei).
-                    # Solange nichts gelernt ist, gilt ratio = 1,0 → volle Twin-Referenz; nur so
-                    # bricht ein gedrosselter MPPT überhaupt erst aus der 38-V-Falle aus.
-                    # v3.2.8: ENTKOPPLUNG gegen gegenseitiges Aufschaukeln.
-                    # Die Referenz war der MOMENTANwert max(pv_l1, pv_l2) — und galt für BEIDE
-                    # Speicher gleichzeitig. Damit zielte L1 auf L2s aktuelle Spitze und L2 auf
-                    # L1s: jede kleine MPPT-Schwankung des einen wurde sofort zum Sollwert des
-                    # anderen, der zog nach, das wurde wieder zur Referenz des ersten — die
-                    # Leistung schaukelte sich im 5-Sekunden-Takt hoch/runter auf.
-                    # Zwei Gegenmaßnahmen:
-                    #  (a) GLÄTTUNG: Die Referenz steigt sofort (Sonne kommt durch), fällt aber
-                    #      höchstens 15 W/Tick (~180 W/min). Ein kurzer Einbruch des einen reißt
-                    #      den anderen nicht mehr mit; echten Wolken folgt sie weiterhin zügig.
-                    #  (b) ABSTAND: 25 W unter der Referenz zielen. Wer exakt auf den Momentanwert
-                    #      des Zwillings zielt, sitzt auf der Kippkante und der MPPT beginnt zu
-                    #      jagen; ein kleiner Abstand hält ihn im stabilen Arbeitspunkt.
-                    # v3.3.1: Die Referenz muss als ANKER halten. Sind BEIDE Speicher voll,
-                    # sind auch beide PV-Werte gedrosselt — max() der beiden ist dann kein
-                    # ehrliches Maß für die verfügbare Sonne mehr, sackt mit ab und zieht
-                    # keinen Speicher mehr hoch (live gesehen, als L1 durch Ladegrenze 94
-                    # ebenfalls "voll" wurde: beide drosselten, beide sprangen).
-                    # Deshalb fällt die Referenz jetzt nur noch 3 W/Tick (~36 W/min) statt 15.
-                    # Sie hält damit den zuletzt ungedrosselt gemessenen Wert als Anker fest.
-                    # Geht die Sonne wirklich zurück, fordert das kurz zu viel — dann zieht ein
-                    # Speicher aus dem Akku, die Entlade-Bremse greift und zieht die Referenz
-                    # aktiv mit nach unten (siehe unten im Bremszweig). Der Anker bleibt also
-                    # nur so lange stehen, wie er durch echte Leistung gedeckt ist.
-                    _raw_ref = max(pv_current, pv_l2) if has_l2 else pv_current
-                    # Stale-Schutz: ein alter Wert (Bypass war lange aus) darf nicht nachwirken
-                    _prev_ref = min(safe_float(state, "twin_solar_ref", 0.0), _raw_ref + 300.0)
-                    _sm_ref = _raw_ref if _raw_ref >= _prev_ref else max(_raw_ref, _prev_ref - 3.0)
-                    state["twin_solar_ref"] = _sm_ref
-                    solar_ref = max(0.0, _sm_ref - 25.0)
-                    _HOLD_S = 60.0
-                    # v3.2.9: Erholung deutlich schneller. Mit 1 %/5 min brauchte ein einmal
-                    # falsch gelerntes Verhältnis (live: 0,57) über 3½ Stunden zurück auf 1,0 —
-                    # praktisch für den Rest des Tages festgenagelt. Jetzt 2 %/Minute (~20 min).
-                    _RATIO_RECOVER = 0.02
-                    _RECOVER_EVERY_S = 60.0
+                    # v3.3.2: RÜCKBAU auf passives Durchreichen + Notfall-Rettung.
+                    #
+                    # Historie: v3.2.4–v3.3.1 haben den Sollwert eines vollen Speichers AKTIV
+                    # aus dem Zwilling abgeleitet (Twin-Referenz, geglätteter Anker, gelerntes
+                    # Verhältnis). Das hat einen SELTENEN Fehler (ein Speicher bleibt nach einer
+                    # Störung tief hängen: L2 mit 66 W gegen L1 mit 480 W) gegen einen DAUERHAFTEN
+                    # getauscht: Weil der Sollwert regelmäßig mehr forderte, als der Speicher
+                    # gerade liefern kann, pumpte das Gerät dagegen, überschoss und zog zurück —
+                    # sichtbares Jagen im 5-Sekunden-Takt (gemessen 15.08.: L1 sprang 356–675 W,
+                    # mittlerer Sprung 112 W/Tick; davor, noch passiv geregelt, lag er bei
+                    # 718–722 W, also 7 W Spanne).
+                    #
+                    # Deshalb wieder: NORMALFALL PASSIV. `gs = eigene PV` spiegelt nur, was das
+                    # Gerät ohnehin produziert — kein Gegendrücken, kein Jagen, kein Akku-Zug.
+                    # Genau so lief es früher stabil.
+                    #
+                    # Die Twin-Referenz bleibt nur noch als RETTUNG für den seltenen Hänger, und
+                    # zwar bewusst als einmaliger Sprung statt als Dauerregelung: Der Handtest am
+                    # 15.08. hat gezeigt, dass ein einziger hoher Sollwert genügt, um einen
+                    # festsitzenden MPPT zu lösen (L2: 38,7 V / 281 W → 32,1 V / 709 W, ohne
+                    # Akku-Zug). Danach sofort zurück auf passiv.
+                    _MPP_V   = 360.0   # Geräte-VP ist x10: >36,0 V = weg vom Arbeitspunkt = gedrosselt
+                    _STUCK_RATIO = 0.7 # eigene PV unter 70 % des gesunden Zwillings = Hänger
+                    _STUCK_TICKS = 4   # erst nach 4 Ticks (20 s) eingreifen, nie auf Rauschen
+                    _RESCUE_MAX_S = 60.0
 
-                    # v3.2.11: Auslöseschwelle entschärft und Bestätigung verlangt.
-                    # −25 W war viel zu empfindlich: Eigenverbrauch und Messrauschen eines
-                    # Speichers liegen regelmäßig darüber (live: L1 mit −47 W, obwohl es gar
-                    # keine echte Entladung war). Dadurch feuerte die Bremse ständig grundlos.
-                    # Jetzt muss die Entladung deutlich (< −100 W) UND über 3 Ticks (15 s)
-                    # anhalten. Echte Entladungen lagen bei −237 W und lösen weiterhin aus.
-                    _DISCHARGE_W = -100.0
-                    _DISCHARGE_TICKS = 3
+                    def _vmax(details, active):
+                        v = 0.0
+                        for _i in range(1, 5):
+                            if active.get(str(_i)):
+                                v = max(v, safe_float(details, f"pv{_i}_v", 0.0))
+                        return v
 
-                    def _twin_gs(pv_own, op_own, pb_own, key):
+                    _ai = state.get("active_inputs", {"L1": {}, "L2": {}})
+                    _v_l1 = _vmax(pv_details_l1, _ai.get("L1", {}))
+                    _v_l2 = _vmax(pv_details_l2, _ai.get("L2", {}))
+
+                    def _passthrough_gs(pv_own, pb_own, v_own, pv_twin, v_twin, key):
+                        """Passiv (gs = eigene PV); nur bei nachgewiesenem Hänger kurz anheben."""
                         now = time.time()
-                        hold_key = "twin_hold_" + key
-                        ratio_key = "twin_ratio_" + key
-                        rec_key = "twin_recover_" + key
-                        cnt_key = "twin_dis_ticks_" + key
-                        lastgs_key = "twin_last_gs_" + key
+                        cnt_key, until_key, dis_key = ("twin_stuck_" + key,
+                                                       "twin_rescue_until_" + key,
+                                                       "twin_dis_ticks_" + key)
+                        passive = max(0.0, min(pv_own, 2400.0))
 
-                        ratio = safe_float(state, ratio_key, 1.0)
+                        # Abbruch-Schutz: zieht der Akku, ist jede Anhebung falsch -> passiv.
+                        if pb_own < -100.0:
+                            cnt = int(safe_float(state, dis_key, 0.0)) + 1
+                            state[dis_key] = float(cnt)
+                            if cnt >= 3:
+                                state[until_key] = 0.0
+                                state[cnt_key] = 0.0
+                                return passive
+                        else:
+                            state[dis_key] = 0.0
 
-                        cnt = int(safe_float(state, cnt_key, 0.0)) + 1 if pb_own < _DISCHARGE_W else 0
-                        state[cnt_key] = float(cnt)
+                        # Laufende Rettung fortsetzen, bis der eigene MPPT wieder am Punkt ist
+                        if now < safe_float(state, until_key, 0.0):
+                            if v_own > 0.0 and v_own <= _MPP_V:
+                                state[until_key] = 0.0          # gelöst -> zurück auf passiv
+                                return passive
+                            return max(passive, min(pv_twin, 2400.0))
 
-                        if cnt >= _DISCHARGE_TICKS:
-                            # Akku entlädt → echte Eigen-Solarleistung merken, aber als ANTEIL
-                            # der Zwillings-Referenz statt als absoluter Wert: so skaliert der
-                            # Deckel automatisch mit der Sonne mit (ein absoluter Deckel würde
-                            # den Speicher bei aufziehender Sonne auf dem Mittagswert festhalten).
-                            # v3.2.11: NICHT auf den gemessenen (bereits gedrosselten) Wert
-                            # kappen — genau das erzeugte die Abwärtsspirale: kappen → Gerät
-                            # liefert weniger → nächster Tick misst weniger → kappt tiefer …
-                            # Stattdessen den Sollwert um exakt die gemessene Entladung
-                            # absenken. Das konvergiert sauber gegen "Akku-Zug = 0" und kann
-                            # nicht unter die real verfügbare Solarleistung durchsacken.
-                            base = safe_float(state, lastgs_key, pv_own)
-                            corrected = max(0.0, base + pb_own)   # pb ist negativ → senkt ab
-                            state[lastgs_key] = corrected
-                            # v3.3.1: Der langsam fallende Anker (3 W/Tick) darf nicht gegen
-                            # eine echt zurückgehende Sonne anlaufen. Zieht ein Speicher aus
-                            # dem Akku, ist die Referenz nachweislich zu hoch → sofort auf den
-                            # gedeckten Wert nachziehen, statt 36 W/min abzuwarten.
-                            if corrected + 25.0 < safe_float(state, "twin_solar_ref", 0.0):
-                                state["twin_solar_ref"] = corrected + 25.0
-                            if solar_ref > 50.0:
-                                state[ratio_key] = max(0.5, min(1.0, corrected / solar_ref))
-                            state[hold_key] = now + _HOLD_S
-                            state[rec_key] = now + _RECOVER_EVERY_S
-                            return min(corrected, 2400.0)
-
-                        if now < safe_float(state, hold_key, 0.0):
-                            # Sperrfrist aktiv → auf dem korrigierten Wert bleiben
-                            held = max(safe_float(state, lastgs_key, pv_own), pv_own)
-                            return max(0.0, min(held, 2400.0))
-
-                        # Verhältnis langsam wieder Richtung 1.0 (Panel gereinigt, Schnee ab,
-                        # Verschattung vorbei) — sonst klebte ein einmal gelernter Rückstand fest.
-                        if now >= safe_float(state, rec_key, 0.0):
-                            ratio = min(1.0, ratio + _RATIO_RECOVER)
-                            state[ratio_key] = ratio
-                            state[rec_key] = now + _RECOVER_EVERY_S
-
-                        target = solar_ref * ratio
-                        result = max(0.0, min(max(target, pv_own), 2400.0))
-                        state[lastgs_key] = result
-                        return result
+                        # Hänger erkennen: eigener MPPT weg vom Arbeitspunkt, deutlich unter dem
+                        # Zwilling — und der Zwilling selbst läuft gesund (sonst ist sein Wert
+                        # als Ziel wertlos und wir greifen lieber gar nicht ein).
+                        twin_ok = pv_twin > 50.0 and 0.0 < v_twin <= _MPP_V
+                        stuck = (v_own > _MPP_V) and twin_ok and (pv_own < _STUCK_RATIO * pv_twin)
+                        if stuck:
+                            cnt = int(safe_float(state, cnt_key, 0.0)) + 1
+                            state[cnt_key] = float(cnt)
+                            if cnt >= _STUCK_TICKS:
+                                state[until_key] = now + _RESCUE_MAX_S
+                                state[cnt_key] = 0.0
+                                log.info("MPPT-Rettung %s: %.0fW bei %.1fV, Zwilling %.0fW bei %.1fV -> hebe GS auf %.0fW",
+                                         key.upper(), pv_own, v_own / 10.0, pv_twin, v_twin / 10.0, pv_twin)
+                                return max(passive, min(pv_twin, 2400.0))
+                        else:
+                            state[cnt_key] = 0.0
+                        return passive
 
                     l1_is_full = l1_full or state.get("l1_charge_blocked", False)
                     l2_is_full = l2_full or state.get("l2_charge_blocked", False)
 
                     if l1_is_full and l2_is_full:
-                        gs_l1 = _twin_gs(pv_current, op_current, pb_current, "l1")
-                        gs_l2 = _twin_gs(pv_l2, op_l2, pb_l2, "l2")
+                        gs_l1 = _passthrough_gs(pv_current, pb_current, _v_l1, pv_l2, _v_l2, "l1")
+                        gs_l2 = _passthrough_gs(pv_l2, pb_l2, _v_l2, pv_current, _v_l1, "l2")
                     elif l1_is_full:
-                        gs_l1 = _twin_gs(pv_current, op_current, pb_current, "l1")
-                        gs_l2 = max(-2400.0, min(0.0, gs_new))   # L2 lädt noch → AC-Laden aus Überschuss
+                        gs_l1 = _passthrough_gs(pv_current, pb_current, _v_l1, pv_l2, _v_l2, "l1")
+                        gs_l2 = max(-2400.0, min(0.0, gs_new))   # L2 lädt noch -> AC-Laden aus Überschuss
                     elif l2_is_full:
-                        gs_l2 = _twin_gs(pv_l2, op_l2, pb_l2, "l2")
-                        gs_l1 = max(-2400.0, min(0.0, gs_new))   # L1 lädt noch → AC-Laden aus Überschuss
+                        gs_l2 = _passthrough_gs(pv_l2, pb_l2, _v_l2, pv_current, _v_l1, "l2")
+                        gs_l1 = max(-2400.0, min(0.0, gs_new))   # L1 lädt noch -> AC-Laden aus Überschuss
                     else:
                         # Beide nicht voll -> Proportional zum Headroom laden (wie gehabt)
                         if total_headroom > 0:
