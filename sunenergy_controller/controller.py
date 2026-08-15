@@ -1933,8 +1933,7 @@ def main():
                     # (L1 ~300 W / L2 ~700 W, ständig umgekehrt) ist die SOC-Angleichung (AC-Transfer),
                     # die im Bypass weiterlief und Leistung zwischen den Speichern hin- und herschob
                     # — die wird jetzt im Bypass abgeschaltet (weiter unten, not bypass_active).
-                    # Hier daher schlicht: voller Speicher speist seine eigene PV ein (gs = pv, kein
-                    # Akku-Zug), ladender Speicher lädt unabhängig aus dem AC-Überschuss.
+                    # Ein ladender Speicher lädt unabhängig aus dem AC-Überschuss weiter.
                     # KEINE Kopplung gs_l2 = gs_new - gs_l1 mehr.
                     # v3.2.4: TWIN-REFERENZ (Ansatz Antigravity, live verifiziert 15.08.).
                     # Ein VOLLER Speicher wird vom Gerät auf seinen GS-Wert gedrosselt: der MPPT
@@ -1952,10 +1951,26 @@ def main():
                     # angebot lässt das Gerät die Differenz aus dem Akku holen (getestet mit
                     # GS=900 bei 760 W Sonne: −237 W Entladung). Zusätzliches Netz: entlädt ein
                     # Akku doch (< −25 W), wird sein GS sofort auf die eigene Ist-PV gekappt.
+                    # Schnee-/Schatten-Bremse mit Sperrfrist: Ist ein Modul-Set wirklich
+                    # verschneit/verschmutzt/verschattet, liefert es weniger als der Zwilling —
+                    # dann würde die Referenz zu viel fordern und das Gerät holt die Differenz
+                    # aus dem Akku. Entlädt ein Akku (pb < −25 W), wird sein GS sofort auf die
+                    # echte Eigen-Solarleistung (op + pb) gekappt UND dieser Wert 60 s gehalten.
+                    # Die Haltezeit ist entscheidend: ohne sie würde die Twin-Referenz im
+                    # nächsten Tick sofort wieder hochziehen → Kappen/Hochziehen im Wechsel
+                    # (genau das Pendeln aus v3.2.2).
+                    # HINWEIS Vorzeichen: bei DIESEM Gerät ist pb positiv = Laden, negativ =
+                    # Entladen (live belegt: +729 W beim Laden, −237 W beim Entladen).
                     solar_ref = max(pv_current, pv_l2) if has_l2 else pv_current
+                    _HOLD_S = 60.0
 
-                    def _twin_gs(pv_own, pb_own):
+                    def _twin_gs(pv_own, op_own, pb_own, hold_key):
+                        now = time.time()
                         if pb_own < -25.0:
+                            state[hold_key] = now + _HOLD_S
+                            return max(0.0, min(op_own + pb_own, 2400.0))
+                        if now < safe_float(state, hold_key, 0.0):
+                            # Sperrfrist aktiv → eigener Wert, nicht wieder hochziehen
                             return max(0.0, min(pv_own, 2400.0))
                         return max(0.0, min(max(solar_ref, pv_own), 2400.0))
 
@@ -1963,13 +1978,13 @@ def main():
                     l2_is_full = l2_full or state.get("l2_charge_blocked", False)
 
                     if l1_is_full and l2_is_full:
-                        gs_l1 = _twin_gs(pv_current, pb_current)
-                        gs_l2 = _twin_gs(pv_l2, pb_l2)
+                        gs_l1 = _twin_gs(pv_current, op_current, pb_current, "twin_hold_l1")
+                        gs_l2 = _twin_gs(pv_l2, op_l2, pb_l2, "twin_hold_l2")
                     elif l1_is_full:
-                        gs_l1 = _twin_gs(pv_current, pb_current)
+                        gs_l1 = _twin_gs(pv_current, op_current, pb_current, "twin_hold_l1")
                         gs_l2 = max(-2400.0, min(0.0, gs_new))   # L2 lädt noch → AC-Laden aus Überschuss
                     elif l2_is_full:
-                        gs_l2 = _twin_gs(pv_l2, pb_l2)
+                        gs_l2 = _twin_gs(pv_l2, op_l2, pb_l2, "twin_hold_l2")
                         gs_l1 = max(-2400.0, min(0.0, gs_new))   # L1 lädt noch → AC-Laden aus Überschuss
                     else:
                         # Beide nicht voll -> Proportional zum Headroom laden (wie gehabt)
