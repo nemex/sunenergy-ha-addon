@@ -53,6 +53,13 @@ STATE_PATH   = "/data/controller_state.json"
 PROXY_STATE_PATH = "/data/proxy_state.json"
 CSV_PATH     = "/data/controller_log.csv"
 TICK_S       = 5
+# v3.3.5: Freigabeschwelle der Entlade-Sperre. Das Gerät hat eine EIGENE Hysterese
+# (Feld SI1, ab Werk 5 %): unterhalb von SI sperrt es die Entladung und gibt sie erst
+# bei SI + SI1 wieder frei. Unsere alte Schwelle soc_min + 2 lag mitten in diesem
+# Sperrband — der Regler forderte ab soc_min + 2 Entladung an, die das Gerät noch gar
+# nicht liefern durfte (Sollwert unbedient -> PID läuft ins Anti-Windup). Der Offset
+# entspricht deshalb genau dem SI1-Werkswert.
+_SOC_RELEASE_OFFSET = 5.0
 
 def load_options() -> dict:
     try:
@@ -284,10 +291,16 @@ def ha_set_number(entity_id: str, value: float) -> bool:
             timeout=5,
         )
         if r.status_code not in (200, 201):
-            log.error("HA SET %s fehlgeschlagen mit Status %s: %s", entity_id, r.status_code, r.text)
+            # v3.3.5: Seit die Integration Geräte-Lesefehler als "recoverable update error"
+            # meldet, gehen ihre Entities bei jedem Hänger (und bei jedem Reload nach einer
+            # Options-Änderung) kurz auf unavailable — der Service-Call scheitert dann.
+            # Das ist erwartbar und harmlos, weil dieselben Größen zusätzlich direkt aufs
+            # Gerät geschrieben werden. Deshalb WARNING statt ERROR.
+            log.warning("HA SET %s fehlgeschlagen mit Status %s (Direkt-Write greift weiterhin): %s",
+                        entity_id, r.status_code, r.text)
         return r.status_code in (200, 201)
     except Exception as e:
-        log.error("HA SET %s: %s", entity_id, e)
+        log.warning("HA SET %s: %s", entity_id, e)
         return False
 
 def ha_switch(entity_id: str, turn_on: bool) -> bool:
@@ -303,7 +316,8 @@ def ha_switch(entity_id: str, turn_on: bool) -> bool:
         )
         return r.status_code in (200, 201)
     except Exception as e:
-        log.error("HA SWITCH %s: %s", entity_id, e)
+        # v3.3.5: analog zu ha_set_number — Direkt-Write aufs Gerät deckt denselben Zustand ab.
+        log.warning("HA SWITCH %s: %s", entity_id, e)
         return False
 
 def ha_push_sensor(entity_id: str, value: float, unit: str = "W", device_class: str = "power", friendly_name: str = "") -> bool:
@@ -781,7 +795,7 @@ def main():
                 low_soc_active_l1 = True
             elif curr_soc <= soc_min:
                 low_soc_active_l1 = True
-            elif curr_soc >= (soc_min + 2.0):
+            elif curr_soc >= (soc_min + _SOC_RELEASE_OFFSET):
                 low_soc_active_l1 = False
             state["low_soc_active_l1"] = low_soc_active_l1
 
@@ -790,7 +804,7 @@ def main():
             if has_l2:
                 if curr_soc_l2 <= soc_min:
                     low_soc_active_l2 = True
-                elif curr_soc_l2 >= (soc_min + 2.0):
+                elif curr_soc_l2 >= (soc_min + _SOC_RELEASE_OFFSET):
                     low_soc_active_l2 = False
             else:
                 low_soc_active_l2 = True
