@@ -61,6 +61,48 @@ TICK_S       = 5
 # entspricht deshalb genau dem SI1-Werkswert.
 _SOC_RELEASE_OFFSET = 5.0
 
+# v3.3.6: Kalibrierung optional auf einen festen Wochentag legen.
+# Toleranz nach unten: last_calibration_ts wird erst beim ABSCHLUSS der Kalibrierung
+# gesetzt — bei naechtlicher Netz-Nachladung also erst am Folgetag. Ohne diese Toleranz
+# laege der naechste Termin auf einem Nicht-Wochentag und rutschte damit bei jedem
+# Zyklus eine ganze Woche nach hinten.
+CALIB_WEEKDAY_TOLERANZ_TAGE = 3.0
+# Notnagel nach oben, falls der Wochentag mehrfach ausfaellt (Addon aus, Geraet weg).
+# Bei 14 Tagen Intervall faellt +7 genau auf den naechsten passenden Wochentag und kann
+# die Bindung deshalb nicht brechen; ein kleinerer Wert (z. B. +3) laege mitten in der
+# Woche und wuerde den fixen Wochentag genau dann aushebeln, wenn er gebraucht wird.
+CALIB_WEEKDAY_NOTNAGEL_TAGE = 7.0
+
+_WEEKDAY_NAMES = {
+    "mo": 0, "mon": 0, "montag": 0, "monday": 0,
+    "di": 1, "die": 1, "tue": 1, "dienstag": 1, "tuesday": 1,
+    "mi": 2, "mit": 2, "wed": 2, "mittwoch": 2, "wednesday": 2,
+    "do": 3, "don": 3, "thu": 3, "donnerstag": 3, "thursday": 3,
+    "fr": 4, "fri": 4, "freitag": 4, "friday": 4,
+    "sa": 5, "sam": 5, "sat": 5, "samstag": 5, "saturday": 5,
+    "so": 6, "son": 6, "sun": 6, "sonntag": 6, "sunday": 6,
+}
+
+
+def parse_weekday(value):
+    """Leer/None/'aus' -> None (keine Wochentagsbindung), sonst 0=Montag .. 6=Sonntag."""
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    if s in ("", "-", "aus", "off", "none", "keiner"):
+        return None
+    if s in _WEEKDAY_NAMES:
+        return _WEEKDAY_NAMES[s]
+    try:
+        n = int(s)
+    except ValueError:
+        log.warning("calibration_weekday=%r nicht interpretierbar — Wochentagsbindung aus.", value)
+        return None
+    if 0 <= n <= 6:
+        return n
+    log.warning("calibration_weekday=%d liegt ausserhalb 0-6 — Wochentagsbindung aus.", n)
+    return None
+
 def load_options() -> dict:
     try:
         with open(OPTIONS_PATH) as f:
@@ -103,6 +145,8 @@ def load_options() -> dict:
             "regulation_soc_normal_max": "soc_normal_max",
             "regulation_soc_min": "soc_min",
             "regulation_calibration_days": "calibration_days",
+            # v3.3.6: Kalibrierung auf festen Wochentag legen
+            "regulation_calibration_weekday": "calibration_weekday",
             "regulation_dry_run": "dry_run",
             "regulation_use_native_pid": "use_native_pid",
             "regulation_proxy_split_mode": "proxy_split_mode",
@@ -624,6 +668,12 @@ def main():
     soc_normal_max  = float(opts["soc_normal_max"])    # 95%
     soc_min         = float(opts["soc_min"])            # 10%
     calib_days      = float(opts["calibration_days"])  # 15
+    # v3.3.6: leer = bisheriges Verhalten (calib_days nach der letzten Kalibrierung),
+    # sonst wird der Termin immer auf diesen Wochentag gelegt.
+    calib_weekday   = parse_weekday(opts.get("calibration_weekday", ""))
+    if calib_weekday is not None:
+        log.info("Kalibrierung ist auf Wochentag %d gebunden (0=Mo .. 6=So), Intervall %.0f Tage.",
+                 calib_weekday, calib_days)
     sunenergy_ip    = opts.get("sunenergy_ip", "192.168.178.94")
     
     # v3.3.1: Ladegrenze optional PRO SPEICHER. Manche Geräte melden intern nie mehr als
@@ -1463,10 +1513,28 @@ def main():
             
             # Kalibrierungs-Fälligkeit prüfen (Ziel: 10:00 Uhr des Ziel-Tages)
             try:
-                last_cal_dt = datetime.fromtimestamp(state["last_calibration_ts"])
-                target_dt = last_cal_dt + timedelta(days=calib_days)
-                target_10am = target_dt.replace(hour=10, minute=0, second=0, microsecond=0)
-                calibration_due = datetime.now() >= target_10am
+                now_dt = datetime.now()
+                if calib_weekday is None:
+                    last_cal_dt = datetime.fromtimestamp(state["last_calibration_ts"])
+                    target_dt = last_cal_dt + timedelta(days=calib_days)
+                    target_10am = target_dt.replace(hour=10, minute=0, second=0, microsecond=0)
+                    calibration_due = now_dt >= target_10am
+                else:
+                    # v3.3.6: Termin auf einen festen Wochentag gelegt. Das 10-Uhr-Gate
+                    # bleibt bewusst erhalten — es sorgt dafuer, dass die Kalibrierung
+                    # mitten am Sonnentag scharf wird und damit ZUERST solar geladen wird;
+                    # der Netzanteil kommt erst nach Sonnenuntergang (siehe not sun_above
+                    # beim zwangsladung_trigger). Wuerde sie um 00:00 faellig, waere
+                    # sun_above sofort falsch und die Nacht DAVOR wuerde aus dem Netz
+                    # geladen — genau verkehrt herum.
+                    reif = tage_seit >= (calib_days - CALIB_WEEKDAY_TOLERANZ_TAGE)
+                    calibration_due = (
+                        reif
+                        and now_dt.weekday() == calib_weekday
+                        and now_dt.hour >= 10
+                    )
+                    if tage_seit >= (calib_days + CALIB_WEEKDAY_NOTNAGEL_TAGE) and now_dt.hour >= 10:
+                        calibration_due = True
             except Exception as e:
                 log.error("Fehler bei Kalibrierungszeit-Berechnung: %s", e)
                 calibration_due = tage_seit > calib_days

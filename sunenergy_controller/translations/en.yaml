@@ -146,6 +146,9 @@ configuration:
       calibration_days:
         name: "Calibration Interval (Days)"
         description: "Interval for fully charging the batteries (Default: 15 days)"
+      calibration_weekday:
+        name: "Pin Calibration To Weekday"
+        description: "Empty = off (due exactly one interval after the last calibration). Otherwise the calibration is always pinned to this weekday: 0=Mon to 6=Sun, or Mon/Tue/Wed/Thu/Fri/Sat/Sun. It becomes due at the earliest 3 days before the interval ends, and at the latest 7 days after it even without a matching weekday. Example: interval 14 with Fri gives every second Friday."
       dry_run:
         name: "Test Mode (Dry-Run)"
         description: "If active, calculations are run but no limits are written to devices"

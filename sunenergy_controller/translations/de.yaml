@@ -146,6 +146,9 @@ configuration:
       calibration_days:
         name: "Kalibrierungs-Intervall (Tage)"
         description: "Intervall, in dem die Akkus voll aufgeladen werden (Standard: 15 Tage)"
+      calibration_weekday:
+        name: "Kalibrierung auf Wochentag legen"
+        description: "Leer = aus (Termin liegt genau ein Intervall nach der letzten Kalibrierung). Sonst wird die Kalibrierung immer auf diesen Wochentag gelegt: 0=Mo bis 6=So, oder Mo/Di/Mi/Do/Fr/Sa/So. Sie wird frühestens 3 Tage vor Intervallende fällig und spätestens 7 Tage danach auch ohne passenden Wochentag. Beispiel: Intervall 14 mit Fr ergibt jeden zweiten Freitag."
       dry_run:
         name: "Testmodus (Dry-Run)"
         description: "Wenn aktiv, werden Berechnungen durchgeführt aber keine Befehle an die Geräte gesendet"
