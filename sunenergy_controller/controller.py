@@ -73,6 +73,13 @@ CALIB_WEEKDAY_TOLERANZ_TAGE = 3.0
 # Woche und wuerde den fixen Wochentag genau dann aushebeln, wenn er gebraucht wird.
 CALIB_WEEKDAY_NOTNAGEL_TAGE = 7.0
 
+# v3.3.7: Wiederholsperre der Lade-Blockade. Nach einem Negativbefund ("Ladung
+# angefordert, es fliesst nichts") wird der Speicher erst nach dieser Frist wieder
+# zur Probe entblockt. Ohne die Sperre wuerde die auf die aktive Ladegrenze
+# umgestellte Referenz (s.u.) im Sekundentakt oszillieren; mit ihr gibt es genau
+# einen Ladeversuch pro Frist.
+CHARGE_BLOCK_RETRY_S = 20 * 60
+
 _WEEKDAY_NAMES = {
     "mo": 0, "mon": 0, "montag": 0, "monday": 0,
     "di": 1, "die": 1, "tue": 1, "dienstag": 1, "tuesday": 1,
@@ -739,6 +746,12 @@ def main():
     # v3.1.2: symmetrisch zu L2 (Default False = ladefähig, korrigiert sich im ersten Tick)
     if "l1_charge_blocked" not in state:
         state["l1_charge_blocked"] = False
+    # v3.3.7: Zeitpunkt des letzten Negativbefunds je Speicher (0 = noch keiner,
+    # damit der erste Tick sofort einen Ladeversuch erlaubt).
+    if "l1_charge_block_ts" not in state:
+        state["l1_charge_block_ts"] = 0.0
+    if "l2_charge_block_ts" not in state:
+        state["l2_charge_block_ts"] = 0.0
 
     # Fix #4: Device-State explizit auf None setzen damit der erste Tick
     # immer schreibt (None != jeder Wert → Write-Bedingung immer True)
@@ -996,13 +1009,30 @@ def main():
                             if not state.get("l1_charge_blocked", False):
                                 log.warning("⚠️ L1 lädt nicht: angefordert=%.0fW, bezogen=%.1fW. Blockiere L1 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l1, iw_current)
                             state["l1_charge_blocked"] = True
+                            state["l1_charge_block_ts"] = time.time()
                         else:
                             state["l1_charge_blocked"] = False
+                            state["l1_charge_block_ts"] = 0.0
                     else:
-                        if curr_soc < (soc_normal_max - 1.0):
-                            state["l1_charge_blocked"] = False
-                        else:
+                        # v3.3.7: Referenz ist die AKTIV geschriebene Ladegrenze statt der
+                        # festen soc_normal_max — sonst bleibt ein Speicher an Kalibriertagen
+                        # (Grenze 100) schon bei 94 % blockiert und die Solarphase der
+                        # Kalibrierung laeuft ins Leere: er reicht seine PV durch, statt die
+                        # letzten Prozente zu laden (live beobachtet am 29.08.). Gegen die
+                        # Entblock-Oszillation, vor der v3.1.2 zu Recht warnte, schuetzt jetzt
+                        # die Wiederholsperre: ein Negativbefund haelt CHARGE_BLOCK_RETRY_S
+                        # lang, danach gibt es genau EINEN neuen Ladeversuch statt eines
+                        # Wechsels im Sekundentakt.
+                        unblock_ref_l1 = float(state.get("last_written_sa") or soc_normal_max)
+                        if curr_soc >= (unblock_ref_l1 - 1.0):
                             state["l1_charge_blocked"] = True
+                        else:
+                            block_age_l1 = time.time() - safe_float(state, "l1_charge_block_ts", 0.0)
+                            if block_age_l1 >= CHARGE_BLOCK_RETRY_S:
+                                if state.get("l1_charge_blocked", False):
+                                    log.info("L1 Ladeblockade zur Neuprobe geloest (SOC %.1f%%, aktive Grenze %.0f%%).",
+                                             curr_soc, unblock_ref_l1)
+                                state["l1_charge_blocked"] = False
 
                     # v3.0.0: last_poll_l1_ts / consecutive_polls_l1 gehören dem Meter-Proxy
                     # (echte /meter-Polls des Speichers) und werden hier nicht mehr überschrieben —
@@ -1072,8 +1102,10 @@ def main():
                             if not state.get("l2_charge_blocked", False):
                                 log.warning("⚠️ L2 lädt nicht: angefordert=%.0fW, bezogen=%.1fW. Blockiere L2 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l2, iw_l2)
                             state["l2_charge_blocked"] = True
+                            state["l2_charge_block_ts"] = time.time()
                         else:
                             state["l2_charge_blocked"] = False
+                            state["l2_charge_block_ts"] = 0.0
                     else:
                         # v3.1.2: Reale Tages-Ladegrenze (soc_normal_max) als Headroom-Referenz,
                         # NICHT last_written_sa. Letzteres steigt an Kalibriertagen auf 100 % — mit
@@ -1085,10 +1117,19 @@ def main():
                         # bis er durch echte Entladung wieder unter die Grenze fällt. Ein Speicher,
                         # der die Ladung TATSÄCHLICH annimmt (iw≥50, Zweig oben), bleibt unblockiert
                         # und lädt an Kalibriertagen solar weiter bis 100 %.
-                        if curr_soc_l2 < (soc_normal_max - 1.0):
-                            state["l2_charge_blocked"] = False
-                        else:
+                        # v3.3.7: Referenz ist die aktive Ladegrenze; die Oszillation, die
+                        # der Kommentar oben beschreibt, wird jetzt von der Wiederholsperre
+                        # verhindert statt von einer kuenstlich niedrig gehaltenen Referenz.
+                        unblock_ref_l2 = float(state.get("last_written_sa") or soc_normal_max)
+                        if curr_soc_l2 >= (unblock_ref_l2 - 1.0):
                             state["l2_charge_blocked"] = True
+                        else:
+                            block_age_l2 = time.time() - safe_float(state, "l2_charge_block_ts", 0.0)
+                            if block_age_l2 >= CHARGE_BLOCK_RETRY_S:
+                                if state.get("l2_charge_blocked", False):
+                                    log.info("L2 Ladeblockade zur Neuprobe geloest (SOC %.1f%%, aktive Grenze %.0f%%).",
+                                             curr_soc_l2, unblock_ref_l2)
+                                state["l2_charge_blocked"] = False
 
                     # MM Self-healing
                     mm_val_l2 = se_data_l2.get("MM")
