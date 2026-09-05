@@ -80,6 +80,16 @@ CALIB_WEEKDAY_NOTNAGEL_TAGE = 7.0
 # einen Ladeversuch pro Frist.
 CHARGE_BLOCK_RETRY_S = 20 * 60
 
+# v3.3.8: Entprellung der Lade-Blockade. Erst wenn ein Speicher SO LANGE ununterbrochen
+# eine angeforderte Ladung nicht annimmt, gilt der Negativbefund als echt. Grund: ein
+# Geraete-Neustart ist im Einzeltick nicht von einem Lade-Deadlock zu unterscheiden
+# (Messung 05.09.2026 an L2: nach Druck auf den Systemneustart meldete das Geraet 16 s
+# lang ~0 W auf allen Kanaelen und antwortete dabei weiter auf die lokale API, der Poll
+# selbst fiel nur 3 s aus). Die Kosten sind asymmetrisch: eine zu spaete Blockade kostet
+# ~40 Wh Einspeisung, eine falsche dagegen 20 min Ladeanteil (CHARGE_BLOCK_RETRY_S) plus
+# moegliche AC-AC-Kreuzladung. Deshalb grosszuegig dimensioniert.
+CHARGE_BLOCK_DEBOUNCE_S = 60.0
+
 _WEEKDAY_NAMES = {
     "mo": 0, "mon": 0, "montag": 0, "monday": 0,
     "di": 1, "die": 1, "tue": 1, "dienstag": 1, "tuesday": 1,
@@ -752,6 +762,10 @@ def main():
         state["l1_charge_block_ts"] = 0.0
     if "l2_charge_block_ts" not in state:
         state["l2_charge_block_ts"] = 0.0
+    # v3.3.8: Entprell-Marker beim Start immer verwerfen. Ein Negativbefund von vor dem
+    # Neustart sagt nichts ueber den jetzigen Zustand des Geraets aus.
+    state["l1_no_charge_since"] = 0.0
+    state["l2_no_charge_since"] = 0.0
 
     # Fix #4: Device-State explizit auf None setzen damit der erste Tick
     # immer schreibt (None != jeder Wert → Write-Bedingung immer True)
@@ -1006,14 +1020,25 @@ def main():
                     last_gs_l1 = safe_float(state, "last_device_gs", 0.0)
                     if last_gs_l1 < -100.0:
                         if iw_current < 50.0:
-                            if not state.get("l1_charge_blocked", False):
-                                log.warning("⚠️ L1 lädt nicht: angefordert=%.0fW, bezogen=%.1fW. Blockiere L1 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l1, iw_current)
-                            state["l1_charge_blocked"] = True
-                            state["l1_charge_block_ts"] = time.time()
+                            # v3.3.8: entprellt statt sofort (s. CHARGE_BLOCK_DEBOUNCE_S).
+                            # Jeder Tick mit echtem Ladestrom setzt den Marker zurueck, der
+                            # Befund muss also ununterbrochen bestehen.
+                            since_l1 = safe_float(state, "l1_no_charge_since", 0.0)
+                            if since_l1 <= 0.0:
+                                since_l1 = time.time()
+                                state["l1_no_charge_since"] = since_l1
+                            no_charge_age_l1 = time.time() - since_l1
+                            if no_charge_age_l1 >= CHARGE_BLOCK_DEBOUNCE_S:
+                                if not state.get("l1_charge_blocked", False):
+                                    log.warning("⚠️ L1 lädt nicht: angefordert=%.0fW, bezogen=%.1fW seit %.0fs. Blockiere L1 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l1, iw_current, no_charge_age_l1)
+                                state["l1_charge_blocked"] = True
+                                state["l1_charge_block_ts"] = time.time()
                         else:
+                            state["l1_no_charge_since"] = 0.0
                             state["l1_charge_blocked"] = False
                             state["l1_charge_block_ts"] = 0.0
                     else:
+                        state["l1_no_charge_since"] = 0.0
                         # v3.3.7: Referenz ist die AKTIV geschriebene Ladegrenze statt der
                         # festen soc_normal_max — sonst bleibt ein Speicher an Kalibriertagen
                         # (Grenze 100) schon bei 94 % blockiert und die Solarphase der
@@ -1099,14 +1124,25 @@ def main():
                     last_gs_l2 = safe_float(state, "last_device_gs_l2", 0.0)
                     if last_gs_l2 < -100.0:
                         if iw_l2 < 50.0:
-                            if not state.get("l2_charge_blocked", False):
-                                log.warning("⚠️ L2 lädt nicht: angefordert=%.0fW, bezogen=%.1fW. Blockiere L2 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l2, iw_l2)
-                            state["l2_charge_blocked"] = True
-                            state["l2_charge_block_ts"] = time.time()
+                            # v3.3.8: entprellt statt sofort (s. CHARGE_BLOCK_DEBOUNCE_S).
+                            # Jeder Tick mit echtem Ladestrom setzt den Marker zurueck, der
+                            # Befund muss also ununterbrochen bestehen.
+                            since_l2 = safe_float(state, "l2_no_charge_since", 0.0)
+                            if since_l2 <= 0.0:
+                                since_l2 = time.time()
+                                state["l2_no_charge_since"] = since_l2
+                            no_charge_age_l2 = time.time() - since_l2
+                            if no_charge_age_l2 >= CHARGE_BLOCK_DEBOUNCE_S:
+                                if not state.get("l2_charge_blocked", False):
+                                    log.warning("⚠️ L2 lädt nicht: angefordert=%.0fW, bezogen=%.1fW seit %.0fs. Blockiere L2 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l2, iw_l2, no_charge_age_l2)
+                                state["l2_charge_blocked"] = True
+                                state["l2_charge_block_ts"] = time.time()
                         else:
+                            state["l2_no_charge_since"] = 0.0
                             state["l2_charge_blocked"] = False
                             state["l2_charge_block_ts"] = 0.0
                     else:
+                        state["l2_no_charge_since"] = 0.0
                         # v3.1.2: Reale Tages-Ladegrenze (soc_normal_max) als Headroom-Referenz,
                         # NICHT last_written_sa. Letzteres steigt an Kalibriertagen auf 100 % — mit
                         # dieser 100 als Referenz wurde ein bei ~95 % stehender (nicht ladender)
