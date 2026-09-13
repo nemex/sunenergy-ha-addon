@@ -246,6 +246,28 @@
             );
         };
 
+        // v3.4.0: Beschriftung der Tagesauswahl und der Zeitraumanzeige.
+        const todayISO = new Date().toLocaleDateString('sv-SE');   // ergibt YYYY-MM-DD in Ortszeit
+
+        const formatDayLabel = (day) => {
+            const d = new Date(day + "T12:00:00");
+            if (isNaN(d.getTime())) return day;
+            const wd = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][d.getDay()];
+            return `${wd} ${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
+        };
+
+        const formatRange = (from, to) => {
+            if (!from || !to) return "";
+            const hhmm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            const dmy = (d) => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
+            const sameDay = from.toDateString() === to.toDateString();
+            const hours = (to - from) / 3600000;
+            const dauer = hours >= 1 ? `${hours.toFixed(1)} h` : `${Math.round(hours * 60)} min`;
+            return sameDay
+                ? `${dmy(from)} ${hhmm(from)}–${hhmm(to)} Uhr · ${dauer}`
+                : `${dmy(from)} ${hhmm(from)} – ${dmy(to)} ${hhmm(to)} Uhr · ${dauer}`;
+        };
+
         // --- Hauptanwendung ---
         const App = () => {
             const [rawData, setRawData] = useState(null);
@@ -258,6 +280,10 @@
             const [isDragging, setIsDragging] = useState(false);
             const [activeTab, setActiveTab] = useState('overview'); // overview | solar | precision | battery | smartplug | table
             const [isLoading, setIsLoading] = useState(false);
+            // v3.4.0: Tagesauswahl. availableDays kommt vom Controller (ein Eintrag je
+            // rotiertem Tageslog), selectedDay ist der gerade geladene Kalendertag.
+            const [availableDays, setAvailableDays] = useState([]);
+            const [selectedDay, setSelectedDay] = useState(null);
             
             const [liveState, setLiveState] = useState(null);
             const [textLog, setTextLog] = useState("");
@@ -501,16 +527,33 @@
                 reader.readAsText(file, 'UTF-8');
             };
 
-            // Automatischer Download des Logs vom Controller auf demselben Server
+            // v3.4.0: Verfuegbare Tageslogs abfragen. Aeltere Addon-Versionen kennen
+            // /log/days nicht — dann bleibt die Liste leer und es wird wie bisher
+            // einfach das laufende Log geladen.
+            useEffect(() => {
+                fetch('log/days')
+                    .then(r => (r.ok ? r.json() : null))
+                    .then(data => {
+                        if (data && Array.isArray(data.days) && data.days.length > 0) {
+                            setAvailableDays(data.days);
+                        }
+                    })
+                    .catch(() => { /* ohne Tagesliste bleibt es beim laufenden Log */ });
+            }, []);
+
+            // Automatischer Download des Logs vom Controller auf demselben Server.
+            // Laeuft erneut, sobald ein anderer Tag gewaehlt wird.
             useEffect(() => {
                 setIsLoading(true);
-                fetch('log')
+                const url = selectedDay ? `log?day=${encodeURIComponent(selectedDay)}` : 'log';
+                const name = selectedDay ? `controller_log-${selectedDay}.csv` : "controller_log.csv";
+                fetch(url)
                     .then(response => {
                         if (!response.ok) throw new Error("Keine Logdatei auf dem Controller gefunden oder Fehler beim Laden.");
                         return response.text();
                     })
                     .then(text => {
-                        parseCSVData(text, "controller_log.csv");
+                        parseCSVData(text, name);
                     })
                     .catch(err => {
                         console.warn("Automatisches Laden fehlgeschlagen:", err);
@@ -522,7 +565,7 @@
                     .finally(() => {
                         setIsLoading(false);
                     });
-            }, []);
+            }, [selectedDay]);
 
             // Live-Status und Live-Log Polling (alle 5 Sekunden)
             useEffect(() => {
@@ -780,6 +823,10 @@
                         precisionPercent: activePointsCount > 0 ? ((pointsWithin20W / activePointsCount) * 100).toFixed(1) : null,
                         avgDeviation: activePointsCount > 0 ? (totalAbsoluteError / activePointsCount).toFixed(1) : null,
                         modeCounts,
+                        // v3.4.0: Abgedeckter Zeitraum, damit Kennzahlen wie die
+                        // Regelungspunkte nicht ohne Bezugsrahmen dastehen.
+                        rangeFrom: rawData[0].timestamp,
+                        rangeTo: rawData[rawData.length - 1].timestamp,
                         modeTotal: Object.values(modeCounts).reduce((a, c) => a + c, 0),
                         modeSummary: Object.entries(modeCounts).sort((a, b) => b[1] - a[1]),
                         dominantMode: Object.entries(modeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "—"
@@ -981,6 +1028,11 @@
                                     <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
                                         {fileType === 'highres' ? 'Regler-Log (5s)' : 'Tagesbericht (10m)'} · {rawData.length} Einträge
                                     </span>
+                                    {fileType === 'highres' && stats && (
+                                        <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                                            {formatRange(stats.rangeFrom, stats.rangeTo)}
+                                        </span>
+                                    )}
                                 </p>
                             </div>
                             {liveState && (
@@ -1019,6 +1071,27 @@
                                 <button onClick={() => setRawData(null)} className="p-2.5 rounded-xl border bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 transition-colors"><Icon name="x" size={16} /></button>
                             </div>
                         </header>
+
+                        {/* v3.4.0: Tagesauswahl — je ein Knopf pro rotiertem Tageslog. */}
+                        {availableDays.length > 0 && (
+                            <div className="mb-6 flex flex-wrap items-center gap-2 no-export">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1.5 mr-1">
+                                    <Icon name="table" size={13} className="text-blue-400" /> Tag
+                                </span>
+                                {availableDays.map((day, idx) => {
+                                    const isToday = idx === 0 && day === todayISO;
+                                    const active = selectedDay ? selectedDay === day : idx === 0;
+                                    return (
+                                        <button key={day} onClick={() => setSelectedDay(day)} disabled={isLoading}
+                                            className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all disabled:opacity-50 ${active
+                                                ? 'bg-amber-500 text-slate-900 border-amber-500'
+                                                : 'bg-[#111822] border-[#1e2d3d] text-slate-300 hover:border-amber-500 hover:text-amber-500'}`}>
+                                            {isToday ? 'Heute' : formatDayLabel(day)}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
 
                         {/* Einstellungen */}
                         {showSettings && (
@@ -1340,7 +1413,9 @@
                                                 <div>
                                                     <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-1.5"><Icon name="zap" size={14} className="text-emerald-500" /> Regelungspunkte</h3>
                                                     <p className="text-5xl font-black text-emerald-400">{stats.activePointsCount}</p>
-                                                    <p className="text-[11px] text-slate-400 mt-2">aktive Reglerzyklen in diesem CSV-Auswertungszeitraum.</p>
+                                                    <p className="text-[11px] text-slate-400 mt-2">aktive Reglerzyklen im ausgewerteten Zeitraum.</p>
+                                                    {/* v3.4.0: Zeitraum ausschreiben — vorher war nicht erkennbar, worauf sich der Zaehler bezieht. */}
+                                                    <p className="text-[11px] text-slate-300 mt-2 font-bold">{formatRange(stats.rangeFrom, stats.rangeTo)}</p>
                                                 </div>
                                                 <div className="text-[11px] text-slate-400 mt-4">
                                                     {/* v3.3.9: war fest auf "active" verdrahtet und zeigte damit auch dann active, wenn der Controller nie geregelt hat. */}

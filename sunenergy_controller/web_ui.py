@@ -10,18 +10,26 @@ Port 8765:
 """
 
 import csv
+import glob
 import json
 import os
+import re
 import threading
 import time
 import requests
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
 STATE_PATH = "/data/controller_state.json"
 PROXY_STATE_PATH = "/data/proxy_state.json"
 OPTIONS_PATH = "/data/options.json"
 CSV_PATH = "/data/controller_log.csv"
+# v3.4.0: Das Log rotiert pro Kalendertag (siehe controller.py). CSV_PATH ist immer der
+# laufende Tag, abgeschlossene Tage liegen als controller_log-YYYY-MM-DD.csv daneben.
+CSV_ARCHIVE_GLOB = "/data/controller_log-*.csv"
+CSV_ARCHIVE_FMT  = "/data/controller_log-%s.csv"
+_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 def load_state() -> dict:
     try:
@@ -156,6 +164,39 @@ def get_shelly_power(shelly_ip: str):
     if now - _SHELLY_CACHE["last_success"] > SHELLY_STALE_S:
         return None
     return _SHELLY_CACHE["value"]
+
+def csv_path_for_day(day: str):
+    """Dateipfad zum Tageslog, oder None wenn das Datum ungueltig ist.
+
+    Das Datumsformat wird streng geprueft, weil der Wert aus der URL stammt und
+    sonst per "../" aus /data herausfuehren koennte."""
+    if not day or not _DAY_RE.match(day):
+        return None
+    today = time.strftime("%Y-%m-%d")
+    return CSV_PATH if day == today else (CSV_ARCHIVE_FMT % day)
+
+
+def available_log_days() -> list:
+    """Alle Kalendertage, fuer die Logdaten vorliegen — juengster zuerst."""
+    days = []
+    try:
+        for path in glob.glob(CSV_ARCHIVE_GLOB):
+            name = os.path.basename(path)
+            day = name[len("controller_log-"):-len(".csv")]
+            if _DAY_RE.match(day) and os.path.getsize(path) > 0:
+                days.append(day)
+    except Exception:
+        pass
+    # Der laufende Tag steht in CSV_PATH und traegt das Datum nicht im Namen.
+    try:
+        if os.path.exists(CSV_PATH) and os.path.getsize(CSV_PATH) > 0:
+            today = time.strftime("%Y-%m-%d")
+            if today not in days:
+                days.append(today)
+    except Exception:
+        pass
+    return sorted(set(days), reverse=True)
+
 
 def get_csv_data(n=100) -> list:
     """Liest die letzten n Zeilen aus der CSV.
@@ -717,6 +758,12 @@ class UIHandler(BaseHTTPRequestHandler):
         opts = load_options()
         shelly_ip = opts.get("shelly_ip", "192.168.178.98")
 
+        # v3.4.0: /log nimmt jetzt einen ?day=-Parameter entgegen; alle uebrigen Routen
+        # vergleichen weiterhin self.path und bleiben davon unberuehrt.
+        parsed = urlparse(self.path)
+        path_only = parsed.path
+        query = parse_qs(parsed.query)
+
         if self.path == "/meter":
             client_ip = self.client_address[0]
             ip_l1 = opts.get("sunenergy_ip", "192.168.178.94")
@@ -859,15 +906,33 @@ class UIHandler(BaseHTTPRequestHandler):
             else:
                 self._json({})
 
-        elif self.path == "/log":
-            if os.path.exists(CSV_PATH):
-                with open(CSV_PATH, "r") as f:
+        elif self.path == "/log/days":
+            # v3.4.0: Tage, fuer die Logdaten vorliegen — Grundlage der Tagesauswahl
+            # in der Analyse-Ansicht.
+            self._json({"days": available_log_days(), "today": time.strftime("%Y-%m-%d")})
+
+        elif path_only == "/log":
+            # v3.4.0: ohne Parameter der laufende Tag, mit ?day=YYYY-MM-DD ein Archiv.
+            day = query.get("day", [""])[0]
+            if day:
+                target = csv_path_for_day(day)
+                filename = "controller_log-%s.csv" % day
+                if target is None:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b"Ungueltiges Datum")
+                    return
+            else:
+                target, filename = CSV_PATH, "controller_log.csv"
+
+            if target and os.path.exists(target):
+                with open(target, "rb") as f:
                     data = f.read()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/csv")
-                self.send_header("Content-Disposition", "attachment; filename=controller_log.csv")
+                self.send_header("Content-Disposition", "attachment; filename=%s" % filename)
                 self.end_headers()
-                self.wfile.write(data.encode())
+                self.wfile.write(data)
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -887,9 +952,16 @@ class UIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/log/delete":
             try:
+                removed = 0
                 if os.path.exists(CSV_PATH):
                     os.remove(CSV_PATH)
-                self._json({"status": "ok", "message": "Log gelöscht"})
+                    removed += 1
+                # v3.4.0: auch die abgeschlossenen Tage entfernen — sonst bliebe nach
+                # einem "Log löschen" die ganze Wochenhistorie liegen.
+                for old_file in glob.glob(CSV_ARCHIVE_GLOB):
+                    os.remove(old_file)
+                    removed += 1
+                self._json({"status": "ok", "message": "Log gelöscht (%d Datei(en))" % removed})
             except Exception as e:
                 self._json({"status": "error", "message": str(e)})
         elif self.path == "/api/pv_modules":

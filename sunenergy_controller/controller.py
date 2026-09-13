@@ -15,6 +15,7 @@ Regelkonzept:
 
 import json
 import csv
+import glob
 import logging
 import os
 import signal
@@ -245,14 +246,77 @@ CSV_FIELDS = [
     "is_l2"  # v3.0.2: IS-Limit L2 mitloggen (war bisher ein blinder Fleck)
 ]
 
-# v3.3.9: Auswertungsfenster auf mindestens 24 h ausgelegt. Vorher blieben nach einem
-# Trim nur 2000 Zeilen = ~2,8 h uebrig — die Regler-Praezision in der Systemanalytik
-# sah dadurch nie eine Nachtphase und haeufig gar keinen vollstaendigen Tag.
+# v3.4.0: Das Log rotiert pro Kalendertag. CSV_PATH ist immer der laufende Tag;
+# beim ersten Schreibvorgang nach Mitternacht wird die alte Datei nach
+# controller_log-YYYY-MM-DD.csv weggerollt. Dadurch deckt eine Auswertung exakt
+# 00:00-24:00 ab, statt an einer beliebigen Stelle abgeschnitten zu sein.
+CSV_ARCHIVE_GLOB = "/data/controller_log-*.csv"
+CSV_ARCHIVE_FMT  = "/data/controller_log-%s.csv"
+CSV_KEEP_DAYS    = 7              # so viele abgeschlossene Tage bleiben liegen
+
+# Groessen-Trim bleibt als Notbremse fuer den laufenden Tag bestehen: bei normalem
+# 5-Sekunden-Takt erreicht ein Tag ~2,2 MB, die Schwelle wird also nie beruehrt.
+# Greift sie doch (z.B. weil mehrere Codepfade pro Tick loggen), bleiben die
+# juengsten 24 h erhalten.
 CSV_KEEP_LINES = int(24 * 3600 / TICK_S)   # 24 h Datenzeilen bleiben beim Trimmen erhalten
-# Bei ~130 Byte/Zeile sind 24 h rund 2,2 MB. Die Trim-Schwelle muss deutlich darueber
-# liegen, sonst wird direkt nach jedem Trim erneut getrimmt. Mit 4 MB pendelt das
-# Fenster zwischen 24 h (direkt nach dem Trim) und ~45 h (kurz davor).
 CSV_MAX_BYTES = 4 * 1024 * 1024   # 4 MB
+
+
+_csv_day = None   # "YYYY-MM-DD" des Tages, der aktuell in CSV_PATH liegt
+
+
+def _csv_day_of_file(path: str):
+    """Kalendertag der letzten Datenzeile einer Logdatei, oder None.
+
+    Wird nur einmal pro Addon-Start aufgerufen, um nach einem Neustart den
+    laufenden Tag wiederzufinden. Liest ausschliesslich das Dateiende."""
+    try:
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as f:
+            size = os.fstat(f.fileno()).st_size
+            f.seek(max(0, size - 4096))
+            tail = f.read().decode("utf-8", "replace").splitlines()
+        for line in reversed(tail):
+            ts = line.split(",")[0].strip()
+            # "YYYY-MM-DD HH:MM:SS" -> Datumsteil; Header und Bruchstuecke fallen durch
+            if len(ts) >= 10 and ts[4] == "-" and ts[7] == "-":
+                return ts[:10]
+    except Exception as e:
+        log.debug("_csv_day_of_file Fehler: %s", e)
+    return None
+
+
+def prune_csv_archives(keep_days: int = CSV_KEEP_DAYS):
+    """Loescht die aeltesten Tagesarchive, sodass hoechstens keep_days uebrig bleiben."""
+    try:
+        archives = sorted(glob.glob(CSV_ARCHIVE_GLOB))   # Dateiname sortiert = chronologisch
+        for old_file in archives[:-keep_days] if keep_days > 0 else archives:
+            os.remove(old_file)
+            log.info("Altes Tageslog geloescht: %s", os.path.basename(old_file))
+    except Exception as e:
+        log.debug("prune_csv_archives Fehler: %s", e)
+
+
+def rotate_csv_if_new_day(today: str):
+    """Rollt CSV_PATH weg, sobald ein neuer Kalendertag beginnt."""
+    global _csv_day
+    try:
+        if _csv_day is None:
+            # Erster Schreibvorgang nach dem Start: Tag aus der vorhandenen Datei
+            # uebernehmen, damit ein Neustart mitten am Tag nicht rotiert.
+            _csv_day = _csv_day_of_file(CSV_PATH) or today
+        if _csv_day == today:
+            return
+        if os.path.exists(CSV_PATH):
+            archive = CSV_ARCHIVE_FMT % _csv_day
+            os.replace(CSV_PATH, archive)   # ersetzt ein evtl. vorhandenes Archiv desselben Tages
+            log.info("Tageslog abgeschlossen: %s", os.path.basename(archive))
+        _csv_day = today
+        prune_csv_archives()
+    except Exception as e:
+        log.debug("rotate_csv_if_new_day Fehler: %s", e)
+        _csv_day = today
 
 def trim_csv(path: str, keep_lines: int = CSV_KEEP_LINES):
     """Kürzt die CSV auf die letzten keep_lines Datenzeilen (Header bleibt erhalten),
@@ -273,6 +337,12 @@ def trim_csv(path: str, keep_lines: int = CSV_KEEP_LINES):
 
 def csv_log(row: dict):
     try:
+        # v3.4.0: Tageswechsel zuerst behandeln, damit die neue Zeile bereits in der
+        # Datei des neuen Tages landet.
+        ts_value = str(row.get("ts", ""))
+        if len(ts_value) >= 10:
+            rotate_csv_if_new_day(ts_value[:10])
+
         write_header = not os.path.exists(CSV_PATH)
         if os.path.exists(CSV_PATH):
             try:
