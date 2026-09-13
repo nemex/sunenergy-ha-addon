@@ -245,8 +245,14 @@ CSV_FIELDS = [
     "is_l2"  # v3.0.2: IS-Limit L2 mitloggen (war bisher ein blinder Fleck)
 ]
 
-CSV_MAX_BYTES = 2 * 1024 * 1024   # 2 MB
-CSV_KEEP_LINES = 2000             # Datenzeilen, die beim Trimmen erhalten bleiben
+# v3.3.9: Auswertungsfenster auf mindestens 24 h ausgelegt. Vorher blieben nach einem
+# Trim nur 2000 Zeilen = ~2,8 h uebrig — die Regler-Praezision in der Systemanalytik
+# sah dadurch nie eine Nachtphase und haeufig gar keinen vollstaendigen Tag.
+CSV_KEEP_LINES = int(24 * 3600 / TICK_S)   # 24 h Datenzeilen bleiben beim Trimmen erhalten
+# Bei ~130 Byte/Zeile sind 24 h rund 2,2 MB. Die Trim-Schwelle muss deutlich darueber
+# liegen, sonst wird direkt nach jedem Trim erneut getrimmt. Mit 4 MB pendelt das
+# Fenster zwischen 24 h (direkt nach dem Trim) und ~45 h (kurz davor).
+CSV_MAX_BYTES = 4 * 1024 * 1024   # 4 MB
 
 def trim_csv(path: str, keep_lines: int = CSV_KEEP_LINES):
     """Kürzt die CSV auf die letzten keep_lines Datenzeilen (Header bleibt erhalten),

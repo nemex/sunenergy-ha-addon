@@ -158,13 +158,35 @@ def get_shelly_power(shelly_ip: str):
     return _SHELLY_CACHE["value"]
 
 def get_csv_data(n=100) -> list:
-    """Liest die letzten n Zeilen aus der CSV."""
+    """Liest die letzten n Zeilen aus der CSV.
+
+    v3.3.9: Liest nur noch das Dateiende statt der kompletten Datei. Mit dem auf 24 h
+    vergroesserten Log (bis ~4 MB) wuerde die alte Variante bei jedem /api-Poll die
+    ganze Datei parsen, nur um 100 Zeilen zurueckzugeben."""
     try:
         if not os.path.exists(CSV_PATH):
             return []
-        with open(CSV_PATH, "r") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
+        # Binaer, damit seek/tell exakte Byte-Positionen sind (im Textmodus sind
+        # frei gewaehlte seek-Ziele nicht definiert).
+        with open(CSV_PATH, "rb") as f:
+            header_line = f.readline()
+            if not header_line:
+                return []
+            fieldnames = next(csv.reader([header_line.decode("utf-8", "replace")]))
+            header_end = f.tell()
+
+            size = os.path.getsize(CSV_PATH)
+            # Grosszuegig dimensionierter Tail-Puffer (Zeilen sind ~130 Byte).
+            tail_bytes = min(size - header_end, max(n, 1) * 400 + 4096)
+            f.seek(size - tail_bytes)
+            chunk = f.read().decode("utf-8", "replace")
+
+        lines = chunk.splitlines()
+        # Die erste Zeile des Puffers kann angeschnitten sein, sofern nicht exakt
+        # hinter dem Header aufgesetzt wurde.
+        if tail_bytes < size - header_end and lines:
+            lines = lines[1:]
+        rows = list(csv.DictReader(lines, fieldnames=fieldnames))
         return rows[-n:]
     except Exception:
         return []

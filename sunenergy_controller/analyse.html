@@ -682,6 +682,9 @@
                     let activePointsCount = 0;
                     let pointsWithin20W = 0;
                     let totalAbsoluteError = 0;
+                    // v3.3.9: Modusverteilung mitzählen. Ohne sie sieht ein Log, das komplett
+                    // im Bypass lief, in der Präzisionsansicht wie ein Totalausfall des Reglers aus.
+                    const modeCounts = {};
 
                     // Schleife über alle Rohdaten (wegen der Zeitdifferenzen)
                     for (let i = 1; i < rawData.length; i++) {
@@ -691,6 +694,9 @@
                         if (dtSeconds <= 0 || dtSeconds > 600) continue; // Ausreißer oder Pausen ignorieren
 
                         const dtHours = dtSeconds / 3600;
+
+                        const modeName = curr.mode || "inactive";
+                        modeCounts[modeName] = (modeCounts[modeName] || 0) + 1;
 
                         // Leistungen integrieren
                         totalWhHoymiles += curr.solar_p * dtHours;
@@ -768,8 +774,15 @@
                         
                         // Regelungsspezifisch
                         activePointsCount,
-                        precisionPercent: activePointsCount > 0 ? ((pointsWithin20W / activePointsCount) * 100).toFixed(1) : "0.0",
-                        avgDeviation: activePointsCount > 0 ? (totalAbsoluteError / activePointsCount).toFixed(1) : "0.0"
+                        // v3.3.9: null statt "0.0", wenn es keine Regelphase im Log gibt. Die
+                        // Anzeige unterscheidet damit "perfekt daneben geregelt" von "nichts zu regeln".
+                        hasRegulationData: activePointsCount > 0,
+                        precisionPercent: activePointsCount > 0 ? ((pointsWithin20W / activePointsCount) * 100).toFixed(1) : null,
+                        avgDeviation: activePointsCount > 0 ? (totalAbsoluteError / activePointsCount).toFixed(1) : null,
+                        modeCounts,
+                        modeTotal: Object.values(modeCounts).reduce((a, c) => a + c, 0),
+                        modeSummary: Object.entries(modeCounts).sort((a, b) => b[1] - a[1]),
+                        dominantMode: Object.entries(modeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "—"
                     };
                 } else {
                     // Berechnung für tages- bzw. stundenbasierte Smart-Plug-Logs
@@ -1061,8 +1074,10 @@
 
                                     {fileType === 'highres' ? (
                                         <>
-                                            <StatCard title="Regler-Präzision" value={`${stats.precisionPercent}%`} iconName="activity" iconColor="text-purple-500"
-                                                secondaryTitle="Ø Abweichung" secondaryValue={`${stats.avgDeviation} W`} />
+                                            <StatCard title="Regler-Präzision"
+                                                value={stats.hasRegulationData ? `${stats.precisionPercent}%` : "n/a"} iconName="activity" iconColor="text-purple-500"
+                                                secondaryTitle={stats.hasRegulationData ? "Ø Abweichung" : "Keine Regelphase im Log"}
+                                                secondaryValue={stats.hasRegulationData ? `${stats.avgDeviation} W` : `Modus: ${stats.dominantMode}`} />
                                             <StatCard title="Akku-Ladeleistung" value={`${stats.totalChargeKwh} kWh`} iconName="battery-charging" iconColor="text-emerald-400"
                                                 secondaryTitle="Wirkungsgrad (AC/DC)" secondaryValue={stats.storageEff} />
                                         </>
@@ -1257,17 +1272,51 @@
                                 {/* ===== TAB: REGLER-PRÄZISION (nur High-Res) ===== */}
                                 {activeTab === 'precision' && fileType === 'highres' && (
                                     <div className="space-y-6 animate-in">
+                                        {/* v3.3.9: Erklaert leere Praezisionswerte, statt sie als Nullen darzustellen. */}
+                                        {!stats.hasRegulationData && (
+                                            <div className="p-4 rounded-2xl flex items-start gap-3 text-sm bg-amber-950/20 text-amber-300 border border-amber-900/60">
+                                                <Icon name="alert-circle" size={18} className="mt-0.5 shrink-0" />
+                                                <div>
+                                                    <p className="font-bold">Keine Regelphase im Auswertungszeitraum</p>
+                                                    <p className="text-[11px] text-amber-200/70 mt-1">
+                                                        Die Nulleinspeisungs-Regelung wird nur in den Modi <span className="font-mono">active</span> und <span className="font-mono">night</span> gemessen.
+                                                        Dieses Log enthält davon keinen einzigen Zyklus — die Kennzahlen sind deshalb nicht berechenbar, nicht schlecht.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* v3.3.9: Tatsaechliche Modusverteilung des Logs. */}
+                                        <div className={`${cardBg} px-5 py-4 rounded-2xl border`}>
+                                            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-1.5"><Icon name="layout-dashboard" size={14} className="text-blue-400" /> Controller-Modi im Log</h3>
+                                            <div className="flex flex-wrap gap-2">
+                                                {stats.modeSummary.map(([name, count]) => {
+                                                    const isReg = name === 'active' || name === 'night';
+                                                    const share = stats.modeTotal > 0 ? ((count / stats.modeTotal) * 100).toFixed(0) : '0';
+                                                    return (
+                                                        <span key={name} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${isReg ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                                                            {name} · {share}%
+                                                        </span>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                             {/* Großer Präzisionszähler */}
                                             <div className={`${cardBg} p-6 rounded-2xl shadow-sm border flex flex-col justify-between`}>
                                                 <div>
                                                     <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-1.5"><Icon name="activity" size={14} className="text-purple-500" /> Nulleinspeisungs-Score</h3>
-                                                    <p className="text-5xl font-black text-slate-100">{stats.precisionPercent}%</p>
-                                                    <p className="text-[11px] text-slate-400 mt-2">der Regelzeit lag der Netzbezug/die Einspeisung innerhalb von ±20 W. Perfekte Nulleinspeisung.</p>
+                                                    <p className={`text-5xl font-black ${stats.hasRegulationData ? 'text-slate-100' : 'text-slate-600'}`}>{stats.hasRegulationData ? `${stats.precisionPercent}%` : '–'}</p>
+                                                    <p className="text-[11px] text-slate-400 mt-2">
+                                                        {stats.hasRegulationData
+                                                            ? 'der Regelzeit lag der Netzbezug/die Einspeisung innerhalb von ±20 W. Perfekte Nulleinspeisung.'
+                                                            : `nicht auswertbar — der Controller lief im Log durchgehend im Modus "${stats.dominantMode}" und hat die Nulleinspeisung nicht geregelt.`}
+                                                    </p>
                                                 </div>
                                                 <div className="mt-6">
                                                     <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
-                                                        <div className="h-full bg-purple-500" style={{ width: `${stats.precisionPercent}%` }} />
+                                                        <div className="h-full bg-purple-500" style={{ width: stats.hasRegulationData ? `${stats.precisionPercent}%` : '0%' }} />
                                                     </div>
                                                 </div>
                                             </div>
@@ -1275,8 +1324,12 @@
                                             <div className={`${cardBg} p-6 rounded-2xl shadow-sm border flex flex-col justify-between`}>
                                                 <div>
                                                     <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-1.5"><Icon name="sliders-horizontal" size={14} className="text-amber-500" /> Durchschnitts-Offset</h3>
-                                                    <p className="text-5xl font-black text-amber-500">{stats.avgDeviation} W</p>
-                                                    <p className="text-[11px] text-slate-400 mt-2">mittlere absolute Abweichung von der Nulleinspeisung. Je niedriger dieser Wert, desto flüssiger regelt das Skript.</p>
+                                                    <p className={`text-5xl font-black ${stats.hasRegulationData ? 'text-amber-500' : 'text-slate-600'}`}>{stats.hasRegulationData ? `${stats.avgDeviation} W` : '–'}</p>
+                                                    <p className="text-[11px] text-slate-400 mt-2">
+                                                        {stats.hasRegulationData
+                                                            ? 'mittlere absolute Abweichung von der Nulleinspeisung. Je niedriger dieser Wert, desto flüssiger regelt das Skript.'
+                                                            : 'mittlere absolute Abweichung von der Nulleinspeisung — erst messbar, sobald der Regler wieder aktiv ist.'}
+                                                    </p>
                                                 </div>
                                                 <div className="text-xs text-slate-400 mt-4 italic">
                                                     Regelintervalle: alle {POLL_INTERVAL}s (Shelly Pro 3EM)
@@ -1290,7 +1343,8 @@
                                                     <p className="text-[11px] text-slate-400 mt-2">aktive Reglerzyklen in diesem CSV-Auswertungszeitraum.</p>
                                                 </div>
                                                 <div className="text-[11px] text-slate-400 mt-4">
-                                                    Controller-Modus: <span className="text-emerald-500 font-bold">active</span>
+                                                    {/* v3.3.9: war fest auf "active" verdrahtet und zeigte damit auch dann active, wenn der Controller nie geregelt hat. */}
+                                                    Häufigster Modus: <span className={`font-bold ${stats.hasRegulationData ? 'text-emerald-500' : 'text-amber-500'}`}>{stats.dominantMode}</span>
                                                 </div>
                                             </div>
                                         </div>
