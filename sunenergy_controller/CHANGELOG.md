@@ -1,6 +1,14 @@
 
 # Changelog
 
+## v3.4.1
+- **Ladegrenze wird jetzt gegen das Geraet abgeglichen (SA-Drift-Waechter)**: Bisher schrieb der Controller die System-Ladegrenze `SA` nur dann, wenn sich sein **eigener** Sollwert aenderte (Flash-Schonung). Verstellte ein Geraet die Grenze selbst, fiel das nie auf — der Controller hielt `last_written_sa` weiter fuer wahr. Genau das ist passiert: Speicher L2 setzt seit der Spezialfirmware 1.9.15 die Grenze jeden Morgen gegen 09:55 Uhr selbsttaetig von 95 auf 100 zurueck und lud seit dem 12.09. jeden sonnigen Tag voll durch, waehrend Speicher L1 korrekt bei 95 % stoppte. Belegt am 19.09.: am Vortag um 15:01 Uhr auf 95 geschrieben, 19 Stunden gehalten, dann ohne Zutun wieder 100.
+- **Wie es prueft**: Alle 300 Sekunden (`SA_RESYNC_INTERVAL_S`) wird das **ohnehin pro Tick gelesene** `SA` mit dem Sollwert verglichen — kein zusaetzlicher Geraete-Poll. Weicht es ab, wird einmal nachgeschrieben, auf das Geraet und auf die HA-Entitaet. Liefert ein Speicher kein Poll-Ergebnis (deaktiviert oder Lesefehler), setzt der Waechter die Runde aus, statt blind zu schreiben.
+- **Jede Korrektur wird gezaehlt und geloggt** (`Speicher L2: Ladegrenze stand auf 100% statt 95% — korrigiert (3. Korrektur insgesamt)`). Der Zaehler steht im Controller-State und ueberlebt Neustarts. Damit korrigiert das Addon den Fehler, ohne ihn zu verwischen: fuer das laufende Hersteller-Ticket bleibt belegbar, wie oft und wann die Firmware die Grenze eigenmaechtig verstellt.
+- **Flash-Last bleibt niedrig**: Bei intaktem Geraet wird gar nicht geschrieben, nur verglichen. Im aktuellen Fehlerbild faellt genau ein Schreibvorgang pro Tag an.
+- **Symmetrisch fuer beide Speicher** und an den jeweils geltenden Sollwert gebunden — also `100` an Kalibriertagen, sonst `soc_normal_max`, und eine speichereigene Grenze (`soc_max` / `soc_max_l2`) wird weiterhin als Deckel respektiert.
+- **Unveraendert**: Kalibrierungslogik und -termine, der bestehende Schreibpfad bei Sollwert-Aenderung, Lade-Blockade-Erkennung und alle uebrigen Regelpfade.
+
 ## v3.4.0
 - **Das Regler-Log rotiert jetzt pro Kalendertag**: Bisher war es eine einzige Datei, die bei Erreichen einer Groessenschwelle auf die letzten N Zeilen gekuerzt wurde — eine Auswertung begann dadurch an einer beliebigen Uhrzeit und deckte nie einen vollstaendigen Tag ab. `controller_log.csv` ist ab sofort immer der **laufende** Tag; beim ersten Schreibvorgang nach Mitternacht wird die alte Datei nach `controller_log-YYYY-MM-DD.csv` weggerollt. Eine Tagesauswertung umfasst damit exakt 00:00 bis 24:00.
 - **7 Tage Historie (`CSV_KEEP_DAYS`)**: Abgeschlossene Tage bleiben liegen, die aeltesten werden beim Rollen entfernt. Bei rund 2,2 MB je Tag belegt die Woche etwa 16 MB — verteilt auf sieben Dateien, von denen die Analyse immer nur eine einzige laedt.

@@ -91,6 +91,15 @@ CHARGE_BLOCK_RETRY_S = 20 * 60
 # moegliche AC-AC-Kreuzladung. Deshalb grosszuegig dimensioniert.
 CHARGE_BLOCK_DEBOUNCE_S = 60.0
 
+# v3.4.1: Intervall des Ladegrenzen-Abgleichs (SA-Drift-Waechter). Die Firmware eines
+# Speichers kann SA eigenmaechtig verstellen: Speicher L2 setzt die Grenze seit der
+# Spezialfirmware 1.9.15 jeden Morgen gegen 09:55 selbsttaetig von 95 auf 100 zurueck
+# (belegt 19.09.2026: um 15:01 des Vortages auf 95 geschrieben, 19 h gehalten, dann
+# ohne Zutun wieder 100). Der normale Schreibpfad merkt das nicht, weil er nur bei
+# Aenderung UNSERES Sollwerts schreibt. 300 s sind schonend fuers Flash und schnell
+# genug, dass kein ganzer Sonnentag mit falscher Grenze laeuft.
+SA_RESYNC_INTERVAL_S = 300.0
+
 _WEEKDAY_NAMES = {
     "mo": 0, "mon": 0, "montag": 0, "monday": 0,
     "di": 1, "die": 1, "tue": 1, "dienstag": 1, "tuesday": 1,
@@ -1718,6 +1727,41 @@ def main():
                 # immer aktualisieren — auch wenn ein Speicher deaktiviert ist.
                 state["last_written_sa"] = target_sa
                 save_state(state)
+
+            # v3.4.1: Ladegrenze periodisch gegen das Geraet abgleichen. Der Schreibblock
+            # oben greift nur, wenn sich unser Sollwert aendert (Flash-Schonung) — eine
+            # geraeteseitige Verstellung faellt damit nie auf und der Speicher laedt
+            # tagelang gegen die falsche Grenze. Geprueft wird das ohnehin pro Tick
+            # gelesene SA; bei Abweichung wird einmal nachgeschrieben. Jede Korrektur
+            # wird gezaehlt und geloggt, damit belegbar bleibt, wie oft die Firmware die
+            # Grenze eigenmaechtig verstellt (laufendes Hersteller-Ticket).
+            if time.time() - safe_float(state, "last_sa_resync_ts", 0.0) > SA_RESYNC_INTERVAL_S:
+                state["last_sa_resync_ts"] = time.time()
+                for sp_label, sp_data, sp_ip, sp_sa_entity, sp_soll in (
+                    ("L1", se_data,    sunenergy_ip,    sa_entity,    sa_for_l1(target_sa)),
+                    ("L2", se_data_l2, sunenergy_ip_l2, sa_entity_l2, sa_for_l2(target_sa)),
+                ):
+                    # Kein Poll-Ergebnis (Speicher deaktiviert oder Lesefehler) -> nichts
+                    # zu vergleichen. Lieber eine Runde aussetzen als blind schreiben.
+                    if not sp_data or "SA" not in sp_data:
+                        continue
+                    try:
+                        ist_sa = int(float(sp_data["SA"]))
+                    except (TypeError, ValueError):
+                        continue
+                    if ist_sa == int(sp_soll):
+                        continue
+                    zaehler = int(safe_float(state, "sa_resync_count_" + sp_label.lower(), 0.0)) + 1
+                    state["sa_resync_count_" + sp_label.lower()] = zaehler
+                    log.warning(
+                        "Speicher %s: Ladegrenze stand auf %d%% statt %d%% — korrigiert "
+                        "(%d. Korrektur insgesamt).",
+                        sp_label, ist_sa, int(sp_soll), zaehler
+                    )
+                    if sp_sa_entity:
+                        ha_set_number(sp_sa_entity, sp_soll)
+                    sunenergy_write(sp_ip, {"SA": sp_soll})
+                    save_state(state)
 
             # target_sa (100 % an Kalibriertagen, sonst soc_normal_max) ist bewusst die dynamische
             # SOC-Grenze der Regelung: so nutzt der Tag-Regler bei viel Sonne freie Solarenergie,
