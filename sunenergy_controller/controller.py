@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.1.3
+SunEnergy XT Controller v3.4.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -684,7 +684,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.1.3 startet...")
+    log.info("SunEnergy XT Controller v3.4.2 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -911,12 +911,34 @@ def main():
             # ------------------------------------------------------------------
             # 1. Messwerte lesen
             # ------------------------------------------------------------------
+            # v3.4.2: Den Zaehler IMMER zuerst direkt vom Shelly lesen, nicht nur im nativen
+            # Modus. Der Riegel `use_native_pid` gehoerte sachlich nie an diese Stelle: er
+            # steuert, ob die GERAETE den Meter-Proxy selbst pollen (MM=1 + MD-Bindung) —
+            # dass der CONTROLLER den Shelly direkt liest, ist davon voellig unabhaengig.
+            # Weil der native Modus wegen der Geraete-Firmware abgeschaltet ist, lief die
+            # Regelung seither ueber die HA-Entitaet, und die ist zu traege: gemessen am
+            # 21.09.2026 aktualisiert sie nur alle 6 s (min 5, max 12), und ihr Wert
+            # entspricht per Kreuzkorrelation dem, was der Shelly 4 s vorher gemessen hat.
+            # Im Foen-Test (2 kW Lastsprung, 1-s-Aufloesung) kostete das rund 40-50 % der
+            # Energie jeder Lastflanke — der Regler schrieb einen Tick lang sogar in die
+            # falsche Richtung, weil er noch mit dem Wert von vor dem Sprung rechnete.
+            # Der Direktzugriff braucht im LAN ~30 ms (720 Testabfragen, 0 Fehlschlaege);
+            # schlaegt er fehl, greift unveraendert der bisherige Weg ueber die Entitaet.
             read_direct = False
-            if use_native_pid:
-                direct_p = shelly_direct_power(shelly_ip)
-                if direct_p is not None:
-                    grid_p_raw = direct_p
-                    read_direct = True
+            direct_p = shelly_direct_power(shelly_ip)
+            if direct_p is not None:
+                grid_p_raw = direct_p
+                read_direct = True
+
+            # Quellenwechsel einmalig protokollieren: ein dauerhafter Rueckfall auf die
+            # traege Entitaet soll auffallen, ohne das Log pro Tick vollzuschreiben.
+            if state.get("grid_src_direct") != read_direct:
+                state["grid_src_direct"] = read_direct
+                if read_direct:
+                    log.info("Netzzaehler wird direkt vom Shelly gelesen (%s).", shelly_ip)
+                else:
+                    log.warning("Shelly-Direktzugriff (%s) nicht erreichbar — Netzwert kommt aus "
+                                "der HA-Entitaet %s und ist bis zu ~6 s aelter.", shelly_ip, grid_sensor)
 
             if not read_direct:
                 grid_val = ha_get_state(grid_sensor)
