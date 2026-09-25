@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "3.4.2"
+version: "3.4.3"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -99,6 +99,11 @@ options:
     manual_feed_in_power: 3600
     grid_target: 0.0
     manual_calibration_switch: "input_boolean.sunenergy_calibrate_now"
+    # v3.4.3: Kalibrier-Aufschub per Solarprognose (leer = aus). Reicht die Prognose
+    # fuer morgen, wird die naechtliche Netz-Nachladung auf den Sonnentag verschoben.
+    calibration_forecast_sensor: ""
+    calibration_max_postpone_days: 3
+    calibration_forecast_factor: 1.5
 schema:
   storages:
     L1:
@@ -161,3 +166,6 @@ schema:
     manual_feed_in_power: int
     grid_target: float?
     manual_calibration_switch: str?
+    calibration_forecast_sensor: str?
+    calibration_max_postpone_days: int?
+    calibration_forecast_factor: float?

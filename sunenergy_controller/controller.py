@@ -74,6 +74,11 @@ CALIB_WEEKDAY_TOLERANZ_TAGE = 3.0
 # Woche und wuerde den fixen Wochentag genau dann aushebeln, wenn er gebraucht wird.
 CALIB_WEEKDAY_NOTNAGEL_TAGE = 7.0
 
+# v3.4.3: Nutzbare Kapazitaet eines SunEnergyXT 500 Pro ohne Erweiterungsspeicher.
+# Dient nur der Abschaetzung, wie viel Energie die Sonne am Folgetag fuer eine
+# Vollladung liefern muss (Kalibrier-Aufschub).
+SPEICHER_KAPAZITAET_KWH = 5.0
+
 # v3.3.7: Wiederholsperre der Lade-Blockade. Nach einem Negativbefund ("Ladung
 # angefordert, es fliesst nichts") wird der Speicher erst nach dieser Frist wieder
 # zur Probe entblockt. Ohne die Sperre wuerde die auf die aktive Ladegrenze
@@ -186,6 +191,10 @@ def load_options() -> dict:
             "regulation_grid_target": "grid_target",
             # v3.0.5: manueller "Jetzt kalibrieren"-Button
             "regulation_manual_calibration_switch": "manual_calibration_switch",
+            # v3.4.3: Kalibrier-Aufschub per Solarprognose
+            "regulation_calibration_forecast_sensor": "calibration_forecast_sensor",
+            "regulation_calibration_max_postpone_days": "calibration_max_postpone_days",
+            "regulation_calibration_forecast_factor": "calibration_forecast_factor",
             # v3.1.0: Speicher einzeln ein-/ausschaltbar
             "storages_L1_enabled": "l1_enabled",
             "storages_L2_enabled": "l2_enabled",
@@ -776,6 +785,13 @@ def main():
     if calib_weekday is not None:
         log.info("Kalibrierung ist auf Wochentag %d gebunden (0=Mo .. 6=So), Intervall %.0f Tage.",
                  calib_weekday, calib_days)
+    # v3.4.3: Kalibrier-Aufschub. Leerer Sensor oder 0 Tage = aus (bisheriges Verhalten).
+    calib_forecast_sensor = str(opts.get("calibration_forecast_sensor", "") or "").strip()
+    calib_max_postpone    = int(opts.get("calibration_max_postpone_days", 3) or 0)
+    calib_forecast_factor = float(opts.get("calibration_forecast_factor", 1.5) or 1.5)
+    if calib_forecast_sensor and calib_max_postpone > 0:
+        log.info("Kalibrier-Aufschub aktiv: Prognose %s, max. %d Tage, Sicherheitsfaktor %.2f.",
+                 calib_forecast_sensor, calib_max_postpone, calib_forecast_factor)
     sunenergy_ip    = opts.get("sunenergy_ip", "192.168.178.94")
     
     # v3.3.1: Ladegrenze optional PRO SPEICHER. Manche Geräte melden intern nie mehr als
@@ -1723,6 +1739,14 @@ def main():
                 log.error("Fehler bei Kalibrierungszeit-Berechnung: %s", e)
                 calibration_due = tage_seit > calib_days
 
+            # v3.4.3: Wurde die Netz-Nachladung aufgeschoben, bleibt die Kalibrierung
+            # faellig, bis sie abgeschlossen ist. Ohne das waere sie bei Wochentagsbindung
+            # am Folgetag nicht mehr faellig: SA fiele zurueck auf soc_normal_max und die
+            # Sonne duerfte gar nicht auf 100 % laden — der Aufschub liefe ins Leere.
+            calib_postpone_count = int(safe_float(state, "calib_postpone_count", 0.0))
+            if calib_postpone_count > 0:
+                calibration_due = True
+
             # v3.0.5: Manueller "Jetzt kalibrieren"-Button — erzwingt die Kalibrierung
             # sofort (Tag wie Nacht), unabhängig vom 7-Tage-Timer.
             manual_calibration_switch = opts.get("manual_calibration_switch", "input_boolean.sunenergy_calibrate_now")
@@ -1806,6 +1830,51 @@ def main():
                 and any_below_100
                 and state["active_mode"] != "calibration"
             )
+
+            # v3.4.3: Kalibrier-Aufschub. Bei Nulleinspeisung ist Solarueberschuss wertlos
+            # (er wird abgeregelt): Laden wir den Rest heute Nacht aus dem Netz, sind die
+            # Akkus morgen schon voll und die Sonne wird weggedrosselt. Sagt die Prognose
+            # fuer morgen genug Sonne voraus, beziehen wir heute Nacht nur den Hausverbrauch
+            # aus dem Netz und lassen die Sonne morgen auf 100 % laden — gemessen am
+            # 25.09.2026 spart das rund 6 kWh je Fall. Die Entscheidung faellt einmal pro
+            # Abend und gilt bis zum naechsten Mittag. Ein Addon-Neustart nach Mitternacht
+            # ohne vorliegende Entscheidung wertet NICHT neu aus: der "morgen"-Sensor zeigt
+            # dann schon auf den uebernaechsten Tag. Manuelle Kalibrierung ist ausgenommen.
+            if zwangsladung_trigger and not manual_calibrate_active and calib_forecast_sensor and calib_max_postpone > 0:
+                heute = now_dt.strftime("%Y-%m-%d")
+                gestern = (now_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+                entschieden = state.get("calib_postpone_date")
+                if (entschieden == heute and now_dt.hour >= 12) or (entschieden == gestern and now_dt.hour < 12):
+                    # Fuer diese Nacht ist bereits aufgeschoben.
+                    zwangsladung_trigger = False
+                elif now_dt.hour >= 12:
+                    speicher_aktiv = (1 if has_l1 else 0) + (1 if has_l2 else 0)
+                    # Konservativ: morgen frueh stehen die Akkus nach der Nacht bei soc_min.
+                    bedarf_kwh = speicher_aktiv * SPEICHER_KAPAZITAET_KWH * (100.0 - soc_min) / 100.0
+                    prognose_raw = ha_get_state(calib_forecast_sensor, None)
+                    try:
+                        prognose_kwh = float(prognose_raw)
+                    except (TypeError, ValueError):
+                        prognose_kwh = None
+                    if calib_postpone_count >= calib_max_postpone:
+                        log.info("Kalibrier-Aufschub ausgeschoepft (%d/%d Tage) — lade jetzt aus dem Netz.",
+                                 calib_postpone_count, calib_max_postpone)
+                    elif prognose_kwh is None:
+                        log.info("Kalibrier-Aufschub nicht moeglich: Prognose %s nicht verfuegbar (%r) — lade aus dem Netz.",
+                                 calib_forecast_sensor, prognose_raw)
+                    elif prognose_kwh >= bedarf_kwh * calib_forecast_factor:
+                        calib_postpone_count += 1
+                        state["calib_postpone_count"] = calib_postpone_count
+                        state["calib_postpone_date"] = heute
+                        save_state(state)
+                        zwangsladung_trigger = False
+                        log.info("☀️ Kalibrierung aufgeschoben (%d/%d): Prognose morgen %.1f kWh >= Bedarf %.1f kWh x %.2f. "
+                                 "Heute Nacht keine Netzladung, morgen laedt die Sonne auf 100%%.",
+                                 calib_postpone_count, calib_max_postpone, prognose_kwh, bedarf_kwh, calib_forecast_factor)
+                    else:
+                        log.info("Kein Kalibrier-Aufschub: Prognose morgen %.1f kWh < Bedarf %.1f kWh x %.2f — lade aus dem Netz.",
+                                 prognose_kwh, bedarf_kwh, calib_forecast_factor)
+
             if zwangsladung_trigger:
                 if manual_calibrate_active:
                     log.info("Manuelle Kalibrierung gestartet (Button). SOC_L1=%.1f%% SOC_L2=%.1f%%", curr_soc, curr_soc_l2)
@@ -1925,6 +1994,9 @@ def main():
                 # nicht bei manuellem Abbruch (7-Tage-Automatik unberührt lassen).
                 if not calibration_cancelled:
                     state["last_calibration_ts"] = time.time()
+                    # v3.4.3: Aufschub-Zaehler gilt nur fuer die laufende Kalibrierung
+                    state.pop("calib_postpone_count", None)
+                    state.pop("calib_postpone_date", None)
                 set_active_mode(state, "night")
                 
                 # L1 zurücksetzen
@@ -3010,6 +3082,12 @@ def main():
             # unkalibriert bei ~95% hängen (Befund 13.07.).
             if curr_soc >= 100 and (not has_l2 or curr_soc_l2 >= 100):
                 state["last_calibration_ts"] = time.time()
+                # v3.4.3: Kalibrierung per Sonne abgeschlossen -> Aufschub beendet
+                if "calib_postpone_count" in state:
+                    log.info("☀️ Kalibrierung per Sonne abgeschlossen (nach %d Tag(en) Aufschub) — ohne Netzladung.",
+                             int(safe_float(state, "calib_postpone_count", 0.0)))
+                    state.pop("calib_postpone_count", None)
+                    state.pop("calib_postpone_date", None)
 
             # CSV schreiben am Tag
             csv_log({

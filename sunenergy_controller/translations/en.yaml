@@ -176,3 +176,12 @@ configuration:
       grid_target:
         name: "Grid Power Target (Offset)"
         description: "Target value for grid connection in Watts. A negative value (e.g. -40) enforces a permanent slight feed-in to buffer short load spikes (e.g. fridge PWM or 3D printers) and prevent grid import."
+      calibration_forecast_sensor:
+        name: "Calibration Postponement: Forecast Sensor"
+        description: "Sensor with the solar forecast for TOMORROW in kWh, only for the modules on the storages (e.g. sensor.speicher_energy_production_tomorrow from Open-Meteo Solar Forecast). Empty = off. If the forecast is sufficient on the evening of a calibration day, the grid top-up is moved to the next day and the sun charges the batteries to 100 %."
+      calibration_max_postpone_days:
+        name: "Calibration Postponement: Max Days"
+        description: "Maximum number of times the grid top-up may be postponed; after that the batteries are charged from the grid regardless (default: 3). 0 = off."
+      calibration_forecast_factor:
+        name: "Calibration Postponement: Safety Factor"
+        description: "The forecast must be at least demand × factor. Demand = batteries from the discharge limit to 100 % (5 kWh per storage). The factor covers forecast errors and daytime house consumption (default: 1.5)."

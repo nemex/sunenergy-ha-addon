@@ -176,3 +176,12 @@ configuration:
       grid_target:
         name: "Netz-Sollwert (Offset)"
         description: "Zielwert für den Netzanschluss in Watt. Ein negativer Wert (z. B. -40) erzwingt eine permanente leichte Einspeisung, um kurze Lastspitzen (z. B. Kühlschrank-PWM oder 3D-Drucker) abzufedern und Zählerbezug zu vermeiden."
+      calibration_forecast_sensor:
+        name: "Kalibrier-Aufschub: Prognose-Sensor"
+        description: "Sensor mit der Solarprognose für MORGEN in kWh, nur für die Module an den Speichern (z. B. sensor.speicher_energy_production_tomorrow von Open-Meteo Solar Forecast). Leer = aus. Reicht die Prognose am Abend eines Kalibriertages, wird die Netz-Nachladung auf den nächsten Tag verschoben und die Sonne lädt die Akkus auf 100 %."
+      calibration_max_postpone_days:
+        name: "Kalibrier-Aufschub: max. Tage"
+        description: "So oft darf die Netz-Nachladung höchstens verschoben werden, danach wird in jedem Fall aus dem Netz geladen (Standard: 3). 0 = aus."
+      calibration_forecast_factor:
+        name: "Kalibrier-Aufschub: Sicherheitsfaktor"
+        description: "Die Prognose muss mindestens Bedarf × Faktor betragen. Bedarf = Akkus von der Entladegrenze auf 100 % (je Speicher 5 kWh). Der Faktor deckt Prognosefehler und den Hausverbrauch am Tag ab (Standard: 1,5)."
