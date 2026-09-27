@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.4.3
+SunEnergy XT Controller v3.4.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -104,6 +104,41 @@ CHARGE_BLOCK_DEBOUNCE_S = 60.0
 # Aenderung UNSERES Sollwerts schreibt. 300 s sind schonend fuers Flash und schnell
 # genug, dass kein ganzer Sonnentag mit falscher Grenze laeuft.
 SA_RESYNC_INTERVAL_S = 300.0
+
+# v3.4.4: Entlade-Stillstand-Waechter. Meldet ein Speicher so lange einen Entlade-Sollwert
+# (GS >= STALL_MIN_GS_W) ohne dass Leistung fliesst (OP < STALL_MAX_OP_W), wird gewarnt.
+# Anlass: Speicher L1 stand am 25.09. und 27.09.2026 nachts auf IS=10 (Stopp-Wert),
+# war per API erreichbar, nahm GS an und lieferte 0 W — L2 trug stundenlang allein und
+# der Regler schaukelte bis -771 W Einspeisung. 60 s liegen deutlich ueber dem 16-s-
+# Nullfenster eines Geraete-Neustarts (vgl. CHARGE_BLOCK_DEBOUNCE_S).
+STALL_WARN_S = 60.0
+STALL_MIN_GS_W = 100.0
+STALL_MAX_OP_W = 10.0
+
+
+def is_drift(se, target):
+    """v3.4.4: Liefert das vom Geraet gemeldete IS, wenn es um >= 10 W vom Sollwert
+    abweicht, sonst None. Ohne frisches Poll-Ergebnis None — lieber aussetzen als
+    blind schreiben."""
+    if not se or se.get("IS") is None:
+        return None
+    try:
+        ist = float(se["IS"])
+    except (TypeError, ValueError):
+        return None
+    return ist if abs(ist - float(target)) >= 10 else None
+
+
+def log_is_drift(state, label, ist, soll):
+    """v3.4.4: IS-Korrektur zaehlen und loggen, damit belegbar ist, wann und wie oft
+    ein Speicher IS eigenmaechtig verstellt (Verdacht: Firmware oder Cloud)."""
+    key = "is_resync_count_" + label.lower()
+    zaehler = int(safe_float(state, key, 0.0)) + 1
+    state[key] = zaehler
+    log.warning(
+        "Speicher %s: IS stand auf %.0f statt %d — korrigiert (%d. Korrektur insgesamt).",
+        label, ist, int(soll), zaehler
+    )
 
 _WEEKDAY_NAMES = {
     "mo": 0, "mon": 0, "montag": 0, "monday": 0,
@@ -693,7 +728,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.4.3 startet...")
+    log.info("SunEnergy XT Controller v3.4.4 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1355,6 +1390,39 @@ def main():
             state["pv_l2"] = pv_l2
             state["iw_l2"] = iw_l2
             state["pb_l2"] = pb_l2
+
+            # v3.4.4: Entlade-Stillstand-Waechter (siehe STALL_WARN_S). Referenz ist das
+            # vom Geraet GEMELDETE GS, nicht unser Sollwert — so zaehlt nur, was der
+            # Speicher tatsaechlich angenommen hat. Einmal pro Stillstand warnen, beim
+            # Wiederanlaufen die Dauer loggen.
+            for st_label, st_on, st_data, st_op in (
+                ("L1", has_l1, se_data, op_current),
+                ("L2", has_l2, se_data_l2, op_l2),
+            ):
+                key = "stall_since_" + st_label.lower()
+                try:
+                    st_gs = float(st_data.get("GS")) if st_on and st_data and st_data.get("GS") is not None else None
+                except (TypeError, ValueError):
+                    st_gs = None
+                if st_gs is not None and st_gs >= STALL_MIN_GS_W and st_op < STALL_MAX_OP_W:
+                    since = safe_float(state, key, 0.0)
+                    if since <= 0:
+                        state[key] = time.time()
+                        state[key + "_warned"] = False
+                    elif not state.get(key + "_warned") and time.time() - since > STALL_WARN_S:
+                        state[key + "_warned"] = True
+                        log.warning(
+                            "Speicher %s entlaedt nicht: GS=%.0fW angenommen, aber OP=%.0fW seit %.0f s "
+                            "(IS=%s, SOC=%s) — Speicher blockiert?",
+                            st_label, st_gs, st_op, time.time() - since,
+                            st_data.get("IS"), st_data.get("SC")
+                        )
+                elif safe_float(state, key, 0.0) > 0:
+                    if state.get(key + "_warned"):
+                        log.info("Speicher %s entlaedt wieder (Stillstand %.0f s).",
+                                 st_label, time.time() - safe_float(state, key, 0.0))
+                    state[key] = 0.0
+                    state[key + "_warned"] = False
 
             # PV Module Eingangsdetails sichern (Spannung, Strom, Leistung)
             pv_details_l1 = {}
@@ -2078,14 +2146,21 @@ def main():
                 if is_native:
                     # Im nativen Modus schreiben wir nur IS als Schutz, kein GS
                     is_target_night_l1 = 10 if low_soc_active_l1 else 2400
-                    if has_l1 and state.get("last_device_is") != is_target_night_l1:
+                    # v3.4.4: auch bei geraeteseitiger IS-Verstellung nachschreiben
+                    drift_l1 = is_drift(se_data, is_target_night_l1) if has_l1 else None
+                    if drift_l1 is not None and state.get("last_device_is") == is_target_night_l1:
+                        log_is_drift(state, "L1", drift_l1, is_target_night_l1)
+                    if has_l1 and (state.get("last_device_is") != is_target_night_l1 or drift_l1 is not None):
                         sunenergy_write(sunenergy_ip, {"IS": is_target_night_l1})
                         state["last_device_is"] = is_target_night_l1
 
                     is_target_night_l2 = 2400
                     if has_l2:
                         is_target_night_l2 = 10 if low_soc_active_l2 else 2400
-                        if state.get("last_device_is_l2") != is_target_night_l2:
+                        drift_l2 = is_drift(se_data_l2, is_target_night_l2)
+                        if drift_l2 is not None and state.get("last_device_is_l2") == is_target_night_l2:
+                            log_is_drift(state, "L2", drift_l2, is_target_night_l2)
+                        if state.get("last_device_is_l2") != is_target_night_l2 or drift_l2 is not None:
                             sunenergy_write(sunenergy_ip_l2, {"IS": is_target_night_l2})
                             state["last_device_is_l2"] = is_target_night_l2
 
@@ -2196,7 +2271,13 @@ def main():
                             device_payload_night_l1["GS"] = gs_l1_rounded
                             state["last_device_gs"] = gs_l1_rounded
 
-                        if state.get("last_device_is") != is_target_night_l1:
+                        # v3.4.4: IS gegen das Geraet abgleichen — bisher wurde nur bei
+                        # Aenderung unseres Sollwerts geschrieben, eine geraeteseitige
+                        # Verstellung auf 10 blockierte L1 dann bis zum naechsten Moduswechsel.
+                        drift_l1 = is_drift(se_data, is_target_night_l1)
+                        if drift_l1 is not None and state.get("last_device_is") == is_target_night_l1:
+                            log_is_drift(state, "L1", drift_l1, is_target_night_l1)
+                        if state.get("last_device_is") != is_target_night_l1 or drift_l1 is not None:
                             device_payload_night_l1["IS"] = is_target_night_l1
                             state["last_device_is"] = is_target_night_l1
 
@@ -2219,7 +2300,10 @@ def main():
                             state["last_device_gs_l2"] = gs_l2_rounded
                         
                         is_target_night_l2 = 10 if low_soc_active_l2 else 2400
-                        if state.get("last_device_is_l2") != is_target_night_l2:
+                        drift_l2 = is_drift(se_data_l2, is_target_night_l2)
+                        if drift_l2 is not None and state.get("last_device_is_l2") == is_target_night_l2:
+                            log_is_drift(state, "L2", drift_l2, is_target_night_l2)
+                        if state.get("last_device_is_l2") != is_target_night_l2 or drift_l2 is not None:
                             device_payload_night_l2["IS"] = is_target_night_l2
                             state["last_device_is_l2"] = is_target_night_l2
                             
