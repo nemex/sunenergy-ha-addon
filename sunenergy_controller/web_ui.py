@@ -7,6 +7,9 @@ Port 8765:
   GET /meter   → Shelly Pro 3EM Proxy
   GET /log     → CSV Log Download
   GET /api     → JSON für Chart (letzte 100 Datenpunkte)
+  GET /textlog/days       → Tage mit Text-Log (v3.4.5)
+  GET /textlog?day=TAG    → Text-Log eines Tages (ohne day: laufender Tag)
+  GET /warnungen          → alle Warnungen/Fehler der letzten 365 Tage
 """
 
 import csv
@@ -30,6 +33,10 @@ CSV_PATH = "/data/controller_log.csv"
 CSV_ARCHIVE_GLOB = "/data/controller_log-*.csv"
 CSV_ARCHIVE_FMT  = "/data/controller_log-%s.csv"
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# v3.4.5: Text-Log pro Tag (siehe DailyTextLogHandler in controller.py)
+TEXTLOG_PATH    = "/data/controller.log"
+TEXTLOG_ARCHIVE = "/data/logs/controller-%s.log.gz"
+WARNLOG_PATH    = "/data/logs/warnungen.log"
 
 def load_state() -> dict:
     try:
@@ -372,6 +379,8 @@ HTML = """<!DOCTYPE html>
   <div>
     <a href="analyse" class="btn" style="border-color:var(--green);color:var(--green)">📊 Systemanalyse</a>
     <a href="log" class="btn" style="margin-left:8px">⬇ CSV Download</a>
+    <a href="textlog" class="btn" style="margin-left:8px">⬇ Text-Log heute</a>
+    <a href="warnungen" class="btn" style="margin-left:8px">⬇ Warnungen</a>
     <button class="btn" style="margin-left:8px;border-color:#ff3d57;color:#ff3d57" onclick="deleteLog()">🗑 Log löschen</button>
   </div>
 </div>
@@ -875,12 +884,15 @@ class UIHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/api/textlog":
             # Addon-Textlog auslesen
-            log_path = "/data/controller.log"
+            log_path = TEXTLOG_PATH
             if os.path.exists(log_path):
                 try:
-                    # Letzte 200 Zeilen lesen
-                    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-                        lines = f.readlines()
+                    # Letzte 200 Zeilen lesen. v3.4.5: Die Datei haelt jetzt den ganzen
+                    # Tag (~2 MB) — nur das Ende lesen statt alles in den RAM zu laden.
+                    with open(log_path, "rb") as fb:
+                        fb.seek(0, os.SEEK_END)
+                        fb.seek(max(0, fb.tell() - 64 * 1024))
+                        lines = fb.read().decode("utf-8", "ignore").splitlines(keepends=True)[1:]
                     self.send_response(200)
                     self.send_header("Content-Type", "text/plain; charset=utf-8")
                     self.end_headers()
@@ -905,6 +917,65 @@ class UIHandler(BaseHTTPRequestHandler):
                     self._json({"error": str(e)})
             else:
                 self._json({})
+
+        elif self.path == "/textlog/days":
+            # v3.4.5: Tage mit vollstaendigem Text-Log (laufender Tag + Archive)
+            days = sorted(
+                os.path.basename(p)[len("controller-"):-len(".log.gz")]
+                for p in glob.glob(TEXTLOG_ARCHIVE % "*")
+            )
+            if os.path.exists(TEXTLOG_PATH):
+                days.append(time.strftime("%Y-%m-%d"))
+            self._json({"days": days, "today": time.strftime("%Y-%m-%d")})
+
+        elif path_only == "/textlog":
+            # v3.4.5: ohne Parameter der laufende Tag, mit ?day=YYYY-MM-DD ein Archiv
+            # (entpackt ausgeliefert, damit es direkt im Browser/Editor lesbar ist).
+            day = query.get("day", [""])[0] or time.strftime("%Y-%m-%d")
+            if not _DAY_RE.match(day):
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b"Ungueltiges Datum")
+                return
+            data = None
+            try:
+                if day == time.strftime("%Y-%m-%d") and os.path.exists(TEXTLOG_PATH):
+                    with open(TEXTLOG_PATH, "rb") as f:
+                        data = f.read()
+                elif os.path.exists(TEXTLOG_ARCHIVE % day):
+                    import gzip
+                    with gzip.open(TEXTLOG_ARCHIVE % day, "rb") as f:
+                        data = f.read()
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(f"Fehler beim Lesen: {e}".encode())
+                return
+            if data is None:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Kein Text-Log fuer diesen Tag")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Disposition", "attachment; filename=controller-%s.log" % day)
+            self.end_headers()
+            self.wfile.write(data)
+
+        elif self.path == "/warnungen":
+            # v3.4.5: alle WARNING/ERROR-Zeilen der letzten 365 Tage
+            if os.path.exists(WARNLOG_PATH):
+                with open(WARNLOG_PATH, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Disposition", "attachment; filename=warnungen.log")
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Noch keine Warnungen aufgezeichnet")
 
         elif self.path == "/log/days":
             # v3.4.0: Tage, fuer die Logdaten vorliegen — Grundlage der Tagesauswahl

@@ -1,7 +1,8 @@
 # Changelog
 
-## v3.4.4
-- **Nachts wird IS jetzt gegen den Speicher abgeglichen**: Bisher schrieb der Controller die Entlade-Freigabe IS im Nachtbetrieb nur, wenn sich sein eigener Sollwert aenderte. Stellte der Speicher IS selbst auf 10 (den Stopp-Wert), blieb er bis zum naechsten Moduswechsel blockiert, obwohl er erreichbar war und den Sollwert GS annahm. Genau das ist Speicher L1 am 25.09. und 27.09.2026 passiert (am 27.09. um 05:09 bei 55 % SOC, ohne jeden Netzwerkfehler). Speicher L2 trug dann allein, und der Regler schaukelte bis -771 W Einspeisung hoch. Jetzt wird jede Abweichung sofort korrigiert. Der Tagbetrieb hatte diesen Abgleich schon.
-- **Jede IS-Korrektur steht im Log** mit Zaehler (`Speicher L1: IS stand auf 10 statt 2400 — korrigiert (1. Korrektur insgesamt).`). So wird sichtbar, wann und wie oft ein Speicher IS eigenmaechtig verstellt. Ob die Firmware oder die Hersteller-Cloud dahintersteckt, ist noch offen.
-- **Neue Warnung bei Entlade-Stillstand**: Meldet ein Speicher laenger als 60 s einen Entlade-Sollwert von mindestens 100 W, liefert aber unter 10 W, erscheint `Speicher L1 entlaedt nicht: GS=...W angenommen, aber OP=0W seit ... s (IS=..., SOC=...) — Speicher blockiert?`. Laeuft er wieder an, wird die Dauer des Stillstands geloggt. Das faengt auch Blockaden mit anderer Ursache ab.
-- **Unveraendert**: alle Regelpfade, der Tagbetrieb und die Kalibrierung aus v3.4.3.
+## v3.4.5
+- **Das Text-Log bleibt jetzt 14 Tage erhalten**: Bisher war die Protokolldatei auf 200 KB mit einer Sicherung begrenzt. Bei einer Zeile alle 5 Sekunden reichte das nur fuer etwa eine Stunde, und das Supervisor-Log in Home Assistant verliert bei jedem Neustart und Update seinen Verlauf. Belege fuer eigenmaechtige Verstellungen der Speicher (IS, Ladegrenze) gingen so verloren. Jetzt wird pro Tag eine eigene Datei gefuehrt, abgeschlossene Tage werden komprimiert und 14 Tage aufbewahrt.
+- **Alle Warnungen und Fehler zusaetzlich ein Jahr lang** in einer eigenen Datei: IS- und Ladegrenzen-Korrekturen, Entlade-Stillstaende, OP-Einbrueche, Verbindungsfehler. Das ist die Grundlage fuer Hersteller-Tickets und Langzeitauswertungen.
+- **Download in der Web-Oberflaeche**: neue Knoepfe „Text-Log heute“ und „Warnungen“. Einzelne Tage gibt es ueber `textlog?day=JJJJ-MM-TT`, die verfuegbaren Tage ueber `textlog/days`.
+- **Belastung**: Geschrieben wurde schon bisher jede Zeile, neu ist nur das Aufbewahren. Ein Tag hat etwa 2 MB, komprimiert rund 0,2 MB. Insgesamt sind es unter 5 MB. Das Komprimieren laeuft einmal pro Tag um Mitternacht und dauert Sekundenbruchteile. Die Live-Anzeige liest nur noch das Dateiende statt der ganzen Datei.
+- **Unveraendert**: Regelung, CSV-Log und die IS-Ueberwachung aus v3.4.4.

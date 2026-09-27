@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.4.4
+SunEnergy XT Controller v3.4.5
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -27,17 +27,102 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-from logging.handlers import RotatingFileHandler
+import gzip
+import shutil
 
-# Rotating file handler (max 200KB, keep 1 backup)
+# v3.4.5: Text-Log dauerhaft aufbewahren. Bisher rotierte /data/controller.log bei
+# 200 KB mit einer Sicherung — bei einer Zeile pro 5-s-Tick reichte das nur ~1 h, und
+# das Supervisor-Log verliert bei jedem Neustart/Update seinen Verlauf. Belege fuer
+# geraeteseitige Verstellungen (IS/SA, laufendes Hersteller-Ticket) gingen so verloren.
+#   - /data/controller.log            laufender Tag, vollstaendig (/api/textlog liest hier)
+#   - /data/logs/controller-TAG.log.gz abgeschlossene Tage, komprimiert, 14 Tage
+#   - /data/logs/warnungen.log        nur WARNING und schlimmer, 365 Tage
+# Ein Tag hat ~2 MB (gz ~0,2 MB), die Warnungen wenige KB — zusammen unter 5 MB.
+TEXTLOG_PATH       = "/data/controller.log"
+TEXTLOG_DIR        = "/data/logs"
+TEXTLOG_ARCHIVE    = TEXTLOG_DIR + "/controller-%s.log.gz"
+TEXTLOG_KEEP_DAYS  = 14
+WARNLOG_PATH       = TEXTLOG_DIR + "/warnungen.log"
+WARNLOG_KEEP_DAYS  = 365
+
+
+class DailyTextLogHandler(logging.FileHandler):
+    """Schreibt den laufenden Tag nach TEXTLOG_PATH und rollt beim Datumswechsel ins
+    komprimierte Tagesarchiv. Auch ein Neustart nach Mitternacht rollt den alten Tag
+    korrekt weg (Datum der ersten Zeile der vorhandenen Datei)."""
+
+    def __init__(self):
+        os.makedirs(TEXTLOG_DIR, exist_ok=True)
+        # Sicherungsdatei des frueheren 200-KB-RotatingFileHandlers aufraeumen
+        try:
+            os.remove(TEXTLOG_PATH + ".1")
+        except OSError:
+            pass
+        self._day = self._day_of_file() or time.strftime("%Y-%m-%d")
+        super().__init__(TEXTLOG_PATH, encoding="utf-8")
+
+    @staticmethod
+    def _day_of_file():
+        try:
+            with open(TEXTLOG_PATH, "r", encoding="utf-8", errors="ignore") as f:
+                first = f.readline()
+            return first[:10] if first[:4].isdigit() and first[4:5] == "-" else None
+        except OSError:
+            return None
+
+    def emit(self, record):
+        today = time.strftime("%Y-%m-%d", time.localtime(record.created))
+        if today != self._day:
+            self._rollover(today)
+        super().emit(record)
+
+    def _rollover(self, today):
+        old_day, self._day = self._day, today
+        try:
+            if self.stream:
+                self.stream.close()
+                self.stream = None
+            if os.path.exists(TEXTLOG_PATH) and os.path.getsize(TEXTLOG_PATH) > 0:
+                with open(TEXTLOG_PATH, "rb") as src, gzip.open(TEXTLOG_ARCHIVE % old_day, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                os.remove(TEXTLOG_PATH)
+            archives = sorted(glob.glob(TEXTLOG_DIR + "/controller-*.log.gz"))
+            for old in archives[:-TEXTLOG_KEEP_DAYS]:
+                os.remove(old)
+            prune_warnlog()
+        except Exception as e:
+            # Logging darf die Regelung nie stoppen — im Zweifel weiter in die Datei schreiben.
+            print("Textlog-Rotation fehlgeschlagen: %s" % e)
+
+
+def prune_warnlog(keep_days=WARNLOG_KEEP_DAYS):
+    """Entfernt Warnungen, die aelter als keep_days sind (einmal pro Tag beim Rollover)."""
+    try:
+        if not os.path.exists(WARNLOG_PATH):
+            return
+        cutoff = time.strftime("%Y-%m-%d", time.localtime(time.time() - keep_days * 86400))
+        with open(WARNLOG_PATH, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+        kept = [l for l in lines if l[:10] >= cutoff]
+        if len(kept) != len(lines):
+            with open(WARNLOG_PATH, "w", encoding="utf-8") as f:
+                f.writelines(kept)
+    except Exception as e:
+        print("Warnungs-Log kuerzen fehlgeschlagen: %s" % e)
+
+
+_log_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+handlers = [logging.StreamHandler()]
 try:
-    file_handler = RotatingFileHandler(
-        "/data/controller.log", maxBytes=200 * 1024, backupCount=1, encoding="utf-8"
-    )
-    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    handlers = [logging.StreamHandler(), file_handler]
-except Exception:
-    handlers = [logging.StreamHandler()]
+    file_handler = DailyTextLogHandler()
+    file_handler.setFormatter(_log_fmt)
+    handlers.append(file_handler)
+    warn_handler = logging.FileHandler(WARNLOG_PATH, encoding="utf-8")
+    warn_handler.setLevel(logging.WARNING)
+    warn_handler.setFormatter(_log_fmt)
+    handlers.append(warn_handler)
+except Exception as e:
+    print("Datei-Logging nicht verfuegbar, nur Konsole: %s" % e)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -728,7 +813,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.4.4 startet...")
+    log.info("SunEnergy XT Controller v3.4.5 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
