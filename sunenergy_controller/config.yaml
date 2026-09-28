@@ -1,5 +1,5 @@
 name: SunEnergy XT Controller
-version: "3.4.5"
+version: "3.4.6"
 slug: sunenergy_controller
 description: >
   Zero-feed-in controller for SunEnergyXT 500 Pro with Hoymiles HMS
@@ -56,6 +56,9 @@ options:
     # Nötig, wenn das Gerät intern nie den globalen Wert erreicht (z. B. max. 94 %):
     # sonst schiebt die Firmware dauerhaft Leistung in den Akku statt einzuspeisen.
     soc_max: 0
+    # v3.4.6: Shelly Pro 1PM am Speicher, direkt per RPC gelesen (leer = aus).
+    # Liefert die AC-Leistung fuer die Hausbilanz, die Regelung bleibt bei der Geraete-API.
+    shelly_ip: "192.168.178.97"
   speicher2:
     pv1_active: false
     pv2_active: false
@@ -69,6 +72,8 @@ options:
     op_l2_sensor: "sensor.shellypro1pm_sunenergy_l2_leistung"
     # v3.3.1: Eigene Ladegrenze für L2 (0 = globaler Wert soc_normal_max)
     soc_max_l2: 0
+    # v3.4.6: Shelly Pro 1PM am Speicher L2 (leer = aus)
+    shelly_ip_l2: "192.168.178.124"
   shelly:
     ip: "192.168.178.98"
     grid_sensor: "sensor.shellypro3em_leistung"
@@ -79,6 +84,8 @@ options:
     hms_1600_power_sensor: "sensor.hoymiles_hms_1600_4t_power"
     hms_2000_reachable_sensor: "binary_sensor.hoymiles_hms_2000_4t_reachable"
     hms_1600_reachable_sensor: "binary_sensor.hoymiles_hms_1600_4t_reachable"
+    # v3.4.6: Shelly Pro 1PM an der Hoymiles-Einspeisung (leer = aus, Solar aus der DTU)
+    shelly_ip: "192.168.178.96"
   telegram:
     token: ""
     chat_id: ""
@@ -124,6 +131,7 @@ schema:
     sa_entity: str
     op_sensor: str?
     soc_max: int?
+    shelly_ip: str?
   speicher2:
     pv1_active: bool
     pv2_active: bool
@@ -136,6 +144,7 @@ schema:
     sa_entity_l2: str?
     op_l2_sensor: str?
     soc_max_l2: int?
+    shelly_ip_l2: str?
   shelly:
     ip: str
     grid_sensor: str
@@ -146,6 +155,7 @@ schema:
     hms_1600_power_sensor: str
     hms_2000_reachable_sensor: str
     hms_1600_reachable_sensor: str
+    shelly_ip: str?
   telegram:
     token: str?
     chat_id: str?

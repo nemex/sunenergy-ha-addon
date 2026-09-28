@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.4.5
+SunEnergy XT Controller v3.4.6
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -667,6 +667,35 @@ def shelly_direct_power(ip: str):
     return None
 
 # ---------------------------------------------------------------------------
+# Shelly Pro 1PM an Hoymiles und Speichern direkt lesen (v3.4.6)
+# ---------------------------------------------------------------------------
+# Kurzer Timeout, weil bis zu drei Abfragen pro Tick laufen. Ein Shelly, der nicht
+# antwortet, wird SHELLY_1PM_RETRY_S lang uebersprungen (bisherige Quelle greift),
+# damit er nicht jeden Tick den vollen Timeout kostet.
+SHELLY_1PM_TIMEOUT_S = 1.5
+SHELLY_1PM_RETRY_S   = 15.0
+_shelly_1pm_skip_until: dict = {}
+
+def shelly_1pm_power(ip: str):
+    """Wirkleistung eines Shelly Pro 1PM in W, Vorzeichen wie am Shelly
+    (+ = Bezug, − = Einspeisung). None, wenn nicht konfiguriert oder nicht erreichbar."""
+    if not ip:
+        return None
+    now = time.time()
+    if _shelly_1pm_skip_until.get(ip, 0.0) > now:
+        return None
+    try:
+        r = DEV_SESSION.get(f"http://{ip}/rpc/Switch.GetStatus?id=0", timeout=SHELLY_1PM_TIMEOUT_S)
+        if r.status_code == 200:
+            val = r.json().get("apower")
+            if val is not None:
+                return float(val)
+    except Exception as e:
+        log.debug("Shelly 1PM %s nicht lesbar: %s", ip, e)
+    _shelly_1pm_skip_until[ip] = now + SHELLY_1PM_RETRY_S
+    return None
+
+# ---------------------------------------------------------------------------
 # Sonnenstand
 # ---------------------------------------------------------------------------
 LAST_SUN_STATE = "below_horizon"
@@ -813,7 +842,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.4.5 startet...")
+    log.info("SunEnergy XT Controller v3.4.6 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -892,7 +921,12 @@ def main():
     hms_1600_power_sensor = opts.get("hms_1600_power_sensor", "sensor.hoymiles_hms_1600_4t_power")
     hms_2000_reachable_sensor = opts.get("hms_2000_reachable_sensor", "binary_sensor.hoymiles_hms_2000_4t_reachable")
     hms_1600_reachable_sensor = opts.get("hms_1600_reachable_sensor", "binary_sensor.hoymiles_hms_1600_4t_reachable")
-    
+
+    # v3.4.6: Shelly Pro 1PM an Hoymiles und Speichern (leer = aus, bisherige Quellen)
+    hoymiles_shelly_ip = str(opts.get("hoymiles_shelly_ip", "") or "").strip()
+    l1_shelly_ip       = str(opts.get("speicher1_shelly_ip", "") or "").strip()
+    l2_shelly_ip       = str(opts.get("speicher2_shelly_ip_l2", "") or "").strip()
+
     telegram_token        = opts.get("telegram_token", "")
     telegram_chat_id      = opts.get("telegram_chat_id", "")
 
@@ -1084,6 +1118,33 @@ def main():
                     grid_p_raw = safe_float(state, "grid_p_filtered", 0.0)
                     log.warning("Grid-Sensor (%s) offline — verwende letzten Wert %.0fW", grid_sensor, grid_p_raw)
 
+            # v3.4.6: Hoymiles und Speicher direkt an ihren Shelly Pro 1PM messen, direkt nach
+            # dem Netzzaehler, damit alle Summanden des Hausverbrauchs aus demselben Moment
+            # stammen. Bisher kam Solar aus der DTU (~10 s Takt) und die Speicherleistung aus
+            # der Geraete-API bzw. beim Laden aus einer DC-Schaetzung. Faellt die DTU aus,
+            # blieb Solar auf dem letzten Wert stehen, weil ihr reachable-Sensor dann nicht
+            # mehr aktualisiert wird (28.09.: 676 W eingefroren, gemessen 100 W, Hausverbrauch
+            # ~575 W zu hoch). Die Werte gehen NUR in die Bilanz (solar_p, Batterie AC,
+            # haus_p) — OP/PV der Speicher fuer die Regelung bleiben bei der Geraete-API.
+            # Nicht erreichbar → bisherige Quelle.
+            hoy_shelly_p = shelly_1pm_power(hoymiles_shelly_ip)
+            l1_shelly_p  = shelly_1pm_power(l1_shelly_ip) if has_l1 else None
+            l2_shelly_p  = shelly_1pm_power(l2_shelly_ip) if has_l2 else None
+            for src_name, src_ip, src_on, src_val in (("Hoymiles", hoymiles_shelly_ip, True, hoy_shelly_p),
+                                                      ("L1", l1_shelly_ip, has_l1, l1_shelly_p),
+                                                      ("L2", l2_shelly_ip, has_l2, l2_shelly_p)):
+                if not src_ip or not src_on:
+                    continue
+                src_key = "shelly_1pm_ok_" + src_name.lower()
+                src_ok = src_val is not None
+                if state.get(src_key) != src_ok:
+                    state[src_key] = src_ok
+                    if src_ok:
+                        log.info("%s-Leistung wird direkt vom Shelly gelesen (%s).", src_name, src_ip)
+                    else:
+                        log.warning("Shelly %s (%s) nicht erreichbar — %s-Leistung kommt aus der "
+                                    "bisherigen Quelle.", src_ip, src_name, src_name)
+
             # v3.1.0: L1 SOC nur lesen, wenn L1 aktiv ist. Bei deaktiviertem L1 neutral 0.0
             # (analog zur L2-Behandlung bei has_l2=False) — kein Poll gegen ein abwesendes Gerät.
             curr_soc = 0.0
@@ -1161,6 +1222,12 @@ def main():
                 log.debug("HMS-1600 Power-Sensor offline — online: %s, val: %.0fW", hms_1600_online, solar_p_1600)
             
             solar_p = (solar_p_2000 if hms_2000_online else 0) + (solar_p_1600 if hms_1600_online else 0)
+
+            # v3.4.6: Summe vom Shelly (gemessene AC-Einspeisung beider Wechselrichter). Die
+            # DTU-Einzelwerte bleiben fuer die Aufteilung des Drossellimits (calc_hms_limits).
+            # max(0, …): nachts zeigt der Shelly ein paar Watt Standby-Bezug, das ist kein Solar.
+            if hoy_shelly_p is not None:
+                solar_p = max(0.0, -hoy_shelly_p)
 
             # Plausibilitätsfilter für solar_p Aussetzer (max. 3 Ticks / 15s überbrücken)
             last_solar_p = state.get("last_solar_p", solar_p)
@@ -1589,8 +1656,12 @@ def main():
             # L1 AC-Leistung schätzen
             # v3.1.0: deaktiviertes L1 trägt 0W bei — damit reduziert sich der Hausverbrauch
             # sauber auf Netz + L2 - Hoymiles (keine Schätzung aus veralteten L1-Werten).
+            # v3.4.6: Mit Shelly gemessen statt geschaetzt, in beide Richtungen
+            # (Shelly − = Speicher speist ein → positiv, + = Speicher laedt aus dem Netz → negativ).
             if not has_l1:
                 battery_ac_est_l1 = 0.0
+            elif l1_shelly_p is not None:
+                battery_ac_est_l1 = -l1_shelly_p
             elif op_current > 5.0:
                 battery_ac_est_l1 = op_current
             else:
@@ -1598,7 +1669,11 @@ def main():
                 battery_ac_est_l1 = -(dc_from_ac_l1 / SE_CHARGER_EFF)
 
             # L2 AC-Leistung schätzen
-            if op_l2 > 5.0:
+            if not has_l2:
+                battery_ac_est_l2 = 0.0
+            elif l2_shelly_p is not None:
+                battery_ac_est_l2 = -l2_shelly_p
+            elif op_l2 > 5.0:
                 battery_ac_est_l2 = op_l2
             else:
                 dc_from_ac_l2 = max(0.0, pb_l2 - pv_l2)

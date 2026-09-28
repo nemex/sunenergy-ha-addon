@@ -1,8 +1,8 @@
 # Changelog
 
-## v3.4.5
-- **Das Text-Log bleibt jetzt 14 Tage erhalten**: Bisher war die Protokolldatei auf 200 KB mit einer Sicherung begrenzt. Bei einer Zeile alle 5 Sekunden reichte das nur fuer etwa eine Stunde, und das Supervisor-Log in Home Assistant verliert bei jedem Neustart und Update seinen Verlauf. Belege fuer eigenmaechtige Verstellungen der Speicher (IS, Ladegrenze) gingen so verloren. Jetzt wird pro Tag eine eigene Datei gefuehrt, abgeschlossene Tage werden komprimiert und 14 Tage aufbewahrt.
-- **Alle Warnungen und Fehler zusaetzlich ein Jahr lang** in einer eigenen Datei: IS- und Ladegrenzen-Korrekturen, Entlade-Stillstaende, OP-Einbrueche, Verbindungsfehler. Das ist die Grundlage fuer Hersteller-Tickets und Langzeitauswertungen.
-- **Download in der Web-Oberflaeche**: neue Knoepfe „Text-Log heute“ und „Warnungen“. Einzelne Tage gibt es ueber `textlog?day=JJJJ-MM-TT`, die verfuegbaren Tage ueber `textlog/days`.
-- **Belastung**: Geschrieben wurde schon bisher jede Zeile, neu ist nur das Aufbewahren. Ein Tag hat etwa 2 MB, komprimiert rund 0,2 MB. Insgesamt sind es unter 5 MB. Das Komprimieren laeuft einmal pro Tag um Mitternacht und dauert Sekundenbruchteile. Die Live-Anzeige liest nur noch das Dateiende statt der ganzen Datei.
-- **Unveraendert**: Regelung, CSV-Log und die IS-Ueberwachung aus v3.4.4.
+## v3.4.6
+- **Hausverbrauch wird gemessen statt zusammengeschaetzt**: Neue optionale Felder fuer die Shelly Pro 1PM an der Hoymiles-Einspeisung und an beiden Speichern (Hoymiles `shelly_ip`, Speicher 1 `shelly_ip`, Speicher 2 `shelly_ip_l2`). Der Controller liest sie direkt per RPC, gleich nach dem Netzzaehler. Der Hausverbrauch ist damit Netz + Hoymiles + Speicher, alle vier Werte gemessen und aus demselben Moment.
+- **Anlass (28.09.)**: Die DTU war nach einem gelockerten Stecker weg. Ihre Leistungssensoren wurden `unavailable`, der „reachable“-Sensor blieb aber auf `on` stehen, weil ihn niemand mehr aktualisiert hat. Der Controller hielt die Wechselrichter fuer online und rechnete eine Dreiviertelstunde mit eingefrorenen 676 W Solar weiter, gemessen waren 100 W. Der Hausverbrauch stand dadurch bei ~990 W statt ~410 W.
+- **Speicher in beide Richtungen gemessen**: Beim Laden aus dem Netz wurde die AC-Leistung bisher aus den DC-Werten mit pauschal 90 % Wirkungsgrad geschaetzt. Jetzt kommt sie vom Shelly.
+- **Unveraendert**: Die Regelung der Speicher (OP/PV fuer IS, GS, Stillstand- und Einbruch-Erkennung) bleibt bei der Geraete-API. Die DTU liefert weiter die Aufteilung des Drossellimits auf HMS-2000 und HMS-1600. Ist ein Feld leer oder der Shelly nicht erreichbar, greift die bisherige Quelle (Wechsel wird einmal geloggt, ein toter Shelly wird 15 s uebersprungen).
+- **Nach dem Update**: Die Felder sind bei einer bestehenden Installation zunaechst leer, bis die Konfiguration einmal mit den IPs gespeichert wird. Bis dahin laeuft alles wie in v3.4.5.

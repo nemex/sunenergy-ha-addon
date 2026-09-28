@@ -48,6 +48,9 @@ configuration:
       op_sensor:
         name: "Shelly Power Sensor"
         description: "The Shelly 1PM power sensor of Speicher 1 (optional; empty = OP from device API)"
+      shelly_ip:
+        name: "Shelly IP Address"
+        description: "IP of the Shelly Pro 1PM on Speicher 1 (optional). Set = the AC power of Speicher 1 is measured directly at the Shelly for the house balance, charging and discharging. Empty = device API or estimate as before."
 
   speicher2:
     name: "Speicher 2 (L2) Configuration"
@@ -85,6 +88,9 @@ configuration:
       op_l2_sensor:
         name: "Shelly Power Sensor"
         description: "The Shelly 1PM power sensor of Speicher 2"
+      shelly_ip_l2:
+        name: "Shelly IP Address"
+        description: "IP of the Shelly Pro 1PM on Speicher 2 (optional). Set = the AC power of Speicher 2 is measured directly at the Shelly for the house balance. Empty = device API or estimate as before."
 
   shelly:
     name: "Shelly 3EM Configuration"
@@ -117,6 +123,9 @@ configuration:
       hms_1600_reachable_sensor:
         name: "HMS-1600 Reachability"
         description: "Binary sensor indicating if the HMS-1600 is reachable"
+      shelly_ip:
+        name: "Shelly IP Address (feed-in)"
+        description: "IP of the Shelly Pro 1PM on the Hoymiles feed-in (optional). Set = total solar is measured there, the DTU only provides the split between the inverters. Empty = solar from the DTU as before."
 
   telegram:
     name: "Telegram Watchdog Configuration"

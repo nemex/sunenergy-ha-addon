@@ -88,6 +88,8 @@ Leer lassen, falls nur ein Speicher vorhanden ist – das Add-on läuft dann aut
 
 Seit v3.1.4 hat auch L1 die optionale Option `op_sensor` (Feld „Shelly Leistungssensor", symmetrisch zu `op_l2_sensor`): Ist sie gesetzt, überschreibt der Shelly-1PM-Wert die Entladeleistung von L1. Leer = OP kommt aus der L1-Geräte-API (bisheriges Verhalten).
 
+Seit v3.4.6 gibt es drei optionale Felder `shelly_ip` (Hoymiles, Speicher 1) und `shelly_ip_l2` (Speicher 2) für einen Shelly Pro 1PM am jeweiligen Anschluss. Der Controller liest sie direkt per RPC und bildet daraus den Hausverbrauch: Netz + Hoymiles + Speicher, alles gemessen statt geschätzt und aus demselben Moment. Die Regelung der Speicher (OP/PV) bleibt bei der Geräte-API, die DTU liefert weiter die Aufteilung des Drossellimits auf die Wechselrichter. Leer oder nicht erreichbar = bisherige Quelle.
+
 Manuelle Volladung (optional)
 
 OptionBeschreibungmanual_feed_in_switchinput_boolean, um kurzzeitig gezielte Einspeisung zu erzwingen (z. B. für Balkonkraftwerk-Bypass)manual_feed_in_targetZiel-Einspeiseleistung in kWmanual_feed_in_min_socMindest-SOC, ab dem diese Funktion aktiv werden darfmanual_feed_in_powerMaximale Leistung in Wattbypass_switchinput_boolean, um die Nulleinspeisung auszusetzen (dauerhafte Einspeisung, sobald die Akkus voll sind)

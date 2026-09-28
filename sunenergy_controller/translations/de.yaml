@@ -48,6 +48,9 @@ configuration:
       op_sensor:
         name: "Shelly Leistungssensor"
         description: "Der Shelly 1PM Leistungssensor von Speicher 1 (optional; leer = OP aus Geräte-API)"
+      shelly_ip:
+        name: "Shelly IP-Adresse"
+        description: "IP des Shelly Pro 1PM an Speicher 1 (optional). Gesetzt = die AC-Leistung von Speicher 1 wird für den Hausverbrauch direkt am Shelly gemessen, laden und entladen. Leer = Geräte-API bzw. Schätzung wie bisher."
 
   speicher2:
     name: "Speicher 2 (L2) Konfiguration"
@@ -85,6 +88,9 @@ configuration:
       op_l2_sensor:
         name: "Shelly Leistungssensor"
         description: "Der Shelly 1PM Leistungssensor von Speicher 2"
+      shelly_ip_l2:
+        name: "Shelly IP-Adresse"
+        description: "IP des Shelly Pro 1PM an Speicher 2 (optional). Gesetzt = die AC-Leistung von Speicher 2 wird für den Hausverbrauch direkt am Shelly gemessen. Leer = Geräte-API bzw. Schätzung wie bisher."
 
   shelly:
     name: "Shelly 3EM Konfiguration"
@@ -117,6 +123,9 @@ configuration:
       hms_1600_reachable_sensor:
         name: "HMS-1600 Erreichbarkeit"
         description: "Binary-Sensor, der angibt ob der HMS-1600 erreichbar ist"
+      shelly_ip:
+        name: "Shelly IP-Adresse (Einspeisung)"
+        description: "IP des Shelly Pro 1PM an der Hoymiles-Einspeisung (optional). Gesetzt = Solar gesamt wird dort gemessen, die DTU liefert nur noch die Aufteilung auf die Wechselrichter. Leer = Solar aus der DTU wie bisher."
 
   telegram:
     name: "Telegram Watchdog Konfiguration"
