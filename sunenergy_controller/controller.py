@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.4.7
+SunEnergy XT Controller v3.4.8
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -180,6 +180,9 @@ CHARGE_BLOCK_RETRY_S = 20 * 60
 # ~40 Wh Einspeisung, eine falsche dagegen 20 min Ladeanteil (CHARGE_BLOCK_RETRY_S) plus
 # moegliche AC-AC-Kreuzladung. Deshalb grosszuegig dimensioniert.
 CHARGE_BLOCK_DEBOUNCE_S = 60.0
+
+# v3.4.8: Ab dieser Batterieleistung (BP, + = laedt) gilt ein Speicher als ladend.
+CHARGE_MIN_BP_W = 50.0
 
 # v3.4.1: Intervall des Ladegrenzen-Abgleichs (SA-Drift-Waechter). Die Firmware eines
 # Speichers kann SA eigenmaechtig verstellen: Speicher L2 setzt die Grenze seit der
@@ -842,7 +845,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.4.7 startet...")
+    log.info("SunEnergy XT Controller v3.4.8 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1327,9 +1330,13 @@ def main():
                     # dieselbe Dauereinspeisung auslösen wie zuvor L2: scheinbarer Headroom, HMS
                     # drosseln nicht. Referenz für "echten Headroom" ist soc_normal_max (nicht
                     # last_written_sa=100 an Kalibriertagen) — sonst Entblock-Oszillation.
+                    # v3.4.8: Kriterium ist die Batterieleistung BP (+ = laedt), nicht IW. IW ist
+                    # die Gesamteingangsleistung inkl. PV und lag bei Sonne nie unter 50 W — die
+                    # Erkennung war tagsueber blind. Live 01.10. 16:00: SOC 92 %, GS -2400 W
+                    # angefordert, IW = PV = 685 W, BP = 0 W, PV ging komplett ins Netz.
                     last_gs_l1 = safe_float(state, "last_device_gs", 0.0)
                     if last_gs_l1 < -100.0:
-                        if iw_current < 50.0:
+                        if pb_current < CHARGE_MIN_BP_W:
                             # v3.3.8: entprellt statt sofort (s. CHARGE_BLOCK_DEBOUNCE_S).
                             # Jeder Tick mit echtem Ladestrom setzt den Marker zurueck, der
                             # Befund muss also ununterbrochen bestehen.
@@ -1340,7 +1347,7 @@ def main():
                             no_charge_age_l1 = time.time() - since_l1
                             if no_charge_age_l1 >= CHARGE_BLOCK_DEBOUNCE_S:
                                 if not state.get("l1_charge_blocked", False):
-                                    log.warning("⚠️ L1 lädt nicht: angefordert=%.0fW, bezogen=%.1fW seit %.0fs. Blockiere L1 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l1, iw_current, no_charge_age_l1)
+                                    log.warning("⚠️ L1 lädt nicht: angefordert=%.0fW, Batterie=%.0fW (PV %.0fW) seit %.0fs. Blockiere L1 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l1, pb_current, pv_current, no_charge_age_l1)
                                 state["l1_charge_blocked"] = True
                                 state["l1_charge_block_ts"] = time.time()
                         else:
@@ -1431,9 +1438,10 @@ def main():
                     # v3.0.0: Poll-Zeitstempel/-Zähler kommen nur noch vom Meter-Proxy (s. L1)
                     
                     # v2.5.1: L2 Lade-Blockade-Erkennung (BMS voll, App-Limit oder unplugged)
+                    # v3.4.8: BP statt IW als Kriterium (Begruendung s. L1)
                     last_gs_l2 = safe_float(state, "last_device_gs_l2", 0.0)
                     if last_gs_l2 < -100.0:
-                        if iw_l2 < 50.0:
+                        if pb_l2 < CHARGE_MIN_BP_W:
                             # v3.3.8: entprellt statt sofort (s. CHARGE_BLOCK_DEBOUNCE_S).
                             # Jeder Tick mit echtem Ladestrom setzt den Marker zurueck, der
                             # Befund muss also ununterbrochen bestehen.
@@ -1444,7 +1452,7 @@ def main():
                             no_charge_age_l2 = time.time() - since_l2
                             if no_charge_age_l2 >= CHARGE_BLOCK_DEBOUNCE_S:
                                 if not state.get("l2_charge_blocked", False):
-                                    log.warning("⚠️ L2 lädt nicht: angefordert=%.0fW, bezogen=%.1fW seit %.0fs. Blockiere L2 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l2, iw_l2, no_charge_age_l2)
+                                    log.warning("⚠️ L2 lädt nicht: angefordert=%.0fW, Batterie=%.0fW (PV %.0fW) seit %.0fs. Blockiere L2 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l2, pb_l2, pv_l2, no_charge_age_l2)
                                 state["l2_charge_blocked"] = True
                                 state["l2_charge_block_ts"] = time.time()
                         else:
@@ -2946,6 +2954,21 @@ def main():
             drosseln = ((hms_limit_new < 3500.0) and (solar_p >= hms_limit_new - 150.0) and (grid_error <= 50.0)) or (akkus_voll and grid_p_raw < -50.0)
             state["drosseln"] = drosseln
 
+            # v3.4.8: Bei vollen Akkus bekam bisher JEDER Speicher den vollen Restbedarf als
+            # IS — beide zusammen lieferten das Doppelte, der Rest ging ins Netz (live 01.10.
+            # 14:46-14:58: Restbedarf ~140 W, 12 min durchgehend -120 bis -240 W). Jetzt wird
+            # der Restbedarf nach PV-Anteil aufgeteilt. Ein Speicher ohne nutzbare PV (L2-Zweig
+            # pv_l2 <= 10 → IS 2400, dort ohne Wirkung) bekommt keinen Anteil.
+            restbedarf_voll = max(0.0, haus_p - solar_p)
+            pv_share_l1 = pv_current if has_l1 else 0.0
+            pv_share_l2 = pv_l2 if (has_l2 and pv_l2 > 10.0) else 0.0
+            if pv_share_l1 + pv_share_l2 > 0.0:
+                anteil_l1 = pv_share_l1 / (pv_share_l1 + pv_share_l2)
+            else:
+                anteil_l1 = 0.5 if (has_l1 and has_l2) else 1.0
+            is_stable_l1 = max(10, int(restbedarf_voll * anteil_l1))
+            is_stable_l2 = max(10, int(restbedarf_voll * (1.0 - anteil_l1)))
+
             # IS Limit der Batterie anpassen
             # L1
             is_native = use_native_pid and not state.get("in_fallback_mode", False)
@@ -2958,9 +2981,8 @@ def main():
                 is_target_l1 = 2400
             elif akkus_voll and drosseln:
                 # v2.3.8: Bei vollen Akkus den Anstiegs-Limiter umgehen und IS direkt stabilisieren
-                is_stable = max(10, int(haus_p - solar_p))
-                is_target_l1 = is_stable
-                state["last_is"] = is_stable
+                is_target_l1 = is_stable_l1
+                state["last_is"] = is_stable_l1
             elif is_native and pv_current > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l1 = max(10, haus_p - solar_p)
@@ -2969,7 +2991,8 @@ def main():
                     restbedarf = max(0, int(haus_p - solar_p))
                     # v2.1.9: L2-Ladefähigkeit einbeziehen, um L1s AC-Ausgabe für L2-Ladung freizugeben (Deadlock-Schutz)
                     l2_headroom = 0.0
-                    if has_l2 and curr_soc_l2 < soc_max_limit:
+                    # v3.4.8: ein als blockiert erkannter L2 nimmt nichts auf
+                    if has_l2 and curr_soc_l2 < soc_max_limit and not state.get("l2_charge_blocked", False):
                         fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc_l2) / 5.0))
                         l2_headroom = 2400.0 * fade_out
 
@@ -3005,9 +3028,8 @@ def main():
                 is_target_l2 = 2400
             elif akkus_voll and drosseln:
                 # v2.3.8: Bei vollen Akkus den Anstiegs-Limiter umgehen und IS direkt stabilisieren
-                is_stable = max(10, int(haus_p - solar_p))
-                is_target_l2 = is_stable
-                state["last_is_l2"] = is_stable
+                is_target_l2 = is_stable_l2
+                state["last_is_l2"] = is_stable_l2
             elif is_native and pv_l2 > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l2 = max(10, haus_p - solar_p)
@@ -3016,7 +3038,8 @@ def main():
                     restbedarf = max(0, int(haus_p - solar_p))
                     # v2.1.9: L1-Ladefähigkeit einbeziehen, um L2s AC-Ausgabe für L1-Ladung freizugeben (symmetrischer Deadlock-Schutz)
                     l1_headroom = 0.0
-                    if has_l1 and curr_soc < soc_max_limit:
+                    # v3.4.8: ein als blockiert erkannter L1 nimmt nichts auf
+                    if has_l1 and curr_soc < soc_max_limit and not state.get("l1_charge_blocked", False):
                         fade_out = max(0.0, min(1.0, (soc_max_limit - curr_soc) / 5.0))
                         l1_headroom = 2400.0 * fade_out
 
