@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.4.6
+SunEnergy XT Controller v3.4.7
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -842,7 +842,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.4.6 startet...")
+    log.info("SunEnergy XT Controller v3.4.7 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1524,11 +1524,20 @@ def main():
             # Verhindert Windup wenn die Batterie kurz abschaltet und dann mit falschem GS wiederkommt
             prev_op_l1 = safe_float(state, "op_l1", op_current)
             prev_op_l2 = safe_float(state, "op_l2", op_l2)
+            # v3.4.7: Ab Ladegrenze - 1 drosselt das Add-on bei Ueberschuss die Ausgabe selbst
+            # (IS bis 10 W, siehe is_target-Berechnung) — OP=0 ist dort gewollt. In diesem
+            # Bereich werden OP-Einbruch und Entlade-Stillstand nicht als WARNING gemeldet.
+            # Eine fremd gesetzte IS faengt weiterhin der IS-Abgleich gegen das Geraet ab.
+            sa_base = safe_float(state, "last_written_sa", soc_normal_max)
+            full_l1 = curr_soc >= sa_for_l1(sa_base) - 1.0
+            full_l2 = curr_soc_l2 >= sa_for_l2(sa_base) - 1.0
             if has_l1 and prev_op_l1 > 100.0 and op_current < 10.0:
-                log.warning("L1 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l1, op_current)
+                (log.info if full_l1 else log.warning)(
+                    "L1 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l1, op_current)
                 state["last_gs"] = 0.0
             if has_l2 and prev_op_l2 > 100.0 and op_l2 < 10.0:
-                log.warning("L2 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l2, op_l2)
+                (log.info if full_l2 else log.warning)(
+                    "L2 OP-Einbruch erkannt (%.0fW -> %.0fW) — setze GS-Integrator zurueck", prev_op_l2, op_l2)
                 # v3.0.0: Reset fehlte hier — das Log behauptete ihn nur
                 state["last_gs"] = 0.0
 
@@ -1547,16 +1556,17 @@ def main():
             # vom Geraet GEMELDETE GS, nicht unser Sollwert — so zaehlt nur, was der
             # Speicher tatsaechlich angenommen hat. Einmal pro Stillstand warnen, beim
             # Wiederanlaufen die Dauer loggen.
-            for st_label, st_on, st_data, st_op in (
-                ("L1", has_l1, se_data, op_current),
-                ("L2", has_l2, se_data_l2, op_l2),
+            for st_label, st_on, st_data, st_op, st_full in (
+                ("L1", has_l1, se_data, op_current, full_l1),
+                ("L2", has_l2, se_data_l2, op_l2, full_l2),
             ):
                 key = "stall_since_" + st_label.lower()
                 try:
                     st_gs = float(st_data.get("GS")) if st_on and st_data and st_data.get("GS") is not None else None
                 except (TypeError, ValueError):
                     st_gs = None
-                if st_gs is not None and st_gs >= STALL_MIN_GS_W and st_op < STALL_MAX_OP_W:
+                # v3.4.7: bei vollem Akku ist der Stillstand die eigene Drosselung (siehe full_l1/l2)
+                if not st_full and st_gs is not None and st_gs >= STALL_MIN_GS_W and st_op < STALL_MAX_OP_W:
                     since = safe_float(state, key, 0.0)
                     if since <= 0:
                         state[key] = time.time()

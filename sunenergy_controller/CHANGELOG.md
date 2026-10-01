@@ -1,8 +1,6 @@
 # Changelog
 
-## v3.4.6
-- **Hausverbrauch wird gemessen statt zusammengeschaetzt**: Neue optionale Felder fuer die Shelly Pro 1PM an der Hoymiles-Einspeisung und an beiden Speichern (Hoymiles `shelly_ip`, Speicher 1 `shelly_ip`, Speicher 2 `shelly_ip_l2`). Der Controller liest sie direkt per RPC, gleich nach dem Netzzaehler. Der Hausverbrauch ist damit Netz + Hoymiles + Speicher, alle vier Werte gemessen und aus demselben Moment.
-- **Anlass (28.09.)**: Die DTU war nach einem gelockerten Stecker weg. Ihre Leistungssensoren wurden `unavailable`, der „reachable“-Sensor blieb aber auf `on` stehen, weil ihn niemand mehr aktualisiert hat. Der Controller hielt die Wechselrichter fuer online und rechnete eine Dreiviertelstunde mit eingefrorenen 676 W Solar weiter, gemessen waren 100 W. Der Hausverbrauch stand dadurch bei ~990 W statt ~410 W.
-- **Speicher in beide Richtungen gemessen**: Beim Laden aus dem Netz wurde die AC-Leistung bisher aus den DC-Werten mit pauschal 90 % Wirkungsgrad geschaetzt. Jetzt kommt sie vom Shelly.
-- **Unveraendert**: Die Regelung der Speicher (OP/PV fuer IS, GS, Stillstand- und Einbruch-Erkennung) bleibt bei der Geraete-API. Die DTU liefert weiter die Aufteilung des Drossellimits auf HMS-2000 und HMS-1600. Ist ein Feld leer oder der Shelly nicht erreichbar, greift die bisherige Quelle (Wechsel wird einmal geloggt, ein toter Shelly wird 15 s uebersprungen).
-- **Nach dem Update**: Die Felder sind bei einer bestehenden Installation zunaechst leer, bis die Konfiguration einmal mit den IPs gespeichert wird. Bis dahin laeuft alles wie in v3.4.5.
+## v3.4.7
+- **Keine Fehlalarme mehr bei vollem Akku**: Ab Ladegrenze minus 1 (normal 94 %) drosselt das Add-on bei Ueberschuss die Ausgabe der Speicher selbst, bis auf 10 W. Dass dann keine Leistung fliesst, ist gewollt. Der Stillstand-Waechter („Speicher Lx entlaedt nicht“) warnt in diesem Bereich nicht mehr, und „OP-Einbruch erkannt“ wird nur noch als INFO statt als WARNING geloggt.
+- **Anlass (29./30.09.)**: Bei vollen Akkus meldete der Waechter beide Speicher als blockiert (IS=10 bei SOC 95), und am Nachmittag fuellten 24 Einbruch-Meldungen in 35 Minuten die Warnungsliste. Echte Probleme waren darunter schwer zu finden.
+- **Unveraendert**: Unter der Grenze warnen beide Pruefungen wie bisher. Das Zuruecksetzen des GS-Integrators beim Einbruch bleibt in jedem Fall. Eine von aussen verstellte Einspeisegrenze korrigiert weiterhin der IS-Abgleich gegen das Geraet, auch bei vollem Akku, nur ohne Stillstand-Warnung.
