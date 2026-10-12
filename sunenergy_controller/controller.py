@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.4.8
+SunEnergy XT Controller v3.4.9
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -183,6 +183,24 @@ CHARGE_BLOCK_DEBOUNCE_S = 60.0
 
 # v3.4.8: Ab dieser Batterieleistung (BP, + = laedt) gilt ein Speicher als ladend.
 CHARGE_MIN_BP_W = 50.0
+
+# v3.4.9: Lade-Hysterese des BMS (Geraetefeld "Lade-SOC-Hysterese", ab Werk 5 %). Nach
+# dem Erreichen der Ladegrenze laedt das Geraet erst wieder, wenn der SOC um diesen
+# Betrag darunter gefallen ist. Innerhalb dieses Bandes ist jede Neuprobe der
+# Ladeblockade zwecklos und kostet nur Einspeisung (live 12.10.: SOC 91 %, Grenze 95 %,
+# alle 20 min ~80 s lang 400-530 W ins Netz).
+_CHARGE_REARM_OFFSET = 5.0
+
+# v3.4.9: Schnellabbruch der Lade-Probe. Fliesst bei starker Einspeisung trotz
+# angeforderter Ladung nichts, gilt der Negativbefund schon nach dieser Zeit statt nach
+# CHARGE_BLOCK_DEBOUNCE_S. 20 s liegen sicher ueber den 16 s Nullphase eines
+# Geraete-Neustarts (s. u.), bei dem ausserdem keine Einspeisung entsteht.
+CHARGE_BLOCK_FAST_S = 20.0
+CHARGE_BLOCK_FAST_GRID_W = -200.0
+
+# v3.4.9: IS-Nachfuehrung bei vollen Akkus (s. is_voll_nachfuehren).
+IS_VOLL_GAIN = 0.5
+IS_VOLL_TOTBAND_W = 30.0
 
 # v3.4.1: Intervall des Ladegrenzen-Abgleichs (SA-Drift-Waechter). Die Firmware eines
 # Speichers kann SA eigenmaechtig verstellen: Speicher L2 setzt die Grenze seit der
@@ -718,6 +736,30 @@ def get_sun_state() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# v3.4.9: IS bei vollen Akkus
+# ---------------------------------------------------------------------------
+def is_voll_nachfuehren(last_dev_is: float, op_now: float, anteil: float, grid_p_raw: float) -> float:
+    """IS eines vollen (nicht ladenden) Speichers schrittweise auf Netz = 0 nachfuehren.
+
+    Bisher wurde IS bei vollen Akkus nur gedrosselt, solange das Netz unter -50 W lag;
+    im naechsten Tick ohne Einspeisung fiel der Speicher in den Standardzweig und bekam
+    wieder 2400 W. Live 12.10. 16:44: IS 30/2400/20/2400 im 5-s-Takt, das Netz pendelte
+    dauerhaft zwischen -50 und -110 W. Jetzt startet die Korrektur bei der tatsaechlichen
+    Abgabe (OP) statt beim alten IS und verschiebt sie um den anteiligen Netzfehler.
+    """
+    if grid_p_raw > 400.0:
+        # Echter Bezug: sofort freigeben, der Akku darf entladen
+        return 2400.0
+    # Liegt IS weit ueber der Abgabe (z. B. 2400 W aus dem Normalbetrieb), wirkt eine
+    # Korrektur am alten Wert erst nach vielen Ticks — dann bei OP aufsetzen. Liegt IS
+    # nahe an OP, bleibt es stehen (kein Schreiben bei jedem OP-Rauschen).
+    basis = last_dev_is if last_dev_is <= op_now + 150.0 else op_now + 50.0
+    if abs(grid_p_raw) <= IS_VOLL_TOTBAND_W:
+        return basis
+    return basis + grid_p_raw * IS_VOLL_GAIN * anteil
+
+
+# ---------------------------------------------------------------------------
 # HMS Limits berechnen
 # ---------------------------------------------------------------------------
 def calc_hms_limits(
@@ -845,7 +887,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.4.8 startet...")
+    log.info("SunEnergy XT Controller v3.4.9 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1345,7 +1387,9 @@ def main():
                                 since_l1 = time.time()
                                 state["l1_no_charge_since"] = since_l1
                             no_charge_age_l1 = time.time() - since_l1
-                            if no_charge_age_l1 >= CHARGE_BLOCK_DEBOUNCE_S:
+                            # v3.4.9: bei starker Einspeisung schneller abbrechen
+                            fast_l1 = (grid_p_raw < CHARGE_BLOCK_FAST_GRID_W and no_charge_age_l1 >= CHARGE_BLOCK_FAST_S)
+                            if no_charge_age_l1 >= CHARGE_BLOCK_DEBOUNCE_S or fast_l1:
                                 if not state.get("l1_charge_blocked", False):
                                     log.warning("⚠️ L1 lädt nicht: angefordert=%.0fW, Batterie=%.0fW (PV %.0fW) seit %.0fs. Blockiere L1 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l1, pb_current, pv_current, no_charge_age_l1)
                                 state["l1_charge_blocked"] = True
@@ -1368,6 +1412,10 @@ def main():
                         unblock_ref_l1 = float(state.get("last_written_sa") or soc_normal_max)
                         if curr_soc >= (unblock_ref_l1 - 1.0):
                             state["l1_charge_blocked"] = True
+                        elif state.get("l1_charge_blocked", False) and curr_soc >= (unblock_ref_l1 - _CHARGE_REARM_OFFSET):
+                            # v3.4.9: im Hysterese-Band des BMS laedt das Geraet ohnehin nicht —
+                            # keine Neuprobe, bis der SOC darunter gefallen ist
+                            pass
                         else:
                             block_age_l1 = time.time() - safe_float(state, "l1_charge_block_ts", 0.0)
                             if block_age_l1 >= CHARGE_BLOCK_RETRY_S:
@@ -1450,7 +1498,9 @@ def main():
                                 since_l2 = time.time()
                                 state["l2_no_charge_since"] = since_l2
                             no_charge_age_l2 = time.time() - since_l2
-                            if no_charge_age_l2 >= CHARGE_BLOCK_DEBOUNCE_S:
+                            # v3.4.9: bei starker Einspeisung schneller abbrechen
+                            fast_l2 = (grid_p_raw < CHARGE_BLOCK_FAST_GRID_W and no_charge_age_l2 >= CHARGE_BLOCK_FAST_S)
+                            if no_charge_age_l2 >= CHARGE_BLOCK_DEBOUNCE_S or fast_l2:
                                 if not state.get("l2_charge_blocked", False):
                                     log.warning("⚠️ L2 lädt nicht: angefordert=%.0fW, Batterie=%.0fW (PV %.0fW) seit %.0fs. Blockiere L2 Ladekapazität gegen Einspeise-Deadlock.", last_gs_l2, pb_l2, pv_l2, no_charge_age_l2)
                                 state["l2_charge_blocked"] = True
@@ -1477,6 +1527,9 @@ def main():
                         unblock_ref_l2 = float(state.get("last_written_sa") or soc_normal_max)
                         if curr_soc_l2 >= (unblock_ref_l2 - 1.0):
                             state["l2_charge_blocked"] = True
+                        elif state.get("l2_charge_blocked", False) and curr_soc_l2 >= (unblock_ref_l2 - _CHARGE_REARM_OFFSET):
+                            # v3.4.9: im Hysterese-Band des BMS keine Neuprobe (s. L1)
+                            pass
                         else:
                             block_age_l2 = time.time() - safe_float(state, "l2_charge_block_ts", 0.0)
                             if block_age_l2 >= CHARGE_BLOCK_RETRY_S:
@@ -2954,20 +3007,17 @@ def main():
             drosseln = ((hms_limit_new < 3500.0) and (solar_p >= hms_limit_new - 150.0) and (grid_error <= 50.0)) or (akkus_voll and grid_p_raw < -50.0)
             state["drosseln"] = drosseln
 
-            # v3.4.8: Bei vollen Akkus bekam bisher JEDER Speicher den vollen Restbedarf als
-            # IS — beide zusammen lieferten das Doppelte, der Rest ging ins Netz (live 01.10.
-            # 14:46-14:58: Restbedarf ~140 W, 12 min durchgehend -120 bis -240 W). Jetzt wird
-            # der Restbedarf nach PV-Anteil aufgeteilt. Ein Speicher ohne nutzbare PV (L2-Zweig
-            # pv_l2 <= 10 → IS 2400, dort ohne Wirkung) bekommt keinen Anteil.
-            restbedarf_voll = max(0.0, haus_p - solar_p)
+            # v3.4.8: Bei vollen Akkus wird die Netzabweichung nach PV-Anteil auf beide
+            # Speicher aufgeteilt — sonst korrigieren beide den vollen Fehler und liefern
+            # zusammen das Doppelte (live 01.10. 14:46-14:58: 12 min -120 bis -240 W). Ein
+            # Speicher ohne nutzbare PV (L2-Zweig pv_l2 <= 10 → IS 2400) bekommt keinen Anteil.
+            # v3.4.9: Nachfuehrung ueber is_voll_nachfuehren statt fester Restbedarf.
             pv_share_l1 = pv_current if has_l1 else 0.0
             pv_share_l2 = pv_l2 if (has_l2 and pv_l2 > 10.0) else 0.0
             if pv_share_l1 + pv_share_l2 > 0.0:
                 anteil_l1 = pv_share_l1 / (pv_share_l1 + pv_share_l2)
             else:
                 anteil_l1 = 0.5 if (has_l1 and has_l2) else 1.0
-            is_stable_l1 = max(10, int(restbedarf_voll * anteil_l1))
-            is_stable_l2 = max(10, int(restbedarf_voll * (1.0 - anteil_l1)))
 
             # IS Limit der Batterie anpassen
             # L1
@@ -2979,10 +3029,11 @@ def main():
                 is_target_l1 = 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l1 = 2400
-            elif akkus_voll and drosseln:
+            elif akkus_voll:
                 # v2.3.8: Bei vollen Akkus den Anstiegs-Limiter umgehen und IS direkt stabilisieren
-                is_target_l1 = is_stable_l1
-                state["last_is"] = is_stable_l1
+                # v3.4.9: auch ohne aktuelle Einspeisung (drosseln) — sonst IS-Sprung auf 2400
+                is_target_l1 = is_voll_nachfuehren(
+                    safe_float(state, "last_device_is", 2400.0), op_current, anteil_l1, grid_p_raw)
             elif is_native and pv_current > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l1 = max(10, haus_p - solar_p)
@@ -3026,10 +3077,11 @@ def main():
                 # L2 hat keine PV-Module -> Keine Drosselung nötig, bleibt auf Maximum.
                 # Verhindert unnötige Schreibzugriffe über WLAN an L2.
                 is_target_l2 = 2400
-            elif akkus_voll and drosseln:
+            elif akkus_voll:
                 # v2.3.8: Bei vollen Akkus den Anstiegs-Limiter umgehen und IS direkt stabilisieren
-                is_target_l2 = is_stable_l2
-                state["last_is_l2"] = is_stable_l2
+                # v3.4.9: auch ohne aktuelle Einspeisung (s. L1)
+                is_target_l2 = is_voll_nachfuehren(
+                    safe_float(state, "last_device_is_l2", 2400.0), op_l2, 1.0 - anteil_l1, grid_p_raw)
             elif is_native and pv_l2 > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l2 = max(10, haus_p - solar_p)

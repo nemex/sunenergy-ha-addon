@@ -1,8 +1,7 @@
 # Changelog
 
-## v3.4.8
-- **Ladesperre-Erkennung funktioniert jetzt auch bei Sonne**: Das Add-on erkennt einen Speicher, der angeforderte Ladung nicht annimmt, jetzt an der Batterieleistung (BP unter 50 W) statt an der Eingangsleistung (IW unter 50 W). IW enthaelt die PV-Leistung und lag tagsueber nie unter 50 W, die Erkennung war dadurch bei Sonne blind.
-- **Anlass (01.10.)**: Nach dem Vollladen nahmen beide Speicher bei 92 % keine Ladung an (Batterie 0 W), das Add-on forderte trotzdem weiter Ladung an und drosselte nicht. Die PV der Speicher ging von 15:20 bis 17:00 komplett ins Netz, rund 0,55 kWh. Mit dem Fix waere die Sperre um 15:27 gegriffen.
-- **Restbedarf bei vollen Akkus wird aufgeteilt**: Bisher bekam jeder Speicher den vollen Restbedarf (Haus minus Hoymiles) als Einspeisegrenze, beide zusammen lieferten das Doppelte. Jetzt wird er nach PV-Anteil auf beide verteilt. Anlass: 01.10. 14:46-14:58 zwoelf Minuten durchgehend 120-240 W Einspeisung.
-- **Gesperrter Speicher zaehlt nicht mehr als Aufnahme fuer den anderen**: Die IS-Drosselung beruecksichtigt beim Durchreichen an den zweiten Speicher jetzt dessen Ladesperre, nicht nur den SOC.
-- **Unveraendert**: Netzregelung, Nachtbetrieb und die Wiederholsperre (Neuprobe alle 20 min).
+## v3.4.9
+- **Kein IS-Pendeln mehr bei vollen Akkus**: Die Einspeisegrenze (IS) eines vollen, nicht ladenden Speichers sprang bisher im 5-s-Takt zwischen Restbedarf und 2400 W hin und her. Gedrosselt wurde nur, solange gerade Einspeisung anlag, im naechsten Tick gab es wieder 2400 W. Jetzt wird IS schrittweise auf Netz = 0 nachgefuehrt, ausgehend von der tatsaechlichen Abgabe des Speichers. Bei echtem Bezug ueber 400 W wird weiter sofort freigegeben.
+- **Keine Lade-Neuprobe im Hysterese-Band des BMS**: Liegt der SOC zwischen Ladegrenze minus 5 % und der Ladegrenze, laedt das Geraet ohnehin nicht. Die Neuprobe alle 20 min entfaellt dort, sie startet erst wieder, wenn der SOC darunter gefallen ist.
+- **Schnellerer Abbruch der Lade-Probe**: Nimmt ein Speicher die angeforderte Ladung nicht an und speist das Haus dabei mehr als 200 W ein, gilt die Ladesperre schon nach 20 s statt nach 60 s.
+- **Anlass (12.10.)**: Ab 14 Uhr bei SOC 91 % und Ladegrenze 95 % pendelte das Netz dauerhaft zwischen -50 und -110 W, dazu alle 20 min rund 80 s lang 400-530 W Einspeisung durch die Neuprobe.
