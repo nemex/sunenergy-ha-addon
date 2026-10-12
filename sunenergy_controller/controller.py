@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.4.9
+SunEnergy XT Controller v3.5.0
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -738,7 +738,7 @@ def get_sun_state() -> dict:
 # ---------------------------------------------------------------------------
 # v3.4.9: IS bei vollen Akkus
 # ---------------------------------------------------------------------------
-def is_voll_nachfuehren(last_dev_is: float, op_now: float, anteil: float, grid_p_raw: float) -> float:
+def is_voll_nachfuehren(last_dev_is: float, op_now: float, pb_now: float, anteil: float, grid_p_raw: float) -> float:
     """IS eines vollen (nicht ladenden) Speichers schrittweise auf Netz = 0 nachfuehren.
 
     Bisher wurde IS bei vollen Akkus nur gedrosselt, solange das Netz unter -50 W lag;
@@ -749,6 +749,11 @@ def is_voll_nachfuehren(last_dev_is: float, op_now: float, anteil: float, grid_p
     """
     if grid_p_raw > 400.0:
         # Echter Bezug: sofort freigeben, der Akku darf entladen
+        return 2400.0
+    if pb_now < -CHARGE_MIN_BP_W:
+        # Akku entlaedt: die PV reicht nicht fuer die Abgabe, Einspeisung durch Durchreichen
+        # ist ausgeschlossen. GS regelt allein; ein IS-Deckel liess hier nur Bezug stehen
+        # (live 12.10. 16:52-16:53 nach Sonnenuntergang ~100 W, IS stieg nur 20-30 W/Tick).
         return 2400.0
     # Liegt IS weit ueber der Abgabe (z. B. 2400 W aus dem Normalbetrieb), wirkt eine
     # Korrektur am alten Wert erst nach vielen Ticks — dann bei OP aufsetzen. Liegt IS
@@ -887,7 +892,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.4.9 startet...")
+    log.info("SunEnergy XT Controller v3.5.0 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -3033,7 +3038,7 @@ def main():
                 # v2.3.8: Bei vollen Akkus den Anstiegs-Limiter umgehen und IS direkt stabilisieren
                 # v3.4.9: auch ohne aktuelle Einspeisung (drosseln) — sonst IS-Sprung auf 2400
                 is_target_l1 = is_voll_nachfuehren(
-                    safe_float(state, "last_device_is", 2400.0), op_current, anteil_l1, grid_p_raw)
+                    safe_float(state, "last_device_is", 2400.0), op_current, pb_current, anteil_l1, grid_p_raw)
             elif is_native and pv_current > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l1 = max(10, haus_p - solar_p)
@@ -3081,7 +3086,7 @@ def main():
                 # v2.3.8: Bei vollen Akkus den Anstiegs-Limiter umgehen und IS direkt stabilisieren
                 # v3.4.9: auch ohne aktuelle Einspeisung (s. L1)
                 is_target_l2 = is_voll_nachfuehren(
-                    safe_float(state, "last_device_is_l2", 2400.0), op_l2, 1.0 - anteil_l1, grid_p_raw)
+                    safe_float(state, "last_device_is_l2", 2400.0), op_l2, pb_l2, 1.0 - anteil_l1, grid_p_raw)
             elif is_native and pv_l2 > 50.0:
                 # v2.1.5: Permanente native PV-Drosselung (vorausschauende Begrenzung auf Restbedarf)
                 is_target_l2 = max(10, haus_p - solar_p)
