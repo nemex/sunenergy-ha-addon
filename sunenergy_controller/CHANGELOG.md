@@ -1,4 +1,5 @@
 # Changelog
 
-## v3.5.0
-- **Volle Akkus duerfen ohne IS-Deckel entladen**: Seit v3.4.9 wird IS bei vollen Akkus schrittweise nachgefuehrt. Reicht die PV gegen Abend nicht mehr und der Akku entlaedt (Batterie unter -50 W), stieg IS nur um 20-30 W pro Takt und es blieb Netzbezug stehen (live 12.10. 16:52-16:53 rund 100 W). Jetzt wird IS in diesem Fall sofort freigegeben und GS regelt allein wie nachts. Einspeisung ist dabei ausgeschlossen, weil die PV kleiner ist als die Abgabe.
+## v3.5.1
+- **SOC-Ausgleich beim Laden ueber AC**: Der Ueberschuss der Hoymiles, der in die Akkus geladen wird, geht jetzt bevorzugt an den leereren Speicher. Pro Prozentpunkt SOC-Unterschied bekommt er 100 W mehr, bei 2 % Unterschied also 200 W. Grundlage bleibt die Aufteilung nach freiem Platz bis zur Ladegrenze, die Grenze von 2400 W je Speicher gilt weiter.
+- **Anlass (13.10.)**: Bei 44 zu 46 % bekam Speicher L1 nur 51 % des Ueberschusses, obwohl er vormittags weniger eigene PV hatte. Der Rueckstand von 2-3 % blieb dadurch bis kurz vor voll stehen.

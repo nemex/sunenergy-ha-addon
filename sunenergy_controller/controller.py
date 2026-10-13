@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.5.0
+SunEnergy XT Controller v3.5.1
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -197,6 +197,10 @@ _CHARGE_REARM_OFFSET = 5.0
 # Geraete-Neustarts (s. u.), bei dem ausserdem keine Einspeisung entsteht.
 CHARGE_BLOCK_FAST_S = 20.0
 CHARGE_BLOCK_FAST_GRID_W = -200.0
+
+# v3.5.1: SOC-Ausgleich beim AC-Laden. Pro Prozentpunkt SOC-Unterschied bekommt der
+# leerere Speicher so viel Ladeleistung zusaetzlich (s. lade_aufteilung).
+SOC_AUSGLEICH_W_PRO_PROZENT = 100.0
 
 # v3.4.9: IS-Nachfuehrung bei vollen Akkus (s. is_voll_nachfuehren).
 IS_VOLL_GAIN = 0.5
@@ -765,6 +769,40 @@ def is_voll_nachfuehren(last_dev_is: float, op_now: float, pb_now: float, anteil
 
 
 # ---------------------------------------------------------------------------
+# v3.5.1: Ladeleistung (AC) auf L1/L2 aufteilen
+# ---------------------------------------------------------------------------
+def lade_aufteilung(gs_new: float, headroom_l1: float, headroom_l2: float,
+                    soc_l1: float, soc_l2: float) -> tuple:
+    """Negatives GS (AC-Laden) auf L1/L2 aufteilen, Rueckgabe (gs_l1, gs_l2), beide <= 0.
+
+    Grundlage bleibt die Aufteilung nach freiem Platz bis zur Ladegrenze. Die wirkt bei
+    mittlerem SOC kaum: bei 44 zu 46 % bekam L1 nur 51 % des Ueberschusses, obwohl L1
+    vormittags weniger eigene PV hatte (live 13.10.: Rueckstand 2-3 % ueber den Tag).
+    Deshalb verschiebt der SOC-Unterschied zusaetzlich SOC_AUSGLEICH_W_PRO_PROZENT je
+    Prozentpunkt zum leereren Speicher, hoechstens bis der vollere nichts mehr bekommt.
+    """
+    total_headroom = headroom_l1 + headroom_l2
+    if gs_new >= 0.0 or total_headroom <= 0.0:
+        return 0.0, 0.0
+    charge = -gs_new
+    c_l1 = charge * headroom_l1 / total_headroom
+    if headroom_l1 > 0.0 and headroom_l2 > 0.0:
+        c_l1 += (soc_l2 - soc_l1) * SOC_AUSGLEICH_W_PRO_PROZENT
+        c_l1 = max(0.0, min(charge, c_l1))
+    c_l2 = charge - c_l1
+    # Geraetegrenze 2400 W, Rest an den anderen Speicher (sofern er laden kann)
+    if c_l1 > 2400.0:
+        if headroom_l2 > 0.0:
+            c_l2 = min(2400.0, c_l2 + (c_l1 - 2400.0))
+        c_l1 = 2400.0
+    elif c_l2 > 2400.0:
+        if headroom_l1 > 0.0:
+            c_l1 = min(2400.0, c_l1 + (c_l2 - 2400.0))
+        c_l2 = 2400.0
+    return -c_l1, -c_l2
+
+
+# ---------------------------------------------------------------------------
 # HMS Limits berechnen
 # ---------------------------------------------------------------------------
 def calc_hms_limits(
@@ -892,7 +930,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.5.0 startet...")
+    log.info("SunEnergy XT Controller v3.5.1 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -2797,14 +2835,8 @@ def main():
                         gs_l2 = 0.0
                 else:
                     # Beide nicht voll, gs_new <= 0 -> Proportional zum Headroom laden
-                    if total_headroom > 0:
-                        ratio_l1 = headroom_l1 / total_headroom
-                        ratio_l2 = headroom_l2 / total_headroom
-                        gs_l1 = gs_new * ratio_l1
-                        gs_l2 = gs_new * ratio_l2
-                    else:
-                        gs_l1 = 0.0
-                        gs_l2 = 0.0
+                    # (v3.5.1 mit SOC-Ausgleich)
+                    gs_l1, gs_l2 = lade_aufteilung(gs_new, headroom_l1, headroom_l2, curr_soc, curr_soc_l2)
             else:
                 # GS Formel: gedämpft → gs_last + grid_error * 0.3, Rate-Limit ±120W/Tick
                 gs_last = safe_float(state, "last_gs", 0.0)
@@ -2852,22 +2884,8 @@ def main():
                             if usable_soc_l1 > 0.0:
                                 gs_l1 = min(2400, gs_l1 + rem)
                 elif gs_new < 0:
-                    # Laden proportional zum Headroom
-                    if total_headroom > 0:
-                        ratio_l1 = headroom_l1 / total_headroom
-                        ratio_l2 = headroom_l2 / total_headroom
-                        gs_l1 = gs_new * ratio_l1
-                        gs_l2 = gs_new * ratio_l2
-                        if gs_l1 < -2400:
-                            rem = gs_l1 + 2400
-                            gs_l1 = -2400
-                            if headroom_l2 > 0.0:
-                                gs_l2 = max(-2400, gs_l2 + rem)
-                        elif gs_l2 < -2400:
-                            rem = gs_l2 + 2400
-                            gs_l2 = -2400
-                            if headroom_l1 > 0.0:
-                                gs_l1 = max(-2400, gs_l1 + rem)
+                    # Laden proportional zum Headroom, v3.5.1 mit SOC-Ausgleich
+                    gs_l1, gs_l2 = lade_aufteilung(gs_new, headroom_l1, headroom_l2, curr_soc, curr_soc_l2)
 
             # Kreuzladung Hold-Time aktiv? Dann Laden (negatives GS) verhindern
             if time.time() < state.get("kreuzladung_hold_until", 0):
