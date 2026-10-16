@@ -1,5 +1,5 @@
 # Changelog
 
-## v3.5.2
-- **Volle Akkus entladen gemeinsam**: Sobald bei vollen Akkus einer der beiden Speicher zu entladen beginnt, wird die Einspeisegrenze (IS) jetzt fuer beide freigegeben. Die Entladung wird dann wie gewohnt nach SOC aufgeteilt. Bisher wurde nur der Speicher freigegeben, der selbst schon entlud.
-- **Anlass (13.10.)**: Von 16:52 bis 17:22 deckte Speicher L2 das Haus allein. Das Netz stand dabei auf 0 W, deshalb bekam Speicher L1 kein Signal und blieb bei IS 20-160 W haengen. Speicher L2 lag danach 5 % unter Speicher L1.
+## v3.5.3
+- **Bezug bei vollen Akkus schneller weg**: Steht bei vollen Akkus mehr als 100 W Netzbezug an, wird die Einspeisegrenze (IS) beider Speicher sofort auf 2400 W freigegeben, damit der Akku das Haus deckt. Bisher lag diese Schwelle bei 400 W.
+- **Anlass (16.10.)**: Solange IS unter 2400 W steht, geben die Speicher nur ihre eigene PV ab und entladen den Akku nicht, auch wenn IS mehr erlauben wuerde. Dadurch blieb Bezug zwischen 60 und 400 W minutenlang stehen, z. B. 16:22-16:30 mit 130-200 W (16.10.: 29 Wh, 13.10.: 46 Wh). Die sanfte Drosselung bei Einspeisung bleibt unveraendert.

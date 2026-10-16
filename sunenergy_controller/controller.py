@@ -205,6 +205,11 @@ SOC_AUSGLEICH_W_PRO_PROZENT = 100.0
 # v3.4.9: IS-Nachfuehrung bei vollen Akkus (s. is_voll_nachfuehren).
 IS_VOLL_GAIN = 0.5
 IS_VOLL_TOTBAND_W = 30.0
+# v3.5.3: Ab diesem Netzbezug wird IS bei vollen Akkus sofort freigegeben (vorher 400 W).
+# Unter 2400 gibt der Speicher nur seine eigene PV ab und entlaedt nicht — live 16.10.
+# 15:47: Bezug 266 W, IS 400 W, Abgabe 213 W bei 273 W PV. Bezug von 60-400 W blieb so
+# minutenlang stehen, weil die Freigabe ueber pb_entlade eine Entladung voraussetzt.
+IS_VOLL_FREIGABE_W = 100.0
 
 # v3.4.1: Intervall des Ladegrenzen-Abgleichs (SA-Drift-Waechter). Die Firmware eines
 # Speichers kann SA eigenmaechtig verstellen: Speicher L2 setzt die Grenze seit der
@@ -751,7 +756,7 @@ def is_voll_nachfuehren(last_dev_is: float, op_now: float, pb_entlade: float, an
     dauerhaft zwischen -50 und -110 W. Jetzt startet die Korrektur bei der tatsaechlichen
     Abgabe (OP) statt beim alten IS und verschiebt sie um den anteiligen Netzfehler.
     """
-    if grid_p_raw > 400.0:
+    if grid_p_raw > IS_VOLL_FREIGABE_W:
         # Echter Bezug: sofort freigeben, der Akku darf entladen
         return 2400.0
     if pb_entlade < -CHARGE_MIN_BP_W:
