@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.5.2
+SunEnergy XT Controller v3.5.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -939,7 +939,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.5.2 startet...")
+    log.info("SunEnergy XT Controller v3.5.4 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1144,6 +1144,12 @@ def main():
         state.pop(_k, None)
 
     set_active_mode(state, "night")
+    # v3.5.4: Der Start ist kein echter Moduswechsel. Ohne diese Zeilen zaehlte der erste
+    # Tick als NIGHT -> REGULATION und fror GS 30 s auf dem frisch genullten Integrator ein
+    # (live 16.10. 17:51:36-17:52:02 nach dem Update: ~1050 W Bezug, ~8 Wh). Der erste
+    # Tick setzt die Kategorie jetzt ohne Hold-Time, spaetere Wechsel bleiben unveraendert.
+    state["last_major_mode"] = None
+    state.pop("hold_until", None)
     save_state(state)
     log.info("Addon gestartet, SA=%s%%, HMS-Limit=%sW, Speicher L1 aktiv: %s, Speicher L2 aktiv: %s, Natives Polling: %s",
              soc_normal_max, state["last_hms_limit"], "Ja" if has_l1 else "Nein", "Ja" if has_l2 else "Nein", "Ja" if use_native_pid else "Nein")
