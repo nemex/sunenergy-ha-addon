@@ -356,6 +356,10 @@
             const [feedInTariff, setFeedInTariff] = useState(0.082);
             // v3.5.6: Grundpreis des Stromanbieters in €/Monat (0 = nicht eingerechnet)
             const [baseFee, setBaseFee] = useState(0);
+            // v3.5.7: Vorwert (genutzter PV-Strom vor der Tagesbilanz) und Stichtag
+            const [preKwh, setPreKwh] = useState(0);
+            const [preUntil, setPreUntil] = useState(null);
+            const [tagesbilanz, setTagesbilanz] = useState(null);
             // v3.5.5: Einstellungen serverseitig laden/speichern (erst speichern, wenn geladen)
             const roiLoadedRef = useRef(false);
 
@@ -368,6 +372,8 @@
                             if (typeof data.feedInTariff === "number") setFeedInTariff(data.feedInTariff);
                             if (typeof data.systemCost === "number") setSystemCost(data.systemCost);
                             if (typeof data.baseFee === "number") setBaseFee(data.baseFee);
+                            if (typeof data.preKwh === "number") setPreKwh(data.preKwh);
+                            if (typeof data.preUntil === "string") setPreUntil(data.preUntil);
                         }
                     })
                     .catch(e => console.error("Fehler beim Laden der ROI-Einstellungen:", e))
@@ -380,11 +386,30 @@
                     fetch("api/roi_settings", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ energyPrice, feedInTariff, systemCost, baseFee })
+                        body: JSON.stringify({ energyPrice, feedInTariff, systemCost, baseFee, preKwh })
                     }).catch(e => console.error("Fehler beim Speichern der ROI-Einstellungen:", e));
                 }, 1000);
                 return () => clearTimeout(t);
-            }, [energyPrice, feedInTariff, systemCost, baseFee]);
+            }, [energyPrice, feedInTariff, systemCost, baseFee, preKwh]);
+
+            useEffect(() => {
+                fetch("api/tagesbilanz")
+                    .then(r => r.json())
+                    .then(data => { if (data && !data.error) setTagesbilanz(data); })
+                    .catch(e => console.error("Fehler beim Laden der Tagesbilanz:", e));
+            }, []);
+
+            // v3.5.7: Gesamtersparnis = Vorwert + alle Tage nach dem Stichtag (gleiche Formel wie die Tageskarte)
+            const savingsTotal = useMemo(() => {
+                if (!tagesbilanz) return null;
+                const dayEarn = d => Math.max(d.haus_kwh - d.bezug_kwh, 0) * energyPrice + d.einsp_kwh * feedInTariff;
+                const after = day => !preUntil || day > preUntil;
+                let sum = preKwh * energyPrice;
+                Object.entries(tagesbilanz.days || {}).forEach(([day, d]) => { if (after(day)) sum += dayEarn(d); });
+                const t = tagesbilanz.today;
+                if (t && after(t.date) && !(tagesbilanz.days || {})[t.date]) sum += dayEarn(t);
+                return sum;
+            }, [tagesbilanz, preKwh, preUntil, energyPrice, feedInTariff]);
 
             const fileInputRef = useRef(null);
             const dashboardRef = useRef(null);
@@ -1167,7 +1192,7 @@
                                 <h3 className="text-sm font-black uppercase tracking-widest mb-5 flex items-center gap-2 text-amber-500">
                                     <Icon name="sliders-horizontal" size={16} /> ROI- & Tarifeinstellungen
                                 </h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8">
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-8">
                                     <div className="space-y-3">
                                         <label className="text-xs font-black uppercase tracking-wider flex items-center gap-2 text-slate-300">
                                             <Icon name="zap" size={14} className="text-amber-500" /> Arbeitspreis (brutto)
@@ -1192,6 +1217,12 @@
                                         </label>
                                         <NumField value={systemCost} onChange={setSystemCost} unit="€" />
                                     </div>
+                                    <div className="space-y-3">
+                                        <label className="text-xs font-black uppercase tracking-wider flex items-center gap-2 text-slate-300">
+                                            <Icon name="history" size={14} className="text-amber-500" /> PV-Strom genutzt {preUntil ? `bis ${preUntil.split("-").reverse().join(".")}` : "vorher"}
+                                        </label>
+                                        <NumField value={preKwh} onChange={setPreKwh} unit="kWh" />
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -1200,8 +1231,9 @@
                             <>
                                 {/* Stat-Karten */}
                                 <div className={`grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4 mb-6 ${fileType === 'highres' ? 'lg:grid-cols-4 xl:grid-cols-7' : 'lg:grid-cols-6'}`}>
-                                    <StatCard title="Ersparnis (Gesamt)" value={`${stats.totalEarnings} €`} iconName="euro" highlight={true}
-                                        secondaryTitle="Amortisationsfortschritt" secondaryValue={`${stats.roiPercent}% bei ${Number.isInteger(systemCost) ? systemCost : systemCost.toFixed(2)} € Kosten`} />
+                                    <StatCard title="Ersparnis (Gesamt)" value={`${savingsTotal !== null ? savingsTotal.toFixed(2) : stats.totalEarnings} €`} iconName="euro" highlight={true}
+                                        secondaryTitle={`Amortisation · gewählter Tag ${stats.totalEarnings} €`}
+                                        secondaryValue={`${systemCost > 0 && savingsTotal !== null ? (savingsTotal / systemCost * 100).toFixed(1) : stats.roiPercent}% von ${Number.isInteger(systemCost) ? systemCost : systemCost.toFixed(2)} €`} />
                                     
                                     <StatCard title="Solarerzeugung" value={`${stats.totalSolarKwh} kWh`} iconName="sun" iconColor="text-amber-500"
                                         secondaryTitle="Davon eingespeist" secondaryValue={`${stats.totalExpKwh} kWh (${stats.feedInEarnings} €)`} />

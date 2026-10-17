@@ -10,6 +10,7 @@ Port 8765:
   GET /textlog/days       → Tage mit Text-Log (v3.4.5)
   GET /textlog?day=TAG    → Text-Log eines Tages (ohne day: laufender Tag)
   GET /warnungen          → alle Warnungen/Fehler der letzten 365 Tage
+  GET /api/tagesbilanz    → Tagesbilanzen (kWh) fuer die Gesamtersparnis (v3.5.7)
 """
 
 import csv
@@ -39,7 +40,9 @@ TEXTLOG_ARCHIVE = "/data/logs/controller-%s.log.gz"
 WARNLOG_PATH    = "/data/logs/warnungen.log"
 # v3.5.5: ROI-Einstellungen der Analyse bleiben serverseitig gespeichert
 ROI_SETTINGS_PATH = "/data/roi_settings.json"
-ROI_SETTINGS_KEYS = ("energyPrice", "feedInTariff", "systemCost", "baseFee")
+ROI_SETTINGS_KEYS = ("energyPrice", "feedInTariff", "systemCost", "baseFee", "preKwh")
+# v3.5.7: dauerhafte Tagesbilanz fuer die Gesamtersparnis
+TAGESBILANZ_PATH = "/data/tagesbilanz.json"
 
 def load_state() -> dict:
     try:
@@ -206,6 +209,73 @@ def available_log_days() -> list:
     except Exception:
         pass
     return sorted(set(days), reverse=True)
+
+
+def summarize_csv(path: str):
+    """v3.5.7: Tagesbilanz eines Regler-Logs in kWh (Haus, Bezug, Einspeisung).
+    Integriert wie analyse.html: Zeitdifferenz zur Vorzeile, Luecken > 600 s zaehlen nicht."""
+    haus = bezug = einsp = 0.0
+    prev = None
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for row in csv.DictReader(f):
+            try:
+                ts = time.mktime(time.strptime(row["ts"], "%Y-%m-%d %H:%M:%S"))
+                grid = float(row.get("grid_p") or 0)
+                haus_p = float(row.get("haus_p") or 0)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if prev is not None:
+                dt = ts - prev
+                if 0 < dt <= 600:
+                    h = dt / 3600
+                    haus += haus_p * h
+                    if grid > 0:
+                        bezug += grid * h
+                    else:
+                        einsp += -grid * h
+            prev = ts
+    return {"haus_kwh": round(haus / 1000, 3), "bezug_kwh": round(bezug / 1000, 3),
+            "einsp_kwh": round(einsp / 1000, 3)}
+
+
+_BILANZ_LOCK = threading.Lock()
+
+
+def update_tagesbilanz() -> dict:
+    """Traegt jeden abgeschlossenen Logtag einmalig in TAGESBILANZ_PATH ein. Die Datei
+    bleibt dauerhaft, auch wenn die CSV-Archive nach CSV_KEEP_DAYS geloescht werden."""
+    with _BILANZ_LOCK:
+        data = {}
+        try:
+            with open(TAGESBILANZ_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+        changed = False
+        for path in glob.glob(CSV_ARCHIVE_GLOB):
+            day = os.path.basename(path)[len("controller_log-"):-len(".csv")]
+            if _DAY_RE.match(day) and day not in data:
+                try:
+                    data[day] = summarize_csv(path)
+                    changed = True
+                except Exception as e:
+                    print("Tagesbilanz %s fehlgeschlagen: %s" % (day, e))
+        if changed:
+            tmp = TAGESBILANZ_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=1, sort_keys=True)
+            os.replace(tmp, TAGESBILANZ_PATH)
+        return data
+
+
+def tagesbilanz_loop():
+    # stuendlich: so geht kein Tag verloren, bevor das Archiv geloescht wird
+    while True:
+        try:
+            update_tagesbilanz()
+        except Exception as e:
+            print("Tagesbilanz-Aktualisierung fehlgeschlagen: %s" % e)
+        time.sleep(3600)
 
 
 def get_csv_data(n=100) -> list:
@@ -921,6 +991,17 @@ class UIHandler(BaseHTTPRequestHandler):
             else:
                 self._json({})
 
+        elif self.path == "/api/tagesbilanz":
+            # v3.5.7: abgeschlossene Tage (dauerhaft) + laufender Tag (live gerechnet)
+            try:
+                days = update_tagesbilanz()
+                today = None
+                if os.path.exists(CSV_PATH):
+                    today = dict(summarize_csv(CSV_PATH), date=time.strftime("%Y-%m-%d"))
+                self._json({"days": days, "today": today})
+            except Exception as e:
+                self._json({"error": str(e)})
+
         elif self.path == "/api/roi_settings":
             # v3.5.5: Strompreis, Einspeiseverguetung, Anschaffungskosten der Analyse
             if os.path.exists(ROI_SETTINGS_PATH):
@@ -1079,6 +1160,18 @@ class UIHandler(BaseHTTPRequestHandler):
                 data = json.loads(self.rfile.read(content_length).decode('utf-8'))
                 # nur die bekannten Zahlenwerte uebernehmen
                 settings = {k: float(data[k]) for k in ROI_SETTINGS_KEYS if k in data}
+                # v3.5.7: Stichtag des Vorwerts; Werte, die der Aufrufer nicht schickt, bleiben
+                if "preUntil" in data:
+                    if not _DAY_RE.match(str(data["preUntil"])):
+                        raise ValueError("preUntil muss JJJJ-MM-TT sein")
+                    settings["preUntil"] = data["preUntil"]
+                existing = {}
+                try:
+                    with open(ROI_SETTINGS_PATH, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+                except Exception:
+                    pass
+                settings = dict(existing, **settings)
                 with open(ROI_SETTINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump(settings, f, indent=2)
                 self._json({"status": "ok", "message": "Einstellungen gespeichert"})
@@ -1099,6 +1192,7 @@ class UIHandler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     # ThreadingHTTPServer: ein hängender /meter-Poll (Shelly-Timeout) blockiert
     # nicht mehr das Dashboard — und umgekehrt.
+    threading.Thread(target=tagesbilanz_loop, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", 8765), UIHandler)
     print("Web UI läuft auf http://0.0.0.0:8765")
     server.serve_forever()
