@@ -39,7 +39,7 @@ TEXTLOG_ARCHIVE = "/data/logs/controller-%s.log.gz"
 WARNLOG_PATH    = "/data/logs/warnungen.log"
 # v3.5.5: ROI-Einstellungen der Analyse bleiben serverseitig gespeichert
 ROI_SETTINGS_PATH = "/data/roi_settings.json"
-ROI_SETTINGS_KEYS = ("energyPrice", "feedInTariff", "systemCost")
+ROI_SETTINGS_KEYS = ("energyPrice", "feedInTariff", "systemCost", "baseFee")
 
 def load_state() -> dict:
     try:

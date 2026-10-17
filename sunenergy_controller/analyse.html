@@ -80,6 +80,29 @@
             </div>
         );
 
+        // --- v3.5.6: Zahlenfeld mit Komma, Cent-genau (ersetzt die Schieberegler) ---
+        const parseDe = (s) => {
+            const t = String(s).trim();
+            const n = parseFloat(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t);
+            return isFinite(n) && n >= 0 ? n : null;
+        };
+        const NumField = ({ value, onChange, decimals = 2, unit, colorClass = "text-slate-100" }) => {
+            const fmt = v => v.toLocaleString("de-DE", { minimumFractionDigits: decimals, maximumFractionDigits: decimals, useGrouping: false });
+            const [text, setText] = useState(fmt(value));
+            const [focused, setFocused] = useState(false);
+            useEffect(() => { if (!focused) setText(fmt(value)); }, [value, focused]);
+            return (
+                <div className="relative">
+                    <input type="text" inputMode="decimal" value={text}
+                        onFocus={() => setFocused(true)}
+                        onBlur={() => setFocused(false)}
+                        onChange={e => { setText(e.target.value); const v = parseDe(e.target.value); if (v !== null) onChange(v); }}
+                        className={`w-full p-3 pr-24 border border-slate-800 bg-[#090e17] rounded-xl font-bold text-sm focus:ring-2 focus:ring-amber-500 outline-none ${colorClass}`} />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 pointer-events-none">{unit}</span>
+                </div>
+            );
+        };
+
         // --- Stat-Karte ---
         const StatCard = ({ title, value, iconName, iconColor, trend, secondaryTitle, secondaryValue, highlight = false, badge = null }) => (
             <div className={`bg-[#111822] border-[#1e2d3d] p-5 rounded-2xl shadow-sm border ${highlight ? 'border-amber-500/30 bg-amber-500/5' : ''} transition-all hover:shadow-md hover:-translate-y-0.5 flex flex-col`} style={{ minHeight: '150px' }}>
@@ -331,6 +354,8 @@
             const [energyPrice, setEnergyPrice] = useState(0.35);
             const [systemCost, setSystemCost] = useState(1500);
             const [feedInTariff, setFeedInTariff] = useState(0.082);
+            // v3.5.6: Grundpreis des Stromanbieters in €/Monat (0 = nicht eingerechnet)
+            const [baseFee, setBaseFee] = useState(0);
             // v3.5.5: Einstellungen serverseitig laden/speichern (erst speichern, wenn geladen)
             const roiLoadedRef = useRef(false);
 
@@ -342,6 +367,7 @@
                             if (typeof data.energyPrice === "number") setEnergyPrice(data.energyPrice);
                             if (typeof data.feedInTariff === "number") setFeedInTariff(data.feedInTariff);
                             if (typeof data.systemCost === "number") setSystemCost(data.systemCost);
+                            if (typeof data.baseFee === "number") setBaseFee(data.baseFee);
                         }
                     })
                     .catch(e => console.error("Fehler beim Laden der ROI-Einstellungen:", e))
@@ -354,11 +380,11 @@
                     fetch("api/roi_settings", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ energyPrice, feedInTariff, systemCost })
+                        body: JSON.stringify({ energyPrice, feedInTariff, systemCost, baseFee })
                     }).catch(e => console.error("Fehler beim Speichern der ROI-Einstellungen:", e));
                 }, 1000);
                 return () => clearTimeout(t);
-            }, [energyPrice, feedInTariff, systemCost]);
+            }, [energyPrice, feedInTariff, systemCost, baseFee]);
 
             const fileInputRef = useRef(null);
             const dashboardRef = useRef(null);
@@ -811,6 +837,10 @@
                     const feedInEarnings = (totalWhExp / 1000) * feedInTariff;
                     const totalEarnings = savings + feedInEarnings;
                     const roiPercent = systemCost > 0 ? (totalEarnings / systemCost) * 100 : 0;
+                    // v3.5.6: Stromkosten = Bezug x Arbeitspreis + Grundpreis anteilig (Monat = 1/12 Jahr)
+                    const periodHours = Math.max(0, (rawData[rawData.length - 1].timestamp - rawData[0].timestamp) / 3600000);
+                    const gridCost = (totalWhImp / 1000) * energyPrice;
+                    const baseFeeCost = baseFee * 12 / 8760 * periodHours;
                     
                     const autarkie = totalWhCons > 0 ? (cleanConsumedWh / totalWhCons) * 100 : 0;
                     const eigenverbrauchPct = totalWhSolar > 0 ? (cleanConsumedWh / totalWhSolar) * 100 : 0;
@@ -837,6 +867,9 @@
                         feedInEarnings: feedInEarnings.toFixed(2),
                         totalEarnings: totalEarnings.toFixed(2),
                         roiPercent: roiPercent.toFixed(1),
+                        gridCost: gridCost.toFixed(2),
+                        baseFeeCost: baseFeeCost.toFixed(2),
+                        totalCost: (gridCost + baseFeeCost).toFixed(2),
                         autarkie: autarkie.toFixed(1),
                         eigenverbrauchPct: eigenverbrauchPct.toFixed(1),
                         storageEff: storageEff,
@@ -865,9 +898,11 @@
                     let totalWhCons = 0;
                     let totalWhImp = 0;
                     let totalWhExp = 0;
+                    let periodHours = 0;
 
                     rawData.forEach(row => {
                         const h = row.durationHours;
+                        periodHours += h;
                         totalWhSolar += row.solar_p * h; // Hoymiles
                         totalWhCons += row.haus_p * h;
                         
@@ -883,6 +918,8 @@
                     const feedInEarnings = (totalWhExp / 1000) * feedInTariff;
                     const totalEarnings = savings + feedInEarnings;
                     const roiPercent = systemCost > 0 ? (totalEarnings / systemCost) * 100 : 0;
+                    const gridCost = (totalWhImp / 1000) * energyPrice;
+                    const baseFeeCost = baseFee * 12 / 8760 * periodHours;
                     
                     const autarkie = totalWhCons > 0 ? (cleanConsumedWh / totalWhCons) * 100 : 0;
 
@@ -895,12 +932,15 @@
                         feedInEarnings: feedInEarnings.toFixed(2),
                         totalEarnings: totalEarnings.toFixed(2),
                         roiPercent: roiPercent.toFixed(1),
+                        gridCost: gridCost.toFixed(2),
+                        baseFeeCost: baseFeeCost.toFixed(2),
+                        totalCost: (gridCost + baseFeeCost).toFixed(2),
                         autarkie: autarkie.toFixed(1),
                         eigenverbrauchPct: totalWhSolar > 0 ? (cleanConsumedWh / totalWhSolar * 100).toFixed(1) : '0.0',
                         co2: ((totalWhSolar / 1000) * 0.363).toFixed(1),
                     };
                 }
-            }, [rawData, fileType, energyPrice, systemCost, feedInTariff]);
+            }, [rawData, fileType, energyPrice, systemCost, feedInTariff, baseFee]);
 
             // Smart Plugs Analyse (nur für 'daily' Typen relevant)
             const plugStats = useMemo(() => {
@@ -1127,26 +1167,30 @@
                                 <h3 className="text-sm font-black uppercase tracking-widest mb-5 flex items-center gap-2 text-amber-500">
                                     <Icon name="sliders-horizontal" size={16} /> ROI- & Tarifeinstellungen
                                 </h3>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8">
                                     <div className="space-y-3">
                                         <label className="text-xs font-black uppercase tracking-wider flex items-center gap-2 text-slate-300">
-                                            <Icon name="zap" size={14} className="text-amber-500" /> Strompreis (€/kWh)
+                                            <Icon name="zap" size={14} className="text-amber-500" /> Arbeitspreis (brutto)
                                         </label>
-                                        <input type="range" min="0.10" max="0.80" step="0.01" value={energyPrice} onChange={e => setEnergyPrice(parseFloat(e.target.value))} className="w-full" />
-                                        <div className="p-3 rounded-xl border border-slate-800 bg-[#090e17] font-bold text-sm text-amber-500">{energyPrice.toFixed(2)} €/kWh</div>
+                                        <NumField value={energyPrice * 100} onChange={v => setEnergyPrice(+(v / 100).toFixed(6))} unit="ct/kWh" colorClass="text-amber-500" />
                                     </div>
                                     <div className="space-y-3">
                                         <label className="text-xs font-black uppercase tracking-wider flex items-center gap-2 text-slate-300">
-                                            <Icon name="trending-up" size={14} className="text-emerald-500" /> Einspeisevergütung (€/kWh)
+                                            <Icon name="calendar" size={14} className="text-rose-500" /> Grundpreis (brutto)
                                         </label>
-                                        <input type="range" min="0.00" max="0.20" step="0.001" value={feedInTariff} onChange={e => setFeedInTariff(parseFloat(e.target.value))} className="w-full" />
-                                        <div className="p-3 rounded-xl border border-slate-800 bg-[#090e17] font-bold text-sm text-emerald-500">{feedInTariff.toFixed(3)} €/kWh</div>
+                                        <NumField value={baseFee} onChange={setBaseFee} unit="€/Monat" colorClass="text-rose-400" />
                                     </div>
                                     <div className="space-y-3">
                                         <label className="text-xs font-black uppercase tracking-wider flex items-center gap-2 text-slate-300">
-                                            <Icon name="wallet" size={14} className="text-blue-500" /> Anschaffungskosten (€)
+                                            <Icon name="trending-up" size={14} className="text-emerald-500" /> Einspeisevergütung
                                         </label>
-                                        <input type="number" value={systemCost} onChange={e => setSystemCost(parseInt(e.target.value) || 0)} className="w-full p-3 border border-slate-800 bg-[#090e17] text-slate-100 rounded-xl font-bold focus:ring-2 focus:ring-amber-500 outline-none" />
+                                        <NumField value={feedInTariff * 100} onChange={v => setFeedInTariff(+(v / 100).toFixed(6))} unit="ct/kWh" colorClass="text-emerald-500" />
+                                    </div>
+                                    <div className="space-y-3">
+                                        <label className="text-xs font-black uppercase tracking-wider flex items-center gap-2 text-slate-300">
+                                            <Icon name="wallet" size={14} className="text-blue-500" /> Anschaffungskosten
+                                        </label>
+                                        <NumField value={systemCost} onChange={setSystemCost} unit="€" />
                                     </div>
                                 </div>
                             </div>
@@ -1155,9 +1199,9 @@
                         {stats && (
                             <>
                                 {/* Stat-Karten */}
-                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4 mb-6">
+                                <div className={`grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4 mb-6 ${fileType === 'highres' ? 'lg:grid-cols-4 xl:grid-cols-7' : 'lg:grid-cols-6'}`}>
                                     <StatCard title="Ersparnis (Gesamt)" value={`${stats.totalEarnings} €`} iconName="euro" highlight={true}
-                                        secondaryTitle="Amortisationsfortschritt" secondaryValue={`${stats.roiPercent}% bei ${systemCost} € Kosten`} />
+                                        secondaryTitle="Amortisationsfortschritt" secondaryValue={`${stats.roiPercent}% bei ${Number.isInteger(systemCost) ? systemCost : systemCost.toFixed(2)} € Kosten`} />
                                     
                                     <StatCard title="Solarerzeugung" value={`${stats.totalSolarKwh} kWh`} iconName="sun" iconColor="text-amber-500"
                                         secondaryTitle="Davon eingespeist" secondaryValue={`${stats.totalExpKwh} kWh (${stats.feedInEarnings} €)`} />
@@ -1181,13 +1225,15 @@
                                                 secondaryValue={stats.hasRegulationData ? `${stats.avgDeviation} W` : `Modus: ${stats.dominantMode}`} />
                                             <StatCard title="Akku-Ladeleistung" value={`${stats.totalChargeKwh} kWh`} iconName="battery-charging" iconColor="text-emerald-400"
                                                 secondaryTitle="Wirkungsgrad (AC/DC)" secondaryValue={stats.storageEff} />
+                                            <StatCard title="Stromkosten" value={`${stats.totalCost} €`} iconName="receipt-euro" iconColor="text-rose-500"
+                                                secondaryTitle={`Netzbezug ${stats.totalImpKwh} kWh`} secondaryValue={`${stats.gridCost} € Arbeit + ${stats.baseFeeCost} € Grundpreis`} />
                                         </>
                                     ) : (
                                         <>
                                             <StatCard title="Smart Plug Verbrauch" value={plugStats ? `${plugStats.totalPlugKwh} kWh` : "0.00 kWh"} iconName="plug" iconColor="text-indigo-400"
                                                 secondaryTitle="Geräteanteil" secondaryValue={plugStats ? `${plugStats.plugPct}%` : "0%"} />
                                             <StatCard title="Netzbezug" value={`${stats.totalImpKwh} kWh`} iconName="arrow-down-circle" iconColor="text-rose-500"
-                                                secondaryTitle="Kosten Netzbezug" secondaryValue={`${(parseFloat(stats.totalImpKwh) * energyPrice).toFixed(2)} €`} />
+                                                secondaryTitle="Stromkosten inkl. Grundpreis" secondaryValue={`${stats.totalCost} € (${stats.gridCost} + ${stats.baseFeeCost} €)`} />
                                         </>
                                     )}
                                 </div>
