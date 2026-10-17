@@ -37,6 +37,9 @@ _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 TEXTLOG_PATH    = "/data/controller.log"
 TEXTLOG_ARCHIVE = "/data/logs/controller-%s.log.gz"
 WARNLOG_PATH    = "/data/logs/warnungen.log"
+# v3.5.5: ROI-Einstellungen der Analyse bleiben serverseitig gespeichert
+ROI_SETTINGS_PATH = "/data/roi_settings.json"
+ROI_SETTINGS_KEYS = ("energyPrice", "feedInTariff", "systemCost")
 
 def load_state() -> dict:
     try:
@@ -918,6 +921,18 @@ class UIHandler(BaseHTTPRequestHandler):
             else:
                 self._json({})
 
+        elif self.path == "/api/roi_settings":
+            # v3.5.5: Strompreis, Einspeiseverguetung, Anschaffungskosten der Analyse
+            if os.path.exists(ROI_SETTINGS_PATH):
+                try:
+                    with open(ROI_SETTINGS_PATH, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    self._json(data)
+                except Exception as e:
+                    self._json({"error": str(e)})
+            else:
+                self._json({})
+
         elif self.path == "/textlog/days":
             # v3.4.5: Tage mit vollstaendigem Text-Log (laufender Tag + Archive)
             days = sorted(
@@ -1056,6 +1071,17 @@ class UIHandler(BaseHTTPRequestHandler):
                     json.dump(existing, f, indent=2)
                 
                 self._json({"status": "ok", "message": "Config gespeichert"})
+            except Exception as e:
+                self._json({"status": "error", "message": str(e)})
+        elif self.path == "/api/roi_settings":
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                data = json.loads(self.rfile.read(content_length).decode('utf-8'))
+                # nur die bekannten Zahlenwerte uebernehmen
+                settings = {k: float(data[k]) for k in ROI_SETTINGS_KEYS if k in data}
+                with open(ROI_SETTINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump(settings, f, indent=2)
+                self._json({"status": "ok", "message": "Einstellungen gespeichert"})
             except Exception as e:
                 self._json({"status": "error", "message": str(e)})
         else:

@@ -331,7 +331,35 @@
             const [energyPrice, setEnergyPrice] = useState(0.35);
             const [systemCost, setSystemCost] = useState(1500);
             const [feedInTariff, setFeedInTariff] = useState(0.082);
-            
+            // v3.5.5: Einstellungen serverseitig laden/speichern (erst speichern, wenn geladen)
+            const roiLoadedRef = useRef(false);
+
+            useEffect(() => {
+                fetch("api/roi_settings")
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data && !data.error) {
+                            if (typeof data.energyPrice === "number") setEnergyPrice(data.energyPrice);
+                            if (typeof data.feedInTariff === "number") setFeedInTariff(data.feedInTariff);
+                            if (typeof data.systemCost === "number") setSystemCost(data.systemCost);
+                        }
+                    })
+                    .catch(e => console.error("Fehler beim Laden der ROI-Einstellungen:", e))
+                    .finally(() => { roiLoadedRef.current = true; });
+            }, []);
+
+            useEffect(() => {
+                if (!roiLoadedRef.current) return;
+                const t = setTimeout(() => {
+                    fetch("api/roi_settings", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ energyPrice, feedInTariff, systemCost })
+                    }).catch(e => console.error("Fehler beim Speichern der ROI-Einstellungen:", e));
+                }, 1000);
+                return () => clearTimeout(t);
+            }, [energyPrice, feedInTariff, systemCost]);
+
             const fileInputRef = useRef(null);
             const dashboardRef = useRef(null);
 
