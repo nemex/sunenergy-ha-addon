@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.5.7
+SunEnergy XT Controller v3.5.8
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -138,7 +138,21 @@ OPTIONS_PATH = "/data/options.json"
 STATE_PATH   = "/data/controller_state.json"
 PROXY_STATE_PATH = "/data/proxy_state.json"
 CSV_PATH     = "/data/controller_log.csv"
-TICK_S       = 5
+TICK_S       = 2
+# v3.5.8: Takt 5 -> 2 s. Im Zwilling (9 echte Herbsttage + 4 Saisonwochen) ~70-75 Wh/Tag weniger
+# Netzbezug ohne mehr Schwingen; Schreibtest 19.10.: 230/230 Schreibvorgaenge an die Speicher
+# ok (~17 ms), die Leistung folgt einem 2-s-Wechsel voll. Alles, was frueher in Takten zaehlte,
+# rechnet jetzt in Sekunden (s. u.), damit sich Fristen nicht mit dem Takt verkuerzen.
+def ticks_fuer(sekunden: float) -> int:
+    """Anzahl Takte fuer eine Frist in Sekunden (mindestens 1)."""
+    return max(1, int(round(sekunden / TICK_S)))
+
+AUSSETZER_MAX_S   = 15.0   # solar_p/haus_p-Aussetzer so lange ueberbruecken (frueher 3 Takte a 5 s)
+HMS_MIN_SENDE_S   = 5.0    # Hoymiles-Grenze hoechstens alle 5 s je Wechselrichter schreiben: die DTU
+                           # funkt jeden Befehl einzeln (16.10.: beim Drosseln schon jetzt Schuebe im 5-s-Takt)
+HMS_NACHSENDE_S   = 30.0   # Grenze nachsenden, wenn der Wechselrichter darueber liegt (frueher jeder 6. Takt)
+PUSH_MIN_S        = 5.0    # virtuelle HA-Sensoren hoechstens alle 5 s (Recorder-Last wie bisher)
+CSV_MIN_S         = 4.5    # Tageslog weiter im ~5-s-Raster (Analyse-Seite, Zwilling)
 # v3.3.5: Freigabeschwelle der Entlade-Sperre. Das Gerät hat eine EIGENE Hysterese
 # (Feld SI1, ab Werk 5 %): unterhalb von SI sperrt es die Entladung und gibt sie erst
 # bei SI + SI1 wieder frei. Unsere alte Schwelle soc_min + 2 lag mitten in diesem
@@ -503,7 +517,16 @@ def trim_csv(path: str, keep_lines: int = CSV_KEEP_LINES):
     except Exception as e:
         log.debug("trim_csv Fehler: %s", e)
 
+_csv_last_mono = -1e9
+
+
 def csv_log(row: dict):
+    global _csv_last_mono
+    # v3.5.8: Tageslog bleibt im ~5-s-Raster (Analyse-Seite und Zwilling rechnen damit)
+    _jetzt = time.monotonic()
+    if _jetzt - _csv_last_mono < CSV_MIN_S:
+        return
+    _csv_last_mono = _jetzt
     try:
         # v3.4.0: Tageswechsel zuerst behandeln, damit die neue Zeile bereits in der
         # Datei des neuen Tages landet.
@@ -625,7 +648,16 @@ def ha_switch(entity_id: str, turn_on: bool) -> bool:
         log.warning("HA SWITCH %s: %s", entity_id, e)
         return False
 
+_push_last: dict = {}
+
+
 def ha_push_sensor(entity_id: str, value: float, unit: str = "W", device_class: str = "power", friendly_name: str = "") -> bool:
+    # v3.5.8: hoechstens alle PUSH_MIN_S je Sensor, damit der 2-s-Takt den HA-Recorder nicht
+    # mit 2,5x so vielen Zustaenden fuellt
+    _jetzt = time.monotonic()
+    if _jetzt - _push_last.get(entity_id, -1e9) < PUSH_MIN_S:
+        return True
+    _push_last[entity_id] = _jetzt
     """Schreibt einen berechneten Wert als virtuellen HA-Sensor (POST /api/states).
     Kein input_number nötig — HA akzeptiert beliebige entity_ids über die REST API.
     Der Sensor bleibt bis zum nächsten HA-Neustart erhalten."""
@@ -939,7 +971,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.5.7 startet...")
+    log.info("SunEnergy XT Controller v3.5.8 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1337,13 +1369,13 @@ def main():
             solar_p_dropouts = state.get("solar_p_dropouts", 0)
 
             if solar_p < 10.0 and last_solar_p > 200.0:
-                if solar_p_dropouts < 3:
-                    log.warning("⚠️ solar_p Aussetzer (%.0fW -> %.0fW), verwende letzten Wert (Tick %d/3)", 
-                                solar_p, last_solar_p, solar_p_dropouts + 1)
+                if solar_p_dropouts < ticks_fuer(AUSSETZER_MAX_S):
+                    log.warning("⚠️ solar_p Aussetzer (%.0fW -> %.0fW), verwende letzten Wert (Tick %d/%d)", 
+                                solar_p, last_solar_p, solar_p_dropouts + 1, ticks_fuer(AUSSETZER_MAX_S))
                     solar_p = last_solar_p
                     state["solar_p_dropouts"] = solar_p_dropouts + 1
                 else:
-                    log.warning("⚠️ solar_p dauerhaft niedrig (3 Ticks), akzeptiere Wert (%.0fW)", solar_p)
+                    log.warning("⚠️ solar_p dauerhaft niedrig (%.0f s), akzeptiere Wert (%.0fW)", AUSSETZER_MAX_S, solar_p)
                     state["solar_p_dropouts"] = 0
             else:
                 state["solar_p_dropouts"] = 0
@@ -1745,8 +1777,8 @@ def main():
                                 current_ticks = state["pv_drop_ticks"].get(tick_key, 0) + 1
                                 state["pv_drop_ticks"][tick_key] = current_ticks
                                 
-                                # Nach 5 Minuten (60 Ticks bei 5s Intervall) Warnung senden
-                                if current_ticks == 60:
+                                # Nach 5 Minuten Warnung senden (v3.5.8: in Sekunden statt fester 60 Takte)
+                                if current_ticks == ticks_fuer(300.0):
                                     alert_key = f"pv_drop_{device_name}_PV{i}"
                                     if alert_key not in state["sent_alerts"]:
                                         alert_msg = (
@@ -1817,13 +1849,13 @@ def main():
             haus_p_dropouts = state.get("haus_p_dropouts", 0)
 
             if haus_p < 50.0 and last_haus_p > 200.0:
-                if haus_p_dropouts < 3:
-                    log.warning("⚠️ haus_p Aussetzer (%.0fW -> %.0fW), verwende letzten Wert (Tick %d/3)", 
-                                haus_p, last_haus_p, haus_p_dropouts + 1)
+                if haus_p_dropouts < ticks_fuer(AUSSETZER_MAX_S):
+                    log.warning("⚠️ haus_p Aussetzer (%.0fW -> %.0fW), verwende letzten Wert (Tick %d/%d)", 
+                                haus_p, last_haus_p, haus_p_dropouts + 1, ticks_fuer(AUSSETZER_MAX_S))
                     haus_p = last_haus_p
                     state["haus_p_dropouts"] = haus_p_dropouts + 1
                 else:
-                    log.warning("⚠️ haus_p dauerhaft niedrig (3 Ticks), akzeptiere Wert (%.0fW)", haus_p)
+                    log.warning("⚠️ haus_p dauerhaft niedrig (%.0f s), akzeptiere Wert (%.0fW)", AUSSETZER_MAX_S, haus_p)
                     state["haus_p_dropouts"] = 0
             else:
                 state["haus_p_dropouts"] = 0
@@ -2577,9 +2609,9 @@ def main():
                         if device_payload_night_l1:
                             sunenergy_write(sunenergy_ip, device_payload_night_l1)
 
-                        if state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_l1_rounded) >= 10:
-                            ha_set_number(gs_entity, gs_l1_rounded)
-                            state["last_gs_written"] = gs_l1_rounded
+                        # v3.5.8: kein Spiegel mehr ueber die HA-Entitaet. Der Sollwert geht oben direkt
+                        # ans Geraet; die Integration liest ihn ohnehin zurueck. Die HA-Schreibung kostete
+                        # einen zweiten WLAN-Zugriff je Aenderung und konnte verspaetet einen alten Wert setzen.
 
                     # L2 schreiben (falls vorhanden)
                     if has_l2:
@@ -2603,10 +2635,7 @@ def main():
                         if device_payload_night_l2:
                             sunenergy_write(sunenergy_ip_l2, device_payload_night_l2)
 
-                        if gs_entity_l2:
-                            if state.get("last_gs_written_l2") is None or abs(state["last_gs_written_l2"] - gs_l2_rounded) >= 10:
-                                ha_set_number(gs_entity_l2, gs_l2_rounded)
-                                state["last_gs_written_l2"] = gs_l2_rounded
+                        # v3.5.8: kein HA-Spiegel mehr (s. L1)
 
                     gs_new_rounded = gs_l1_rounded + gs_l2_rounded
 
@@ -2746,7 +2775,7 @@ def main():
                     # Sollwert genügte — L2: 38,7 V / 281 W -> 32,1 V / 709 W, ohne Zug).
                     _MPP_V   = 360.0   # Geräte-VP ist x10: >36,0 V = weg vom Arbeitspunkt
                     _STUCK_RATIO = 0.7 # eigene PV unter 70 % des gesunden Zwillings
-                    _STUCK_TICKS = 4   # erst nach 4 Ticks (20 s) eingreifen
+                    _STUCK_TICKS = ticks_fuer(20.0)   # erst nach 20 s eingreifen (v3.5.8: Sekunden statt 4 Takte)
                     _RESCUE_MAX_S = 60.0
 
                     def _vmax(details, active):
@@ -2775,7 +2804,7 @@ def main():
                         if pb_own + intended_dis < -100.0:
                             cnt = int(safe_float(state, dis_key, 0.0)) + 1
                             state[dis_key] = float(cnt)
-                            if cnt >= 3:
+                            if cnt >= ticks_fuer(15.0):
                                 state[until_key] = 0.0
                                 state[cnt_key] = 0.0
                                 return passive
@@ -3339,15 +3368,8 @@ def main():
                     if current_mm_state_l2 != "off":
                         ha_switch(mm_switch_l2, False)
 
-                # GS Sollwert in HA schreiben (nur bei nennenswerten Änderungen)
-                if has_l1 and (state.get("last_gs_written") is None or abs(state["last_gs_written"] - gs_l1_rounded) >= 10):
-                    ha_set_number(gs_entity, gs_l1_rounded)
-                    state["last_gs_written"] = gs_l1_rounded
-
-                if has_l2 and gs_entity_l2:
-                    if state.get("last_gs_written_l2") is None or abs(state["last_gs_written_l2"] - gs_l2_rounded) >= 10:
-                        ha_set_number(gs_entity_l2, gs_l2_rounded)
-                        state["last_gs_written_l2"] = gs_l2_rounded
+                # v3.5.8: kein Spiegel mehr ueber die HA-Entitaet (vorher bei jeder Aenderung >= 10 W):
+                # der Sollwert geht unten direkt ans Geraet, die Integration liest ihn zurueck.
             else:
                 # Im nativen Modus schreiben wir GS=0 in HA
                 if has_l1 and state.get("last_gs_written") != 0:
@@ -3424,21 +3446,29 @@ def main():
             # is_tick wird für Trägheitsprüfung verwendet
             is_tick = state.get("is_tick", 0) + 1
             state["is_tick"] = is_tick
-            do_is_update = (is_tick % 6 == 0)
+            do_is_update = (is_tick % ticks_fuer(HMS_NACHSENDE_S) == 0)
+            _hms_jetzt = time.monotonic()
 
             if hms_2000_online:
                 last_written_2000 = safe_float(state, "last_hms_2000_lim", 2000.0)
                 # Senden wenn der neue Wert um >= 50W vom zuletzt geschriebenen abweicht
                 # ODER wenn Inverter trotz Drosselung > 50W über Limit liegt
                 need_send_2000 = (abs(last_written_2000 - limit_2000) >= 50) or (drosseln and solar_p_2000 > limit_2000 + 50 and do_is_update)
+                # v3.5.8: Mindestpause je Wechselrichter (HMS_MIN_SENDE_S)
+                if need_send_2000 and _hms_jetzt - state.get("hms_2000_sent_mono", 0.0) < HMS_MIN_SENDE_S:
+                    need_send_2000 = False
                 if need_send_2000:
+                    state["hms_2000_sent_mono"] = _hms_jetzt
                     ha_set_number(hms_2000_entity, limit_2000)
                     state["last_hms_2000_lim"] = limit_2000
 
             if hms_1600_online:
                 last_written_1600 = safe_float(state, "last_hms_1600_lim", 1600.0)
                 need_send_1600 = (abs(last_written_1600 - limit_1600) >= 50) or (drosseln and solar_p_1600 > limit_1600 + 50 and do_is_update)
+                if need_send_1600 and _hms_jetzt - state.get("hms_1600_sent_mono", 0.0) < HMS_MIN_SENDE_S:
+                    need_send_1600 = False
                 if need_send_1600:
+                    state["hms_1600_sent_mono"] = _hms_jetzt
                     ha_set_number(hms_1600_entity, limit_1600)
                     state["last_hms_1600_lim"] = limit_1600
 
