@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.5.8
+SunEnergy XT Controller v3.5.9
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -153,6 +153,20 @@ HMS_MIN_SENDE_S   = 5.0    # Hoymiles-Grenze hoechstens alle 5 s je Wechselricht
 HMS_NACHSENDE_S   = 30.0   # Grenze nachsenden, wenn der Wechselrichter darueber liegt (frueher jeder 6. Takt)
 PUSH_MIN_S        = 5.0    # virtuelle HA-Sensoren hoechstens alle 5 s (Recorder-Last wie bisher)
 CSV_MIN_S         = 4.5    # Tageslog weiter im ~5-s-Raster (Analyse-Seite, Zwilling)
+
+# v3.5.9: Morgen-PV im Entladesperr-Band ans Haus durchreichen statt "Akku zuerst".
+# Unter soc_min + _SOC_RELEASE_OFFSET (10-15 %) sperrt das Geraet die Entladung selbst; bisher hielt
+# das Add-on die Speicher dort auf IS=10, die ganze Speicher-PV ging in den Akku, auch wenn das Haus
+# gleichzeitig aus dem Netz zog. Geraetetest 17.10. (SOC 11 %): Mit IS=GS=PV-50 gibt der Speicher
+# seine PV ans Haus ab (143 W bei 198 W PV), mit mehr Anforderung entlaedt er trotzdem NICHT.
+# Durchgereicht wird nur, was das Haus nach den Hoymiles braucht (Regler), der Rest laedt den Akku.
+MORGEN_PV_DURCHREICHEN = True
+DURCHREICH_ABSTAND_W   = 60.0   # Kappe unter der PV-Durchreichung (PV*0,96-40), damit nie Akku gezogen wird
+
+
+def durchreich_kappe(pv: float) -> float:
+    """Hoechste Abgabe eines Speichers im Sperrband: nur aus seiner eigenen PV."""
+    return max(0.0, pv * 0.96 - DURCHREICH_ABSTAND_W)
 # v3.3.5: Freigabeschwelle der Entlade-Sperre. Das Gerät hat eine EIGENE Hysterese
 # (Feld SI1, ab Werk 5 %): unterhalb von SI sperrt es die Entladung und gibt sie erst
 # bei SI + SI1 wieder frei. Unsere alte Schwelle soc_min + 2 lag mitten in diesem
@@ -971,7 +985,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.5.8 startet...")
+    log.info("SunEnergy XT Controller v3.5.9 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -2900,8 +2914,11 @@ def main():
                 if total_headroom <= 0.0:
                     gs_new = max(0.0, gs_new)
 
+                # v3.5.9: im Sperrband darf ein Speicher bis zu seiner PV-Kappe abgeben
+                _kappe_l1 = durchreich_kappe(pv_current) if (MORGEN_PV_DURCHREICHEN and has_l1 and low_soc_active_l1) else 0.0
+                _kappe_l2 = durchreich_kappe(pv_l2) if (MORGEN_PV_DURCHREICHEN and has_l2 and low_soc_active_l2) else 0.0
                 if low_soc_active_l1 and (not has_l2 or low_soc_active_l2):
-                    gs_new = min(0.0, gs_new)
+                    gs_new = min(_kappe_l1 + _kappe_l2, gs_new)
                 gs_new = max(-max_gs, min(max_gs, gs_new))
 
                 # Aufteilung auf L1 und L2
@@ -2927,6 +2944,11 @@ def main():
                             gs_l2 = 2400
                             if usable_soc_l1 > 0.0:
                                 gs_l1 = min(2400, gs_l1 + rem)
+                    elif _kappe_l1 + _kappe_l2 > 0:
+                        # v3.5.9: beide im Sperrband — nach PV-Kappe aufteilen
+                        _k = _kappe_l1 + _kappe_l2
+                        gs_l1 = min(_kappe_l1, gs_new * _kappe_l1 / _k)
+                        gs_l2 = min(_kappe_l2, gs_new * _kappe_l2 / _k)
                 elif gs_new < 0:
                     # Laden proportional zum Headroom, v3.5.1 mit SOC-Ausgleich
                     gs_l1, gs_l2 = lade_aufteilung(gs_new, headroom_l1, headroom_l2, curr_soc, curr_soc_l2)
@@ -2938,10 +2960,13 @@ def main():
                 log.debug("Kreuzladung Hold-Time aktiv — Laden (negatives GS) gesperrt")
 
             # Sicherheitsgrenzen bei niedrigem SOC anwenden
+            # v3.5.9: tagsueber bis zur PV-Kappe (Durchreichen), sonst wie bisher 0
+            _kap1 = durchreich_kappe(pv_current) if (MORGEN_PV_DURCHREICHEN and not bypass_active) else 0.0
+            _kap2 = durchreich_kappe(pv_l2) if (MORGEN_PV_DURCHREICHEN and not bypass_active) else 0.0
             if low_soc_active_l1:
-                gs_l1 = min(0.0, gs_l1)
+                gs_l1 = min(_kap1, gs_l1)
             if low_soc_active_l2:
-                gs_l2 = min(0.0, gs_l2)
+                gs_l2 = min(_kap2, gs_l2)
 
             # v3.1.0: deaktivierte Speicher bekommen hart GS=0 (fängt Bypass-Durchreich-
             # Zweige ab, die gs_l1/gs_l2 sonst indirekt setzen könnten).
@@ -3096,7 +3121,8 @@ def main():
                 # v3.1.0: deaktiviertes L1 — neutraler IS-Wert, wird ohnehin nicht geschrieben
                 is_target_l1 = 2400
             elif low_soc_active_l1:
-                is_target_l1 = 10
+                # v3.5.9: mit PV auf die Durchreich-Kappe — IS < 2400 und Geraetesperre verhindern Entladung
+                is_target_l1 = max(10, int(round(_kap1 / 10.0)) * 10) if (_kap1 > 0 and gs_l1_rounded > 0) else 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l1 = 2400
             elif akkus_voll:
@@ -3140,7 +3166,7 @@ def main():
             if not has_l2:
                 is_target_l2 = 2400
             elif low_soc_active_l2:
-                is_target_l2 = 10
+                is_target_l2 = max(10, int(round(_kap2 / 10.0)) * 10) if (_kap2 > 0 and gs_l2_rounded > 0) else 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l2 = 2400
             elif pv_l2 <= 10.0:
