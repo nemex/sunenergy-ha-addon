@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.5.9
+SunEnergy XT Controller v3.6.0
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -985,7 +985,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.5.9 startet...")
+    log.info("SunEnergy XT Controller v3.6.0 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -3121,8 +3121,12 @@ def main():
                 # v3.1.0: deaktiviertes L1 — neutraler IS-Wert, wird ohnehin nicht geschrieben
                 is_target_l1 = 2400
             elif low_soc_active_l1:
-                # v3.5.9: mit PV auf die Durchreich-Kappe — IS < 2400 und Geraetesperre verhindern Entladung
-                is_target_l1 = max(10, int(round(_kap1 / 10.0)) * 10) if (_kap1 > 0 and gs_l1_rounded > 0) else 10
+                # v3.5.9: beim Durchreichen begrenzt GS (<= Kappe aus der eigenen PV) die Abgabe.
+                # v3.6.0: IS dabei 2400 statt Kappe — ein niedriges IS bremst im Sperrband auch das Laden:
+                # das Geraet faehrt die PV auf etwa IS herunter (22.10.: IS=GS=60 -> PV 124 -> 65 W, Akku +1 W;
+                # IS 270/GS 50 -> PV 340 W, Akku +240 W). Mit der Kappe aus der gemeldeten PV sank IS dann
+                # weiter -> Kreis IS 250 -> 50 -> 10 im ~6-s-Takt, Akku lud kaum.
+                is_target_l1 = 2400 if (_kap1 > 0 and gs_l1_rounded > 0) else 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l1 = 2400
             elif akkus_voll:
@@ -3166,7 +3170,7 @@ def main():
             if not has_l2:
                 is_target_l2 = 2400
             elif low_soc_active_l2:
-                is_target_l2 = max(10, int(round(_kap2 / 10.0)) * 10) if (_kap2 > 0 and gs_l2_rounded > 0) else 10
+                is_target_l2 = 2400 if (_kap2 > 0 and gs_l2_rounded > 0) else 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l2 = 2400
             elif pv_l2 <= 10.0:
