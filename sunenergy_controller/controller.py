@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.6.0
+SunEnergy XT Controller v3.6.1
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -160,7 +160,11 @@ CSV_MIN_S         = 4.5    # Tageslog weiter im ~5-s-Raster (Analyse-Seite, Zwil
 # gleichzeitig aus dem Netz zog. Geraetetest 17.10. (SOC 11 %): Mit IS=GS=PV-50 gibt der Speicher
 # seine PV ans Haus ab (143 W bei 198 W PV), mit mehr Anforderung entlaedt er trotzdem NICHT.
 # Durchgereicht wird nur, was das Haus nach den Hoymiles braucht (Regler), der Rest laedt den Akku.
-MORGEN_PV_DURCHREICHEN = True
+# v3.6.1: AUS. Bei Sonne drosselt das Geraet im Sperrband seine PV auf etwa Abgabe + 40 W, sobald GS > 0,
+# auch mit IS 2400 (23.10. ab 09:59, SOC 14 %: PV 287 -> 141 -> 104 W, Akku +241 -> +2 W) — aber nicht immer
+# (09:2x, SOC 12 %: GS 150, Akku +135 W). Mit der Kappe aus der gemeldeten PV entstand wieder der Kreis.
+# Erst nach einem gezielten Geraetetest neu aufbauen.
+MORGEN_PV_DURCHREICHEN = False
 DURCHREICH_ABSTAND_W   = 60.0   # Kappe unter der PV-Durchreichung (PV*0,96-40), damit nie Akku gezogen wird
 
 
@@ -985,7 +989,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.6.0 startet...")
+    log.info("SunEnergy XT Controller v3.6.1 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
