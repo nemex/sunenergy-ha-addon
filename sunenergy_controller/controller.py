@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.6.1
+SunEnergy XT Controller v3.6.2
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -160,17 +160,48 @@ CSV_MIN_S         = 4.5    # Tageslog weiter im ~5-s-Raster (Analyse-Seite, Zwil
 # gleichzeitig aus dem Netz zog. Geraetetest 17.10. (SOC 11 %): Mit IS=GS=PV-50 gibt der Speicher
 # seine PV ans Haus ab (143 W bei 198 W PV), mit mehr Anforderung entlaedt er trotzdem NICHT.
 # Durchgereicht wird nur, was das Haus nach den Hoymiles braucht (Regler), der Rest laedt den Akku.
-# v3.6.1: AUS. Bei Sonne drosselt das Geraet im Sperrband seine PV auf etwa Abgabe + 40 W, sobald GS > 0,
-# auch mit IS 2400 (23.10. ab 09:59, SOC 14 %: PV 287 -> 141 -> 104 W, Akku +241 -> +2 W) — aber nicht immer
-# (09:2x, SOC 12 %: GS 150, Akku +135 W). Mit der Kappe aus der gemeldeten PV entstand wieder der Kreis.
-# Erst nach einem gezielten Geraetetest neu aufbauen.
-MORGEN_PV_DURCHREICHEN = False
+# v3.6.2: wieder AN, mit kleinen GS-Schritten. Ursache des Kreises (v3.5.9/v3.6.0, 1-s-Daten 20.-23.10.):
+# Springt GS im Sperrband um >= 40 W, drosselt das Geraet fuer ~5-14 s seine PV auf etwa Abgabe + 40 W
+# (~380 Spruenge: 85-100 % gedrosselt); Schritte < 40 W verkraftet es (~2 560: 1-16 %), konstantes GS bis
+# 180 W nie (16 000 s). Die Kappe aus der gedrosselten PV erzwang dann weitere grosse Spruenge.
+MORGEN_PV_DURCHREICHEN = True
 DURCHREICH_ABSTAND_W   = 60.0   # Kappe unter der PV-Durchreichung (PV*0,96-40), damit nie Akku gezogen wird
 
 
-def durchreich_kappe(pv: float) -> float:
-    """Hoechste Abgabe eines Speichers im Sperrband: nur aus seiner eigenen PV."""
-    return max(0.0, pv * 0.96 - DURCHREICH_ABSTAND_W)
+DURCHREICH_SCHRITT_W   = 20.0   # v3.6.2: GS im Sperrband hoechstens um so viel je Takt aendern (Geraet drosselt ab 40 W)
+DURCHREICH_HALTE_S     = 60.0   # v3.6.2: Kappe aus dem PV-Hoechstwert dieser Zeitspanne
+# v3.6.2: erst ab dieser moeglichen Abgabe durchreichen. Darunter frisst der Wechselrichter (~40 W, 16.10.:
+# PV 273 -> OP 213) zu viel; die PV direkt in den Akku und abends mit hoeherer Leistung abgeben ist dann besser.
+DURCHREICH_MIN_W       = 60.0    # Zwilling 23.10.: 60 W bester Kompromiss (Herbst -1008 Wh/14 Tage, Winter -47 Wh/Woche)
+_pv_spitze = {}
+_gs_rampe = {}
+
+
+def durchreich_kappe(pv: float, key: str = "") -> float:
+    """Hoechste Abgabe eines Speichers im Sperrband: nur aus seiner eigenen PV.
+    v3.6.2: mit key aus dem PV-Hoechstwert der letzten DURCHREICH_HALTE_S — ein kurzer Einbruch
+    soll keinen grossen GS-Schritt nach unten erzwingen."""
+    if key:
+        now = time.monotonic()
+        hist = _pv_spitze.setdefault(key, [])
+        hist.append((now, pv))
+        while hist and hist[0][0] < now - DURCHREICH_HALTE_S:
+            hist.pop(0)
+        pv = max(p for _, p in hist)
+    kappe = max(0.0, pv * 0.96 - DURCHREICH_ABSTAND_W)
+    return kappe if kappe >= DURCHREICH_MIN_W else 0.0
+
+
+def durchreich_rampe(key: str, gs: float, im_band: bool) -> float:
+    """v3.6.2: GS eines Speichers im Sperrband in Schritten von hoechstens DURCHREICH_SCHRITT_W fuehren.
+    Ausserhalb des Bands und fuer Laden (GS < 0) unveraendert."""
+    if not im_band or gs < 0:
+        _gs_rampe[key] = 0.0
+        return gs
+    prev = _gs_rampe.get(key, 0.0)
+    gs = max(prev - DURCHREICH_SCHRITT_W, min(prev + DURCHREICH_SCHRITT_W, gs))
+    _gs_rampe[key] = gs
+    return gs
 # v3.3.5: Freigabeschwelle der Entlade-Sperre. Das Gerät hat eine EIGENE Hysterese
 # (Feld SI1, ab Werk 5 %): unterhalb von SI sperrt es die Entladung und gibt sie erst
 # bei SI + SI1 wieder frei. Unsere alte Schwelle soc_min + 2 lag mitten in diesem
@@ -989,7 +1020,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.6.1 startet...")
+    log.info("SunEnergy XT Controller v3.6.2 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -2919,8 +2950,8 @@ def main():
                     gs_new = max(0.0, gs_new)
 
                 # v3.5.9: im Sperrband darf ein Speicher bis zu seiner PV-Kappe abgeben
-                _kappe_l1 = durchreich_kappe(pv_current) if (MORGEN_PV_DURCHREICHEN and has_l1 and low_soc_active_l1) else 0.0
-                _kappe_l2 = durchreich_kappe(pv_l2) if (MORGEN_PV_DURCHREICHEN and has_l2 and low_soc_active_l2) else 0.0
+                _kappe_l1 = durchreich_kappe(pv_current, "l1") if (MORGEN_PV_DURCHREICHEN and has_l1 and low_soc_active_l1) else 0.0
+                _kappe_l2 = durchreich_kappe(pv_l2, "l2") if (MORGEN_PV_DURCHREICHEN and has_l2 and low_soc_active_l2) else 0.0
                 if low_soc_active_l1 and (not has_l2 or low_soc_active_l2):
                     gs_new = min(_kappe_l1 + _kappe_l2, gs_new)
                 gs_new = max(-max_gs, min(max_gs, gs_new))
@@ -2965,12 +2996,14 @@ def main():
 
             # Sicherheitsgrenzen bei niedrigem SOC anwenden
             # v3.5.9: tagsueber bis zur PV-Kappe (Durchreichen), sonst wie bisher 0
-            _kap1 = durchreich_kappe(pv_current) if (MORGEN_PV_DURCHREICHEN and not bypass_active) else 0.0
-            _kap2 = durchreich_kappe(pv_l2) if (MORGEN_PV_DURCHREICHEN and not bypass_active) else 0.0
+            _kap1 = durchreich_kappe(pv_current, "l1") if (MORGEN_PV_DURCHREICHEN and not bypass_active) else 0.0
+            _kap2 = durchreich_kappe(pv_l2, "l2") if (MORGEN_PV_DURCHREICHEN and not bypass_active) else 0.0
             if low_soc_active_l1:
                 gs_l1 = min(_kap1, gs_l1)
             if low_soc_active_l2:
                 gs_l2 = min(_kap2, gs_l2)
+            gs_l1 = durchreich_rampe("l1", gs_l1, MORGEN_PV_DURCHREICHEN and low_soc_active_l1)
+            gs_l2 = durchreich_rampe("l2", gs_l2, MORGEN_PV_DURCHREICHEN and low_soc_active_l2)
 
             # v3.1.0: deaktivierte Speicher bekommen hart GS=0 (fängt Bypass-Durchreich-
             # Zweige ab, die gs_l1/gs_l2 sonst indirekt setzen könnten).
@@ -3130,7 +3163,7 @@ def main():
                 # das Geraet faehrt die PV auf etwa IS herunter (22.10.: IS=GS=60 -> PV 124 -> 65 W, Akku +1 W;
                 # IS 270/GS 50 -> PV 340 W, Akku +240 W). Mit der Kappe aus der gemeldeten PV sank IS dann
                 # weiter -> Kreis IS 250 -> 50 -> 10 im ~6-s-Takt, Akku lud kaum.
-                is_target_l1 = 2400 if (_kap1 > 0 and gs_l1_rounded > 0) else 10
+                is_target_l1 = 2400 if (MORGEN_PV_DURCHREICHEN and gs_l1_rounded > 0) else 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l1 = 2400
             elif akkus_voll:
@@ -3174,7 +3207,7 @@ def main():
             if not has_l2:
                 is_target_l2 = 2400
             elif low_soc_active_l2:
-                is_target_l2 = 2400 if (_kap2 > 0 and gs_l2_rounded > 0) else 10
+                is_target_l2 = 2400 if (MORGEN_PV_DURCHREICHEN and gs_l2_rounded > 0) else 10
             elif bypass_active or is_actively_feeding_in:
                 is_target_l2 = 2400
             elif pv_l2 <= 10.0:
