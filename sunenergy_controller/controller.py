@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.6.2
+SunEnergy XT Controller v3.6.3
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -164,7 +164,10 @@ CSV_MIN_S         = 4.5    # Tageslog weiter im ~5-s-Raster (Analyse-Seite, Zwil
 # Springt GS im Sperrband um >= 40 W, drosselt das Geraet fuer ~5-14 s seine PV auf etwa Abgabe + 40 W
 # (~380 Spruenge: 85-100 % gedrosselt); Schritte < 40 W verkraftet es (~2 560: 1-16 %), konstantes GS bis
 # 180 W nie (16 000 s). Die Kappe aus der gedrosselten PV erzwang dann weitere grosse Spruenge.
-MORGEN_PV_DURCHREICHEN = True
+# v3.6.3: AUS. Mit dem gemessenen Eigenverbrauch (25.10.: Durchreichen 37-48 W gegen 25 W beim reinen
+# Laden) bringt das Durchreichen im Zwilling netto nichts: Herbst je nach Schwelle -35 bis +4 Wh/Tag,
+# Winter +40 bis +55 Wh/Tag. Rampe, Kappe und Schwelle bleiben fuer ein spaeteres Wiedereinschalten.
+MORGEN_PV_DURCHREICHEN = False
 DURCHREICH_ABSTAND_W   = 60.0   # Kappe unter der PV-Durchreichung (PV*0,96-40), damit nie Akku gezogen wird
 
 
@@ -1020,7 +1023,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.6.2 startet...")
+    log.info("SunEnergy XT Controller v3.6.3 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
