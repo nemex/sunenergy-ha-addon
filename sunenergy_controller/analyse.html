@@ -37,9 +37,13 @@
         const COLORS = ['#f0a500', '#00c2ff', '#10B981', '#f43f5e', '#818CF8', '#EC4899', '#A78BFA', '#34D399', '#F472B6', '#FBBF24', '#3B82F6', '#22C55E'];
         const MONTH_NAMES = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
         const DOW_NAMES = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
-        const WINDOW_SIZE_HIGHRES = 120; // 10 Minuten bei 5s Intervall
+        const WINDOW_SIZE_HIGHRES = 120; // 10 Minuten bei 5-s-Log
+        // v3.6.4: Netz-Sollwert des Reglers (Option grid_target) — Praezision wird gegen dieses Ziel gemessen
+        const GRID_TARGET = -5;
+        // v3.6.4: Akkukapazitaet je Speicher fuer den SOC-bereinigten Wirkungsgrad (Wh)
+        const CAP_WH = 5000;
         const WINDOW_SIZE_DAILY = 48;    // 8 Stunden bei 10m Intervall
-        const POLL_INTERVAL = 5;         // Regelintervall in Sekunden
+        const POLL_INTERVAL = 5;         // Log-Intervall in Sekunden (Regelung seit v3.5.8 alle 2 s)
 
         // --- Ikonen-Komponente ---
         const Icon = ({ name, size = 18, className = "" }) => {
@@ -473,6 +477,13 @@
                     const pvL2Idx = headers.indexOf("pv_l2");
                     const gsL1Idx = headers.indexOf("gs_l1");
                     const gsL2Idx = headers.indexOf("gs_l2");
+                    // v3.6.4: echte Akkuleistung (bp, + laedt) und gemessene AC-Abgabe (ac, Shelly, + Abgabe)
+                    const bpIdx = headers.indexOf("bp");
+                    const bpL2Idx = headers.indexOf("bp_l2");
+                    const acIdx = headers.indexOf("ac");
+                    const acL2Idx = headers.indexOf("ac_l2");
+                    const isL2Idx = headers.indexOf("is_l2");
+                    const val = (idx, cols) => (idx !== -1 && cols[idx] !== undefined && cols[idx] !== "") ? parseNum(cols[idx]) : null;
 
                     for (let i = 1; i < lines.length; i++) {
                         const rawLine = lines[i].trim(); if (!rawLine) continue;
@@ -489,6 +500,10 @@
                         const socL2Val = socL2Idx !== -1 ? parseNum(cols[socL2Idx]) : 0;
                         const opL2Val = opL2Idx !== -1 ? parseNum(cols[opL2Idx]) : 0;
                         const pvL2Val = pvL2Idx !== -1 ? parseNum(cols[pvL2Idx]) : 0;
+                        const bpVal = val(bpIdx, cols), bpL2Val = val(bpL2Idx, cols);
+                        const acVal = val(acIdx, cols), acL2Val = val(acL2Idx, cols);
+                        const hasBp = bpVal !== null;
+                        const hasAc = acVal !== null;
 
                         processedRows.push({
                             ts: dateStr,
@@ -506,8 +521,16 @@
                             pv: pvVal,
                             op_l2: opL2Val,
                             pv_l2: pvL2Val,
-                            pb: pvVal - opVal, // Netto Batterieladeleistung L1
-                            pb_l2: pvL2Val - opL2Val, // Netto Batterieladeleistung L2
+                            // v3.6.4: echte Akkuleistung, wenn geloggt; aeltere Logs: PV - Abgabe (enthaelt Eigenverbrauch)
+                            pb: hasBp ? bpVal : pvVal - opVal,
+                            pb_l2: hasBp ? (bpL2Val || 0) : pvL2Val - opL2Val,
+                            hasBp,
+                            // Speicher-Abgabe ans Haus (AC): Shelly, sonst Geraete-OP
+                            ac: hasAc ? acVal : opVal,
+                            ac_l2: hasAc ? (acL2Val || 0) : opL2Val,
+                            se_ac: hasAc ? Math.max(0, acVal) + Math.max(0, acL2Val || 0) : opVal + opL2Val,
+                            pv_sum: pvVal + pvL2Val,
+                            is_l2: isL2Idx !== -1 ? parseNum(cols[isL2Idx]) : 0,
                             is_target: parseNum(cols[targetIdx]),
                             hms_2000: hms2000Idx !== -1 ? parseNum(cols[hms2000Idx]) : 0,
                             hms_1600: hms1600Idx !== -1 ? parseNum(cols[hms1600Idx]) : 0,
@@ -727,6 +750,10 @@
                                 pv_l2: avg("pv_l2"),
                                 pb: avg("pb"),
                                 pb_l2: avg("pb_l2"),
+                                ac: avg("ac"),
+                                ac_l2: avg("ac_l2"),
+                                se_ac: avg("se_ac"),
+                                pv_sum: avg("pv_sum"),
                                 is_target: avg("is_target"),
                                 hms_2000: avg("hms_2000"),
                                 hms_1600: avg("hms_1600")
@@ -763,7 +790,13 @@
                         pv_l2: avg("pv_l2"),
                         pb: avg("pb"),
                         pb_l2: avg("pb_l2"),
-                        is_target: avg("is_target")
+                        ac: avg("ac"),
+                        ac_l2: avg("ac_l2"),
+                        se_ac: avg("se_ac"),
+                        pv_sum: avg("pv_sum"),
+                        is_target: avg("is_target"),
+                        hms_2000: avg("hms_2000"),
+                        hms_1600: avg("hms_1600")
                     });
                 }
                 return result;
@@ -807,6 +840,10 @@
                     // v3.3.9: Modusverteilung mitzählen. Ohne sie sieht ein Log, das komplett
                     // im Bypass lief, in der Präzisionsansicht wie ein Totalausfall des Reglers aus.
                     const modeCounts = {};
+                    // v3.6.4: Sperrband je Speicher wie im Geraet (ab 10 % gesperrt, ab 15 % frei)
+                    // Startzustand: unter 15 % und ohne Abgabe gilt der Speicher als gesperrt
+                    let blk1 = rawData[0].soc < 14.5 && rawData[0].ac < 15;
+                    let blk2 = rawData[0].soc_l2 < 14.5 && rawData[0].ac_l2 < 15;
 
                     // Schleife über alle Rohdaten (wegen der Zeitdifferenzen)
                     for (let i = 1; i < rawData.length; i++) {
@@ -822,8 +859,9 @@
 
                         // Leistungen integrieren
                         totalWhHoymiles += curr.solar_p * dtHours;
-                        totalWhSunEnergyPV += curr.pv * dtHours;
-                        totalWhSunEnergyAC += curr.op * dtHours;
+                        // v3.6.4: beide Speicher (vorher nur L1)
+                        totalWhSunEnergyPV += (curr.pv + curr.pv_l2) * dtHours;
+                        totalWhSunEnergyAC += curr.se_ac * dtHours;
                         totalWhCons += curr.haus_p * dtHours;
 
                         if (curr.grid_p > 0) {
@@ -844,12 +882,21 @@
                             totalWhDischargeL2 += -curr.pb_l2 * dtHours;
                         }
 
-                        // Regelungspräzision im aktiven oder Nacht-Modus (nur wenn Regelung aktiv steuern kann, d.h. Akku nicht leer)
-                        const isRegulating = (curr.mode === "active" || curr.mode === "night") && (curr.soc > 10.5 || curr.op > 2);
+                        // Regelungspraezision im aktiven oder Nacht-Modus, nur wenn ein Speicher regeln kann.
+                        // v3.6.4: Sperrband (10-15 %, Geraet gibt nichts ab) beider Speicher ausgeklammert,
+                        // Abweichung gegen den Netz-Sollwert statt gegen 0 W. Vorher zaehlten Stunden mit
+                        // gesperrten Akkus und ~450 W Bezug als "schlecht geregelt".
+                        if (curr.soc >= 14.5) blk1 = false;
+                        if (curr.soc <= 10.5) blk1 = true;
+                        if (curr.soc_l2 >= 14.5) blk2 = false;
+                        if (curr.soc_l2 <= 10.5) blk2 = true;
+                        const kannRegeln = (!blk1 && curr.soc > 10.5) || (!blk2 && curr.soc_l2 > 10.5) || curr.se_ac > 15;
+                        const isRegulating = (curr.mode === "active" || curr.mode === "night") && kannRegeln;
                         if (isRegulating) {
                             activePointsCount++;
-                            totalAbsoluteError += Math.abs(curr.grid_p);
-                            if (Math.abs(curr.grid_p) <= 20) {
+                            const abw = Math.abs(curr.grid_p - GRID_TARGET);
+                            totalAbsoluteError += abw;
+                            if (abw <= 20) {
                                 pointsWithin20W++;
                             }
                         }
@@ -870,12 +917,18 @@
                     const autarkie = totalWhCons > 0 ? (cleanConsumedWh / totalWhCons) * 100 : 0;
                     const eigenverbrauchPct = totalWhSolar > 0 ? (cleanConsumedWh / totalWhSolar) * 100 : 0;
                     
-                    // Wirkungsgrad-Prüfung auf Plausibilität (Inkompletter Lade/Entladezyklus führt sonst zu Extremwerten)
-                    const storageEffRaw = totalWhCharge > 0.05 ? (totalWhDischarge / totalWhCharge) * 100 : 0;
-                    const storageEff = (storageEffRaw >= 40 && storageEffRaw <= 110) ? storageEffRaw.toFixed(1) + "%" : "N/A";
-                    
-                    const storageEffRawL2 = totalWhChargeL2 > 0.05 ? (totalWhDischargeL2 / totalWhChargeL2) * 100 : 0;
-                    const storageEffL2 = (storageEffRawL2 >= 40 && storageEffRawL2 <= 110) ? storageEffRawL2.toFixed(1) + "%" : "N/A";
+                    // v3.6.4: Akku-Wirkungsgrad (DC) SOC-bereinigt: Was am Ende mehr im Akku steckt als am
+                    // Anfang, wurde nicht entladen und zaehlt nicht als Verlust. Nur mit echter Akkuleistung (bp)
+                    // und genug Umsatz aussagekraeftig; vorher Entladen/Laden roh fuer einen einzelnen Tag.
+                    const hasBp = rawData.some(r => r.hasBp);
+                    const effDc = (chg, dis, socA, socE) => {
+                        const netto = chg - (socE - socA) / 100 * CAP_WH;
+                        const eff = netto > 300 ? dis / netto * 100 : null;
+                        return (hasBp && eff !== null && eff >= 50 && eff <= 105) ? eff.toFixed(1) + "%" : "N/A";
+                    };
+                    const first = rawData[0], last = rawData[rawData.length - 1];
+                    const storageEff = effDc(totalWhCharge, totalWhDischarge, first.soc, last.soc);
+                    const storageEffL2 = effDc(totalWhChargeL2, totalWhDischargeL2, first.soc_l2, last.soc_l2);
 
                     return {
                         totalSolarKwh: (totalWhSolar / 1000).toFixed(2),
@@ -888,6 +941,8 @@
                         totalDischargeKwh: (totalWhDischarge / 1000).toFixed(2),
                         totalChargeKwhL2: (totalWhChargeL2 / 1000).toFixed(2),
                         totalDischargeKwhL2: (totalWhDischargeL2 / 1000).toFixed(2),
+                        totalChargeKwhSum: ((totalWhCharge + totalWhChargeL2) / 1000).toFixed(2),
+                        hasBp,
                         savings: savings.toFixed(2),
                         feedInEarnings: feedInEarnings.toFixed(2),
                         totalEarnings: totalEarnings.toFixed(2),
@@ -1070,7 +1125,7 @@
                                 </h2>
                                 <div className="space-y-4">
                                     <div className="p-3 bg-slate-800/20 border border-slate-800 rounded-xl">
-                                        <h3 className="text-xs font-bold text-slate-200 flex items-center gap-1.5"><Icon name="activity" size={12} className="text-blue-400" /> Regler-Logs (5s-Intervall)</h3>
+                                        <h3 className="text-xs font-bold text-slate-200 flex items-center gap-1.5"><Icon name="activity" size={12} className="text-blue-400" /> Regler-Logs (Log 5 s, Regelung 2 s)</h3>
                                         <p className="text-[11px] text-slate-400 mt-1">Auswertung der Nulleinspeisungs-Präzision, Ladezyklen des Akkus, SoC-Tiefgang und Hoymiles-Limits.</p>
                                     </div>
                                     <div className="p-3 bg-slate-800/20 border border-slate-800 rounded-xl">
@@ -1119,7 +1174,7 @@
                                 <p className="mt-1 flex items-center gap-2 truncate text-xs text-slate-500">
                                     <Icon name="file-text" size={12} /> {fileName}
                                     <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-                                        {fileType === 'highres' ? 'Regler-Log (5s)' : 'Tagesbericht (10m)'} · {rawData.length} Einträge
+                                        {fileType === 'highres' ? 'Regler-Log (5 s)' : 'Tagesbericht (10m)'} · {rawData.length} Einträge
                                     </span>
                                     {fileType === 'highres' && stats && (
                                         <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
@@ -1255,8 +1310,8 @@
                                                 value={stats.hasRegulationData ? `${stats.precisionPercent}%` : "n/a"} iconName="activity" iconColor="text-purple-500"
                                                 secondaryTitle={stats.hasRegulationData ? "Ø Abweichung" : "Keine Regelphase im Log"}
                                                 secondaryValue={stats.hasRegulationData ? `${stats.avgDeviation} W` : `Modus: ${stats.dominantMode}`} />
-                                            <StatCard title="Akku-Ladeleistung" value={`${stats.totalChargeKwh} kWh`} iconName="battery-charging" iconColor="text-emerald-400"
-                                                secondaryTitle="Wirkungsgrad (AC/DC)" secondaryValue={stats.storageEff} />
+                                            <StatCard title={hasL2 ? "Akku geladen L1+L2" : "Akku geladen"} value={`${hasL2 ? stats.totalChargeKwhSum : stats.totalChargeKwh} kWh`} iconName="battery-charging" iconColor="text-emerald-400"
+                                                secondaryTitle={stats.hasBp ? "Wirkungsgrad DC (SOC-bereinigt)" : "Wirkungsgrad (alter Log ohne Akkuwert)"} secondaryValue={hasL2 ? `${stats.storageEff} / ${stats.storageEffL2}` : stats.storageEff} />
                                             <StatCard title="Stromkosten" value={`${stats.totalCost} €`} iconName="receipt-euro" iconColor="text-rose-500"
                                                 secondaryTitle={`Netzbezug ${stats.totalImpKwh} kWh`} secondaryValue={`${stats.gridCost} € Arbeit + ${stats.baseFeeCost} € Grundpreis`} />
                                         </>
@@ -1418,7 +1473,8 @@
                                                             <Tooltip content={<CustomTooltip unit="W" />} />
                                                             <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
                                                             <Bar name="Hoymiles (Direkt-Solar)" dataKey="solar_p" stackId="s" fill="#f0a500" isAnimationActive={false} />
-                                                            {fileType === 'highres' && <Bar name="SunEnergy XT PV (Akku-Solar)" dataKey="pv" stackId="s" fill="#00c2ff" isAnimationActive={false} />}
+                                                            {fileType === 'highres' && <Bar name={hasL2 ? "SunEnergy L1 PV" : "SunEnergy XT PV (Akku-Solar)"} dataKey="pv" stackId="s" fill="#00c2ff" isAnimationActive={false} />}
+                                                            {fileType === 'highres' && hasL2 && <Bar name="SunEnergy L2 PV" dataKey="pv_l2" stackId="s" fill="#818CF8" isAnimationActive={false} />}
                                                         </BarChart>
                                                     </ResponsiveContainer>
                                                 </div>
@@ -1438,7 +1494,7 @@
                                                             <Tooltip content={<CustomTooltip unit="W" />} />
                                                             <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
                                                             <Bar name="Hoymiles AC" dataKey="solar_p" stackId="h" fill="#f0a500" isAnimationActive={false} />
-                                                            <Bar name="SunEnergy AC Out" dataKey="op" stackId="h" fill="#10B981" isAnimationActive={false} />
+                                                            <Bar name={hasL2 ? "SunEnergy AC L1+L2" : "SunEnergy AC Out"} dataKey={fileType === 'highres' ? "se_ac" : "op"} stackId="h" fill="#10B981" isAnimationActive={false} />
                                                             <Bar name="Netzbezug" dataKey={(d) => d.grid_p > 0 ? d.grid_p : 0} stackId="h" fill="#f43f5e" radius={[4,4,0,0]} isAnimationActive={false} />
                                                         </BarChart>
                                                     </ResponsiveContainer>
@@ -1489,7 +1545,7 @@
                                                     <p className={`text-5xl font-black ${stats.hasRegulationData ? 'text-slate-100' : 'text-slate-600'}`}>{stats.hasRegulationData ? `${stats.precisionPercent}%` : '–'}</p>
                                                     <p className="text-[11px] text-slate-400 mt-2">
                                                         {stats.hasRegulationData
-                                                            ? 'der Regelzeit lag der Netzbezug/die Einspeisung innerhalb von ±20 W. Perfekte Nulleinspeisung.'
+                                                            ? `der Regelzeit lag das Netz innerhalb von ±20 W um das Ziel (${GRID_TARGET} W). Gezählt wird nur, wenn ein Speicher regeln kann (nicht im Sperrband 10–15 %).`
                                                             : `nicht auswertbar — der Controller lief im Log durchgehend im Modus "${stats.dominantMode}" und hat die Nulleinspeisung nicht geregelt.`}
                                                     </p>
                                                 </div>
@@ -1506,12 +1562,12 @@
                                                     <p className={`text-5xl font-black ${stats.hasRegulationData ? 'text-amber-500' : 'text-slate-600'}`}>{stats.hasRegulationData ? `${stats.avgDeviation} W` : '–'}</p>
                                                     <p className="text-[11px] text-slate-400 mt-2">
                                                         {stats.hasRegulationData
-                                                            ? 'mittlere absolute Abweichung von der Nulleinspeisung. Je niedriger dieser Wert, desto flüssiger regelt das Skript.'
+                                                            ? `mittlere absolute Abweichung vom Ziel (${GRID_TARGET} W), nur Zeiten, in denen ein Speicher regeln kann. Je niedriger, desto flüssiger.`
                                                             : 'mittlere absolute Abweichung von der Nulleinspeisung — erst messbar, sobald der Regler wieder aktiv ist.'}
                                                     </p>
                                                 </div>
                                                 <div className="text-xs text-slate-400 mt-4 italic">
-                                                    Regelintervalle: alle {POLL_INTERVAL}s (Shelly Pro 3EM)
+                                                    Regelung alle 2 s, Log alle 5 s · Ziel {GRID_TARGET} W (Shelly Pro 3EM)
                                                 </div>
                                             </div>
 
@@ -1545,12 +1601,12 @@
                                                         <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
                                                         <Bar name="Netzleistung (Regelung)" dataKey="grid_p" fill="#f43f5e" isAnimationActive={false}>
                                                             {chartData.map((entry, index) => {
-                                                                const isPrecise = Math.abs(entry.grid_p) <= 20;
+                                                                const isPrecise = Math.abs(entry.grid_p - GRID_TARGET) <= 20;
                                                                 return <Cell key={`cell-${index}`} fill={isPrecise ? '#10B981' : '#f43f5e'} opacity={0.6} />;
                                                             })}
                                                         </Bar>
                                                         <Line name="Sollwert (gs)" dataKey="gs" stroke="#f0a500" strokeWidth={1.5} dot={false} isAnimationActive={false} />
-                                                        <Line name="Ausgangsleistung (op)" dataKey="op" stroke="#00c2ff" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                                                        <Line name="Speicher-Abgabe AC" dataKey="se_ac" stroke="#00c2ff" strokeWidth={1.5} dot={false} isAnimationActive={false} />
                                                     </ComposedChart>
                                                 </ResponsiveContainer>
                                             </div>
@@ -1594,7 +1650,9 @@
                                                         <Icon name="trending-up" size={16} className="text-blue-400" /> Speicherwirkungsgrad & Verluste
                                                     </h2>
                                                     <p className="text-xs text-slate-400 mb-6">
-                                                        Der Wirkungsgrad ergibt sich aus dem Verhältnis der entnommenen AC-Leistung zur geladenen DC-Leistung (inkl. Umwandlungsverlusten des Inverters).
+                                                        {stats.hasBp
+                                                            ? "Akkuleistung direkt vom Gerät (DC). Der Wirkungsgrad ist SOC-bereinigt: Was am Ende mehr im Akku steckt als am Anfang, zählt nicht als Verlust. Erst ab ~0,3 kWh Umsatz aussagekräftig."
+                                                            : "Älterer Log ohne Akkuwert: Laden/Entladen geschätzt als PV − Abgabe (enthält den Eigenverbrauch des Speichers). Kein Wirkungsgrad."}
                                                     </p>
                                                     <div className="space-y-4">
                                                         <div className="flex justify-between items-center p-3 rounded-xl bg-slate-800/30 border border-slate-800">
@@ -1605,14 +1663,14 @@
                                                             </span>
                                                         </div>
                                                         <div className="flex justify-between items-center p-3 rounded-xl bg-slate-800/30 border border-slate-800">
-                                                            <span className="text-xs text-slate-400">Gesamte Entladeenergie (AC) L1 {hasL2 && "/ L2"}</span>
+                                                            <span className="text-xs text-slate-400">Gesamte Entladeenergie (DC) L1 {hasL2 && "/ L2"}</span>
                                                             <span className="font-bold text-slate-100 font-mono">
                                                                 {stats.totalDischargeKwh} kWh
                                                                 {hasL2 && ` / ${stats.totalDischargeKwhL2} kWh`}
                                                             </span>
                                                         </div>
                                                         <div className="flex justify-between items-center p-3 rounded-xl bg-slate-800/30 border border-slate-800">
-                                                            <span className="text-xs text-slate-400">Verluste L1 {hasL2 && "/ L2"}</span>
+                                                            <span className="text-xs text-slate-400">Laden − Entladen L1 {hasL2 && "/ L2"} (inkl. SOC-Änderung)</span>
                                                             <span className="font-bold text-rose-400 font-mono">
                                                                 {(parseFloat(stats.totalChargeKwh) - parseFloat(stats.totalDischargeKwh)).toFixed(2)} kWh
                                                                 {hasL2 && ` / ${(parseFloat(stats.totalChargeKwhL2) - parseFloat(stats.totalDischargeKwhL2)).toFixed(2)} kWh`}
@@ -1735,7 +1793,7 @@
                                                 <thead className="sticky top-0 z-10 bg-[#111822] text-slate-400 border-b border-slate-850">
                                                     {fileType === 'highres' ? (
                                                         <tr>
-                                                            {['Zeitstempel','Mode','SoC (%)','Netzleistung (W)','Hausverbrauch (W)','Hoymiles PV (W)','Inverter Sollwert (W)','SunEnergy AC Out (W)','SunEnergy PV (W)','Akku Ladeleistung (W)'].map(h => (
+                                                            {['Zeitstempel','Mode','SoC L1/L2 (%)','Netzleistung (W)','Hausverbrauch (W)','Hoymiles PV (W)','Sollwert L1/L2 (W)','Abgabe AC L1/L2 (W)','PV L1/L2 (W)','Akku L1/L2 (W)'].map(h => (
                                                                 <th key={h} className="pb-3 pr-4 font-bold uppercase tracking-wider text-[9px]">{h}</th>
                                                             ))}
                                                         </tr>
@@ -1754,14 +1812,14 @@
                                                                 <>
                                                                     <td className="py-2.5 pr-4 font-semibold text-slate-400">{d.ts}</td>
                                                                     <td className="py-2.5 pr-4"><span className={`px-2 py-0.5 rounded text-[10px] font-bold ${d.mode === 'active' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30' : 'bg-slate-800 text-slate-400'}`}>{d.mode}</span></td>
-                                                                    <td className="py-2.5 pr-4 text-blue-400 font-bold">{d.soc.toFixed(1)}%</td>
-                                                                    <td className={`py-2.5 pr-4 font-bold ${Math.abs(d.grid_p) <= 20 ? 'text-emerald-500' : 'text-rose-500'}`}>{d.grid_p.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-blue-400 font-bold">{d.soc.toFixed(1)}{hasL2 ? ` / ${d.soc_l2.toFixed(1)}` : ''}%</td>
+                                                                    <td className={`py-2.5 pr-4 font-bold ${Math.abs(d.grid_p - GRID_TARGET) <= 20 ? 'text-emerald-500' : 'text-rose-500'}`}>{d.grid_p.toFixed(1)}</td>
                                                                     <td className="py-2.5 pr-4 text-slate-200">{d.haus_p.toFixed(1)}</td>
                                                                     <td className="py-2.5 pr-4 text-amber-500">{d.solar_p.toFixed(1)}</td>
-                                                                    <td className="py-2.5 pr-4 text-slate-500">{d.gs}</td>
-                                                                    <td className="py-2.5 pr-4 text-emerald-400">{d.op.toFixed(1)}</td>
-                                                                    <td className="py-2.5 pr-4 text-blue-400">{d.pv.toFixed(1)}</td>
-                                                                    <td className={`py-2.5 pr-4 font-bold ${d.pb > 0 ? 'text-emerald-500' : 'text-amber-500'}`}>{d.pb.toFixed(1)}</td>
+                                                                    <td className="py-2.5 pr-4 text-slate-500">{Math.round(d.gs_l1)}{hasL2 ? ` / ${Math.round(d.gs_l2)}` : ''}</td>
+                                                                    <td className="py-2.5 pr-4 text-emerald-400">{d.ac.toFixed(1)}{hasL2 ? ` / ${d.ac_l2.toFixed(1)}` : ''}</td>
+                                                                    <td className="py-2.5 pr-4 text-blue-400">{d.pv.toFixed(1)}{hasL2 ? ` / ${d.pv_l2.toFixed(1)}` : ''}</td>
+                                                                    <td className={`py-2.5 pr-4 font-bold ${d.pb > 0 ? 'text-emerald-500' : 'text-amber-500'}`}>{d.pb.toFixed(1)}{hasL2 ? ` / ${d.pb_l2.toFixed(1)}` : ''}</td>
                                                                 </>
                                                             ) : (
                                                                 <>

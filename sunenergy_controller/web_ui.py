@@ -401,7 +401,7 @@ HTML = """<!DOCTYPE html>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:16px;margin-bottom:8px" id="inv-grid">
     <div>
-      <div id="inv-se-title" style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">SunEnergyXT (DC+AC)</div>
+      <div id="inv-se-title" style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">SunEnergyXT (Abgabe AC)</div>
       <div style="display:flex;justify-content:space-between;margin-bottom:2px">
         <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-se-ist">—</span> W</span>
         <span style="font-size:11px;color:#4a5568">IS Limit: <span id="inv-se-lim">—</span> W</span>
@@ -412,7 +412,7 @@ HTML = """<!DOCTYPE html>
       <div id="inv-se-reason" style="font-size:10px;color:#4a5568">—</div>
     </div>
     <div id="inv-se-l2-wrap" style="display:none">
-      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">SunEnergyXT L2</div>
+      <div style="font-size:10px;color:#4a5568;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px">SunEnergyXT L2 (Abgabe AC)</div>
       <div style="display:flex;justify-content:space-between;margin-bottom:2px">
         <span style="font-size:11px;color:#cdd9e5">Ist: <span id="inv-se-l2-ist">—</span> W</span>
         <span style="font-size:11px;color:#4a5568">IS Limit: <span id="inv-se-l2-lim">—</span> W</span>
@@ -513,12 +513,15 @@ function updateCards(state, csv) {
   let mode = state.active_mode || 'night';
   // soc_full: wenn aktiv geregelt UND Akku voll (>= soc_normal_max), zeige "SOC VOLL"
   const socNow = parseFloat(csv.soc !== undefined ? csv.soc : (state.soc || 0));
+  const socNowL2 = parseFloat(csv.soc_l2 !== undefined ? csv.soc_l2 : (state.soc_l2 || 0));
   const socMax = parseFloat(state.soc_normal_max || 95);
-  if (mode === 'active' && socNow >= socMax) {
+  // v3.6.4: "SOC voll" erst, wenn alle aktiven Speicher voll sind (vorher nur L1)
+  const alleVoll = socNow >= socMax && (!state.has_l2 || socNowL2 >= socMax);
+  if (mode === 'active' && alleVoll) {
     mode = 'soc_full';
   }
   const el = document.getElementById('c-mode');
-  el.textContent = { active: 'AKTIV REGELND', soc_full: 'SOC VOLL (IS)', night: 'NACHT', calibration: 'ZWANGSLADUNG', feed_in: 'EINSPEISUNG AKTIV', feed_in_standby: 'EINSPEISUNG STANDBY', bypass: 'BYPASS AKTIV' }[mode] || mode.toUpperCase();
+  el.textContent = { active: 'AKTIV REGELND', soc_full: 'SOC VOLL (IS)', night: 'NACHT (REGELND)', calibration: 'ZWANGSLADUNG', feed_in: 'EINSPEISUNG AKTIV', feed_in_standby: 'EINSPEISUNG STANDBY', bypass: 'BYPASS AKTIV' }[mode] || mode.toUpperCase();
   el.className = 'mode ' + mode;
  
   const grid = parseFloat(csv.grid_p || state.grid_p_filtered || 0);
@@ -536,7 +539,7 @@ function updateCards(state, csv) {
     document.querySelector('#cards .card:nth-child(5) .card-title').textContent = 'GS Sollwert L1';
     document.querySelector('#cards .card:nth-child(7) .card-title').textContent = 'IS Limit L1';
     document.querySelector('#cards .card:nth-child(11) .card-title').textContent = 'SOC L1';
-    document.getElementById('inv-se-title').textContent = 'SunEnergyXT L1';
+    document.getElementById('inv-se-title').textContent = 'SunEnergyXT L1 (Abgabe AC)';
 
     // GS L1 und L2
     const gsL1 = parseFloat(csv.gs_l1 !== undefined ? csv.gs_l1 : (state.last_device_gs || 0));
@@ -546,7 +549,7 @@ function updateCards(state, csv) {
 
     // IS L1 und L2
     const isL1 = parseFloat(csv.is_target !== undefined ? csv.is_target : (state.last_device_is || state.last_is || 2400));
-    const isL2 = parseFloat(state.last_device_is_l2 || state.last_is_l2 || 2400);
+    const isL2 = parseFloat(csv.is_l2 !== undefined ? csv.is_l2 : (state.last_device_is_l2 || state.last_is_l2 || 2400));
     setCard('c-is', isL1.toFixed(0) + ' W', '');
     setCard('c-is-l2', isL2.toFixed(0) + ' W', '');
 
@@ -566,7 +569,7 @@ function updateCards(state, csv) {
     document.querySelector('#cards .card:nth-child(5) .card-title').textContent = 'GS Sollwert';
     document.querySelector('#cards .card:nth-child(7) .card-title').textContent = 'IS Limit';
     document.querySelector('#cards .card:nth-child(11) .card-title').textContent = 'SOC';
-    document.getElementById('inv-se-title').textContent = 'SunEnergyXT (DC+AC)';
+    document.getElementById('inv-se-title').textContent = 'SunEnergyXT (Abgabe AC)';
 
     setCard('c-gs', parseFloat(csv.gs || state.last_gs || 0).toFixed(0) + ' W', '');
     setCard('c-is', (csv.is_target !== undefined ? parseFloat(csv.is_target) : parseFloat(state.last_is || 0)).toFixed(0) + ' W', '');
@@ -583,11 +586,14 @@ function updateCards(state, csv) {
   document.getElementById('ts').textContent = 'Letzte Aktualisierung: ' + new Date().toLocaleTimeString('de-DE');
  
   // Wechselrichter Ist vs Limit
-  const seIst  = parseFloat(csv.pv !== undefined ? csv.pv : (state.pv_last || 0));  // L1
+  // v3.6.4: IS begrenzt die AC-Abgabe — verglichen wird deshalb die Abgabe (Shelly, sonst OP),
+  // nicht die PV-Eingangsleistung (im Sperrband stand der Balken sonst bei IS 10 auf 100 % "gedrosselt").
+  const acNum = (v) => (v !== undefined && v !== '' ? parseFloat(v) : null);
+  const seIst  = Math.max(0, acNum(csv.ac) ?? parseFloat(csv.op !== undefined ? csv.op : (state.op_l1 || 0)));  // L1
   const seLim  = parseFloat(csv.is_target !== undefined ? csv.is_target : (state.last_device_is || state.last_is || 2400));
   
-  const seIstL2 = parseFloat(csv.pv_l2 !== undefined ? csv.pv_l2 : (state.pv_last_l2 || 0)); // L2
-  const seLimL2 = parseFloat(state.last_device_is_l2 || state.last_is_l2 || 2400);
+  const seIstL2 = Math.max(0, acNum(csv.ac_l2) ?? parseFloat(csv.op_l2 !== undefined ? csv.op_l2 : (state.op_l2 || 0))); // L2
+  const seLimL2 = parseFloat(csv.is_l2 !== undefined ? csv.is_l2 : (state.last_device_is_l2 || state.last_is_l2 || 2400));
  
   const h2000Ist = parseFloat(csv.hms_2000 || 0);
   const h1600Ist = parseFloat(csv.hms_1600 || 0);
@@ -599,9 +605,13 @@ function updateCards(state, csv) {
   let seReason = '—', seReasonL2 = '—', h2000Reason = '—', h1600Reason = '—';
  
   if (currentMode === 'night') {
-    statusText = '⚪ Nacht — kein Betrieb';
-    seReason = 'Nacht';
-    seReasonL2 = 'Nacht';
+    // v3.6.4: nachts regelt das Add-on aktiv mit den Akkus (vorher "kein Betrieb")
+    const abgabe = seIst + (state.has_l2 ? seIstL2 : 0);
+    statusText = abgabe > 15
+      ? '🌙 Nacht — Akkus versorgen das Haus (' + Math.round(abgabe) + ' W, Netz ' + Math.round(currentGrid) + ' W)'
+      : '🌙 Nacht — Akkus leer oder gesperrt (Netz ' + Math.round(currentGrid) + ' W)';
+    seReason = seIst > 15 ? '🔋 entlädt' : 'Nacht';
+    seReasonL2 = seIstL2 > 15 ? '🔋 entlädt' : 'Nacht';
     h2000Reason = 'Nacht';
     h1600Reason = 'Nacht';
   } else if (currentMode === 'bypass') {

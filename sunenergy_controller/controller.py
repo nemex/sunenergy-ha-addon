@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SunEnergy XT Controller v3.6.3
+SunEnergy XT Controller v3.6.4
 =============================
 Universelle Nulleinspeisung für SunEnergyXT 500 Pro + Hoymiles HMS.
 
@@ -477,8 +477,13 @@ CSV_FIELDS = [
     "ts", "mode", "soc", "grid_p", "haus_p", "solar_p",
     "gs", "op", "pv", "is_target", "hms_limit", "hms_2000", "hms_1600",
     "hms_2000_lim", "hms_1600_lim", "soc_l2", "op_l2", "pv_l2", "gs_l1", "gs_l2",
-    "is_l2"  # v3.0.2: IS-Limit L2 mitloggen (war bisher ein blinder Fleck)
+    "is_l2",  # v3.0.2: IS-Limit L2 mitloggen (war bisher ein blinder Fleck)
+    # v3.6.4: echte Akkuleistung (Geraet, + laedt) und gemessene AC-Abgabe (Shelly, + Abgabe) je Speicher.
+    # "pv - op" in der Analyse zaehlte den Eigenverbrauch (25-45 W) als Laden, Laden aus dem Netz fehlte.
+    "bp", "bp_l2", "ac", "ac_l2",
 ]
+# v3.6.4: wird jeden Takt nach der Hausbilanz gesetzt und in jede Logzeile uebernommen
+_csv_zusatz: dict = {}
 
 # v3.4.0: Das Log rotiert pro Kalendertag. CSV_PATH ist immer der laufende Tag;
 # beim ersten Schreibvorgang nach Mitternacht wird die alte Datei nach
@@ -592,11 +597,21 @@ def csv_log(row: dict):
                 with open(CSV_PATH, "r") as f:
                     header = f.readline().strip().split(",")
                 if header != CSV_FIELDS:
-                    log.warning("CSV Header veraltet. Lösche alte CSV-Datei.")
-                    os.remove(CSV_PATH)
-                    write_header = True
+                    # v3.6.4: vorhandene Zeilen ins neue Format uebernehmen (fehlende Spalten leer),
+                    # statt die laufende Tagesdatei zu loeschen — sonst kostete jedes Update mit
+                    # neuen Spalten den bisherigen Tag.
+                    with open(CSV_PATH, "r", newline="") as f:
+                        alte = list(csv.DictReader(f))
+                    with open(CSV_PATH + ".tmp", "w", newline="") as f:
+                        wm = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
+                        wm.writeheader()
+                        wm.writerows(alte)
+                    os.replace(CSV_PATH + ".tmp", CSV_PATH)
+                    log.info("CSV-Spalten erweitert, %d Zeilen uebernommen.", len(alte))
             except Exception as e:
                 log.error("Fehler beim Überprüfen des CSV-Headers: %s", e)
+        for k, v in _csv_zusatz.items():
+            row.setdefault(k, v)
         with open(CSV_PATH, "a", newline="") as f:
             w = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
             if write_header:
@@ -1023,7 +1038,7 @@ def set_active_mode(state, new_mode, hold_seconds=30.0):
 # ---------------------------------------------------------------------------
 def main():
     global DRY_RUN
-    log.info("SunEnergy XT Controller v3.6.3 startet...")
+    log.info("SunEnergy XT Controller v3.6.4 startet...")
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
     opts  = load_options()
@@ -1894,6 +1909,12 @@ def main():
 
             # Gesamt-Batterieleistung
             battery_ac_est = battery_ac_est_l1 + battery_ac_est_l2
+            _csv_zusatz.update({
+                "bp": round(pb_current, 1) if has_l1 else 0.0,
+                "bp_l2": round(pb_l2, 1) if has_l2 else 0.0,
+                "ac": round(battery_ac_est_l1, 1),
+                "ac_l2": round(battery_ac_est_l2, 1),
+            })
             haus_p = max(0.0, grid_p_raw + solar_p + battery_ac_est)
 
             # Plausibilitätsfilter für haus_p Aussetzer (max. 3 Ticks / 15s überbrücken)
